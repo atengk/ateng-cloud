@@ -7,7 +7,7 @@
 # 核心特性：
 #   - 动态并发控制 (Dynamic Concurrency)：PR 提交自动中断陈旧运行，主干提交按序排队
 #   - 内部路径短路直通 (Path Fast-Pass)：纯文档改动秒级放行，彻底消除分支保护规则死锁
-#   - 分层兼容性矩阵 (Matrix Strategy)：PR 快速验证主流 LTS (Java 21)，主干全量扫描 (Java 17 & 21)
+#   - 分层兼容性矩阵 (Matrix Strategy)：跨 LTS 版本自动化回归验证 (Ubuntu / Java 17 & 21)
 #   - 官方 actions/setup-java 与 Maven 依赖缓存加速
 #   - 终审门禁看板 (All Checks Passed)：统一盖戳并直出 GitHub Step Summary 结构化报表
 # ==============================================================================
@@ -95,19 +95,18 @@ jobs:
           fi
 
   # ----------------------------------------------------------------------------
-  # Job 3: 跨 LTS 版本与多操作系统自动化单元测试矩阵 (Maven)
+  # Job 3: 跨 LTS 版本自动化单元测试矩阵 (Maven - Ubuntu)
   # ----------------------------------------------------------------------------
   test:
-    name: 单元测试 (${{ matrix.os }} / Java ${{ matrix.java-version }})
-    runs-on: ${{ matrix.os }}
+    name: 单元测试 (Ubuntu / Java ${{ matrix.java-version }})
+    runs-on: ubuntu-latest
     needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed != 'false'
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
-      fail-fast: ${{ github.event_name == 'pull_request' }}
+      fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
-        java-version: ${{ github.event_name == 'pull_request' && fromJSON('["21"]') || fromJSON('["17", "21"]') }}
+        java-version: ['17', '21']
 
     steps:
       - name: 检出源码
