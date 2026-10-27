@@ -31,13 +31,17 @@ class SingletonImmutabilityGuardTest {
     static class FaultyRepositoryBean {
     }
 
+    @Component
+    @RefreshScope
+    static class FaultyComponentBean {
+    }
+
     @Service
     static class ValidServiceBean {
     }
 
-    @Component
     @RefreshScope
-    static class NonBusinessRefreshScopeBean {
+    static class PlainRefreshScopeBean {
     }
 
     @Test
@@ -84,10 +88,25 @@ class SingletonImmutabilityGuardTest {
     }
 
     @Test
-    @DisplayName("非业务单例 Bean：非 Service/Repository 类正常允许通过")
-    void testNonBusinessBeanWithRefreshScopePasses() {
+    @DisplayName("架构红线拦截：严禁在 @Component 业务单例 Bean 上标注 @RefreshScope")
+    void testComponentWithRefreshScopeBlocked() {
         DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
-        beanFactory.registerBeanDefinition("nonBusinessBean", new AnnotatedGenericBeanDefinition(NonBusinessRefreshScopeBean.class));
+        beanFactory.registerBeanDefinition("faultyComponentBean", new AnnotatedGenericBeanDefinition(FaultyComponentBean.class));
+
+        AtengNacosProperties properties = new AtengNacosProperties();
+        SingletonImmutabilityGuard guard = new SingletonImmutabilityGuard(properties);
+
+        assertThatThrownBy(() -> guard.postProcessBeanFactory(beanFactory))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("faultyComponentBean")
+                .hasMessageContaining("@Component");
+    }
+
+    @Test
+    @DisplayName("非业务构造型 Bean：无 @Component/@Service 构造型注记的类正常允许通过")
+    void testPlainRefreshScopeBeanPasses() {
+        DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
+        beanFactory.registerBeanDefinition("plainBean", new AnnotatedGenericBeanDefinition(PlainRefreshScopeBean.class));
 
         AtengNacosProperties properties = new AtengNacosProperties();
         SingletonImmutabilityGuard guard = new SingletonImmutabilityGuard(properties);

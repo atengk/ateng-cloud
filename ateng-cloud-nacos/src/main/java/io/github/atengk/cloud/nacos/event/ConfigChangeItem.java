@@ -70,23 +70,27 @@ public class ConfigChangeItem implements Serializable {
     }
 
     /**
+     * 对指定属性值执行脱敏
+     */
+    private Object maskValue(Object value) {
+        if (value instanceof String str) {
+            return ConfigMasker.mask(key, str);
+        }
+        return value != null && isSensitive() ? "******" : value;
+    }
+
+    /**
      * 获取脱敏后的旧值（若为敏感属性且非空则返回星号掩码 {@code ****** }，否则返回原始值）
      */
     public Object getMaskedOldValue() {
-        if (oldValue instanceof String str) {
-            return ConfigMasker.mask(key, str);
-        }
-        return oldValue != null && isSensitive() ? "******" : oldValue;
+        return maskValue(oldValue);
     }
 
     /**
      * 获取脱敏后的新值（若为敏感属性且非空则返回星号掩码 {@code ****** }，否则返回原始值）
      */
     public Object getMaskedNewValue() {
-        if (newValue instanceof String str) {
-            return ConfigMasker.mask(key, str);
-        }
-        return newValue != null && isSensitive() ? "******" : newValue;
+        return maskValue(newValue);
     }
 
     /**

@@ -92,10 +92,19 @@ public class SingletonImmutabilityGuard implements BeanFactoryPostProcessor, Env
 
     private void checkBusinessSingletonViolation(String beanName, BeanDefinition bd) {
         if (bd instanceof AnnotatedBeanDefinition abd) {
-            boolean isService = abd.getMetadata().hasAnnotation("org.springframework.stereotype.Service");
-            boolean isRepository = abd.getMetadata().hasAnnotation("org.springframework.stereotype.Repository");
-            if (isService || isRepository) {
-                String role = isService ? "@Service" : "@Repository";
+            String role = null;
+            if (abd.getMetadata().hasAnnotation("org.springframework.stereotype.Service")) {
+                role = "@Service";
+            } else if (abd.getMetadata().hasAnnotation("org.springframework.stereotype.Repository")) {
+                role = "@Repository";
+            } else if (abd.getMetadata().hasAnnotation("org.springframework.stereotype.Controller")) {
+                role = "@Controller";
+            } else if (abd.getMetadata().hasAnnotation("org.springframework.web.bind.annotation.RestController")) {
+                role = "@RestController";
+            } else if (abd.getMetadata().hasAnnotation("org.springframework.stereotype.Component")) {
+                role = "@Component";
+            }
+            if (role != null) {
                 String errorMsg = String.format(
                         "【架构红线阻断 (Bean Immutability Invariant)】检测到单例业务 Bean '%s' 标注了 @RefreshScope 与 %s！" +
                         "严禁在承载实际业务逻辑与事务的单例 Bean 上使用 @RefreshScope，避免高并发下物理销毁导致在途事务断裂与锁悬挂。" +

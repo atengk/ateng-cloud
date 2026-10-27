@@ -824,7 +824,7 @@ public class NacosTemplate {
         }
         String targetGroup = resolveConfigGroup(groupName);
         long timeoutMs = resolveConfigTimeout(timeout);
-        return executeWithExceptionTranslation("getConfig", () -> {
+        return executeConfigWithExceptionTranslation("getConfig", () -> {
             ConfigService configService = getConfigService();
             if (configService == null) {
                 return null;
@@ -906,7 +906,7 @@ public class NacosTemplate {
             return false;
         }
         String targetGroup = resolveConfigGroup(groupName);
-        return executeWithExceptionTranslation("publishConfig", () -> {
+        return executeConfigWithExceptionTranslation("publishConfig", () -> {
             ConfigService configService = getConfigService();
             if (configService == null) {
                 return false;
@@ -949,7 +949,7 @@ public class NacosTemplate {
             return false;
         }
         String targetGroup = resolveConfigGroup(groupName);
-        return executeWithExceptionTranslation("publishConfigCas", () -> {
+        return executeConfigWithExceptionTranslation("publishConfigCas", () -> {
             ConfigService configService = getConfigService();
             if (configService == null) {
                 return false;
@@ -986,7 +986,7 @@ public class NacosTemplate {
             return false;
         }
         String targetGroup = resolveConfigGroup(groupName);
-        return executeWithExceptionTranslation("removeConfig", () -> {
+        return executeConfigWithExceptionTranslation("removeConfig", () -> {
             ConfigService configService = getConfigService();
             if (configService == null) {
                 return false;
@@ -1020,7 +1020,7 @@ public class NacosTemplate {
             return;
         }
         String targetGroup = resolveConfigGroup(groupName);
-        executeWithExceptionTranslation("addConfigListener", () -> {
+        executeConfigWithExceptionTranslation("addConfigListener", () -> {
             ConfigService configService = getConfigService();
             if (configService != null) {
                 configService.addListener(dataId, targetGroup, listener);
@@ -1054,14 +1054,13 @@ public class NacosTemplate {
             return;
         }
         String targetGroup = resolveConfigGroup(groupName);
-        try {
+        executeConfigWithExceptionTranslation("removeConfigListener", () -> {
             ConfigService configService = getConfigService();
             if (configService != null) {
                 configService.removeListener(dataId, targetGroup, listener);
             }
-        } catch (Exception ex) {
-            log.debug("Failed to remove config listener for dataId '{}': {}", dataId, ex.getMessage());
-        }
+            return null;
+        });
     }
 
     /**
@@ -1103,6 +1102,28 @@ public class NacosTemplate {
     }
 
     /**
+     * 强校验 Nacos 服务注册与发现是否就绪可用
+     *
+     * @throws BusinessException 当 Nacos 服务注册与发现未启用或不可用时抛出 (NACOS_DISCOVERY_DISABLED)
+     */
+    public void ensureDiscoveryAvailable() {
+        if (!isDiscoveryAvailable()) {
+            throw new BusinessException(NacosResultCode.NACOS_DISCOVERY_DISABLED);
+        }
+    }
+
+    /**
+     * 强校验 Nacos 动态配置中心是否就绪可用
+     *
+     * @throws BusinessException 当 Nacos 动态配置中心未启用或不可用时抛出 (NACOS_CONFIG_DISABLED)
+     */
+    public void ensureConfigAvailable() {
+        if (!isConfigAvailable()) {
+            throw new BusinessException(NacosResultCode.NACOS_CONFIG_DISABLED);
+        }
+    }
+
+    /**
      * 执行底层调用并强制进行异常因果转译，100% 传递原始因果链
      */
     protected <T> T executeWithExceptionTranslation(String operation, NacosAction<T> action) {
@@ -1120,6 +1141,23 @@ public class NacosTemplate {
         } catch (Exception e) {
             throw new BusinessException(NacosResultCode.NACOS_OPERATION_FAILED.getCode(),
                     "Nacos " + operation + " 异常: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 执行配置中心底层调用并强制进行精准异常因果转译，100% 传递原始因果链
+     */
+    protected <T> T executeConfigWithExceptionTranslation(String operation, NacosAction<T> action) {
+        try {
+            return action.execute();
+        } catch (NacosException e) {
+            throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR.getCode(),
+                    "Nacos 配置操作 " + operation + " 失败: " + e.getErrMsg(), e);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(NacosResultCode.NACOS_CONFIG_OPERATION_FAILED.getCode(),
+                    "Nacos 配置中心运维操作 " + operation + " 失败: " + e.getMessage(), e);
         }
     }
 

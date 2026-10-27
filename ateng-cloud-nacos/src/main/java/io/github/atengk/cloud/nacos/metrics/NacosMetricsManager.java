@@ -167,6 +167,7 @@ public class NacosMetricsManager {
         if (refreshTotalCounter != null) {
             refreshTotalCounter.increment();
         }
+        log.debug("Recorded Nacos config refresh success [duration: {}ms, changedKeysCount: {}]", durationMs, changedKeysCount);
     }
 
     /**
@@ -182,6 +183,7 @@ public class NacosMetricsManager {
         if (refreshFailureCounter != null) {
             refreshFailureCounter.increment();
         }
+        log.warn("Recorded Nacos config refresh failure [duration: {}ms, error: {}]", durationMs, error);
     }
 
     public boolean isEnabled() {

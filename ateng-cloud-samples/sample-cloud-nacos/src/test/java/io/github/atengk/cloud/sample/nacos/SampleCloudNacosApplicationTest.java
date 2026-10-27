@@ -239,8 +239,10 @@ class SampleCloudNacosApplicationTest {
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
-                .andExpect(jsonPath("$.data.spiChangeCount").isNumber())
-                .andExpect(jsonPath("$.data.eventListenerCount").isNumber());
+                .andExpect(jsonPath("$.data.spiChangeCount", org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.data.eventListenerCount", org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.data.lastSpiTraceId", notNullValue()))
+                .andExpect(jsonPath("$.data.lastEventTraceId", notNullValue()));
     }
 
     @Test

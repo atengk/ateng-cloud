@@ -1,8 +1,10 @@
 package io.github.atengk.cloud.nacos.config;
 
+import com.alibaba.cloud.nacos.NacosConfigAutoConfiguration;
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.cloud.nacos.NacosServiceManager;
+import com.alibaba.cloud.nacos.discovery.NacosDiscoveryAutoConfiguration;
 import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
 import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
@@ -47,7 +49,7 @@ import java.util.List;
  * @author Ateng
  * @since 2026-10-27
  */
-@AutoConfiguration
+@AutoConfiguration(after = {NacosDiscoveryAutoConfiguration.class, NacosConfigAutoConfiguration.class})
 @EnableConfigurationProperties(AtengNacosProperties.class)
 @ConditionalOnClass(NacosDiscoveryProperties.class)
 @ConditionalOnProperty(prefix = "ateng.cloud.nacos", name = "enabled", havingValue = "true", matchIfMissing = true)

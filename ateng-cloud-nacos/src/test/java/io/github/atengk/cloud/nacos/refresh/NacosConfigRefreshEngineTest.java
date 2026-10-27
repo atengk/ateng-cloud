@@ -6,6 +6,7 @@ import io.github.atengk.cloud.nacos.event.ConfigChangeType;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
@@ -30,6 +31,11 @@ import static org.mockito.Mockito.*;
  * @since 2026-10-27
  */
 class NacosConfigRefreshEngineTest {
+
+    @AfterEach
+    void tearDown() {
+        MDC.clear();
+    }
 
     @Test
     @DisplayName("基线快照与精准新旧值对比：准确计算 ADDED / MODIFIED / DELETED 变更类型")
@@ -348,5 +354,62 @@ class NacosConfigRefreshEngineTest {
 
         verify(metricsManager, times(1)).recordRefreshFailure(anyLong(), contains("One or more NacosConfigChangeListener failed"));
         verify(metricsManager, never()).recordRefreshSuccess(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("Spring 事件发布异常：指标准确上报失败并记录状态")
+    void testEventPublisherFailureReporting() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        doThrow(new RuntimeException("Simulated error in @EventListener")).when(publisher).publishEvent(any());
+        io.github.atengk.cloud.nacos.metrics.NacosMetricsManager metricsManager = mock(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                environment,
+                publisher,
+                Collections.emptyList(),
+                null,
+                properties,
+                metricsManager
+        );
+
+        engine.refreshConfig(Set.of("app.name"), "demo.yml", "DEFAULT_GROUP");
+
+        NacosConfigRefreshEngine.RefreshRecord record = engine.getLastRefreshRecord();
+        assertThat(record).isNotNull();
+        assertThat(record.isSuccess()).isFalse();
+        assertThat(record.getError()).contains("SafeConfigRefreshEvent publication encountered errors");
+
+        verify(metricsManager, times(1)).recordRefreshFailure(anyLong(), contains("SafeConfigRefreshEvent publication encountered errors"));
+        verify(metricsManager, never()).recordRefreshSuccess(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("MDC 链路注入时序前置：重绑属性期间已成功持有 traceId 上下文")
+    void testMdcTraceIdAvailableDuringRebind() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        ConfigurationPropertiesRebinder rebinder = mock(ConfigurationPropertiesRebinder.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        AtomicReference<String> traceIdDuringRebind = new AtomicReference<>();
+        doAnswer(invocation -> {
+            traceIdDuringRebind.set(MDC.get(NacosConfigRefreshEngine.MDC_TRACE_ID_KEY));
+            return null;
+        }).when(rebinder).rebind();
+
+        NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                environment,
+                publisher,
+                Collections.emptyList(),
+                rebinder,
+                properties
+        );
+
+        SafeConfigRefreshEvent event = engine.refreshConfig(Set.of("app.name"), "demo.yml", "DEFAULT_GROUP");
+
+        assertThat(traceIdDuringRebind.get()).isNotBlank();
+        assertThat(traceIdDuringRebind.get()).isEqualTo(event.getTraceId());
     }
 }

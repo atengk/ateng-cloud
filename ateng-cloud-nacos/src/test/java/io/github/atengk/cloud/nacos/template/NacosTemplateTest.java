@@ -36,6 +36,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -386,13 +387,19 @@ class NacosTemplateTest {
     }
 
     @Test
-    @DisplayName("配置中心异常转译：捕获底层 NacosException 并包装为 BusinessException 保持因果链")
+    @DisplayName("配置中心异常转译：捕获底层 NacosException 与常规异常，保持因果链并精准映射错误码")
     void testConfigOperationsExceptionTranslation() throws Exception {
         NacosConfigManager configManager = mock(NacosConfigManager.class);
         ConfigService configService = mock(ConfigService.class);
         when(configManager.getConfigService()).thenReturn(configService);
         when(configService.getConfig(anyString(), anyString(), any(Long.class)))
                 .thenThrow(new NacosException(500, "Connection timeout to Nacos server"));
+        doThrow(new NacosException(500, "Failed to add listener"))
+                .when(configService).addListener(eq("broken.yml"), anyString(), any(Listener.class));
+        doThrow(new IllegalStateException("Failed to remove listener"))
+                .when(configService).removeListener(eq("broken.yml"), anyString(), any(Listener.class));
+        when(configService.removeConfig(eq("broken.yml"), anyString()))
+                .thenThrow(new IllegalStateException("Unexpected config error"));
 
         StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
         beanFactory.addBean("configManager", configManager);
@@ -407,10 +414,63 @@ class NacosTemplateTest {
                 new ZoneAffinityInstanceFilter()
         );
 
+        // NacosException -> NACOS_CLIENT_ERROR
         assertThatThrownBy(() -> template.getConfig("broken.yml"))
                 .isInstanceOf(BusinessException.class)
                 .hasCauseInstanceOf(NacosException.class)
-                .hasMessageContaining("Connection timeout to Nacos server");
+                .hasMessageContaining("Connection timeout to Nacos server")
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(NacosResultCode.NACOS_CLIENT_ERROR.getCode()));
+
+        // addConfigListener NacosException -> NACOS_CLIENT_ERROR
+        Listener listener = mock(Listener.class);
+        assertThatThrownBy(() -> template.addConfigListener("broken.yml", listener))
+                .isInstanceOf(BusinessException.class)
+                .hasCauseInstanceOf(NacosException.class)
+                .hasMessageContaining("Failed to add listener")
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(NacosResultCode.NACOS_CLIENT_ERROR.getCode()));
+
+        // removeConfigListener 异常因果转译 -> NACOS_CONFIG_OPERATION_FAILED (对称防线，彻底杜绝静默吞咽)
+        assertThatThrownBy(() -> template.removeConfigListener("broken.yml", listener))
+                .isInstanceOf(BusinessException.class)
+                .hasCauseInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Failed to remove listener")
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(NacosResultCode.NACOS_CONFIG_OPERATION_FAILED.getCode()));
+
+        // 非 NacosException -> NACOS_CONFIG_OPERATION_FAILED
+        assertThatThrownBy(() -> template.removeConfig("broken.yml"))
+                .isInstanceOf(BusinessException.class)
+                .hasCauseInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Unexpected config error")
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(NacosResultCode.NACOS_CONFIG_OPERATION_FAILED.getCode()));
+    }
+
+    @Test
+    @DisplayName("服务与配置中心强可用性断言校验：未启用或离线时抛出精准专属错误码")
+    void testEnsureAvailabilityChecks() {
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        assertThatThrownBy(template::ensureConfigAvailable)
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(NacosResultCode.NACOS_CONFIG_DISABLED.getCode()));
+
+        assertThatThrownBy(template::ensureDiscoveryAvailable)
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(NacosResultCode.NACOS_DISCOVERY_DISABLED.getCode()));
     }
 
     @Test

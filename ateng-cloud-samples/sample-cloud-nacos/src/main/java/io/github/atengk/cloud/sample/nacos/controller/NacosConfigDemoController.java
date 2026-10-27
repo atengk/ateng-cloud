@@ -8,6 +8,7 @@ import io.github.atengk.cloud.sample.nacos.config.DemoConfigProperties;
 import io.github.atengk.cloud.sample.nacos.config.DemoNacosConfigChangeListener;
 import io.github.atengk.cloud.sample.nacos.config.DemoSafeRefreshEventListener;
 import io.github.atengk.cloud.sample.nacos.model.DemoConfigVO;
+import io.github.atengk.cloud.sample.nacos.model.ListenerStatusVO;
 import io.github.atengk.cloud.sample.nacos.model.RefreshRequestDTO;
 import io.github.atengk.cloud.sample.nacos.model.SafeConfigRefreshVO;
 import jakarta.validation.Valid;
@@ -71,13 +72,14 @@ public class NacosConfigDemoController {
      * 读取受管监听器触发状态统计
      */
     @GetMapping("/listener-status")
-    public Result<Map<String, Object>> getListenerStatus() {
-        Map<String, Object> status = new LinkedHashMap<>();
-        status.put("spiChangeCount", demoListener.getChangeCount());
-        status.put("eventListenerCount", demoEventListener.getEventCount());
-        status.put("lastSpiTraceId", demoListener.getLastEvent() != null ? demoListener.getLastEvent().getTraceId() : "");
-        status.put("lastEventTraceId", demoEventListener.getLastEvent() != null ? demoEventListener.getLastEvent().getTraceId() : "");
-        return Result.success(status);
+    public Result<ListenerStatusVO> getListenerStatus() {
+        ListenerStatusVO vo = new ListenerStatusVO(
+                demoListener.getChangeCount(),
+                demoEventListener.getEventCount(),
+                demoListener.getLastEvent() != null ? demoListener.getLastEvent().getTraceId() : "",
+                demoEventListener.getLastEvent() != null ? demoEventListener.getLastEvent().getTraceId() : ""
+        );
+        return Result.success(vo);
     }
 
     /**

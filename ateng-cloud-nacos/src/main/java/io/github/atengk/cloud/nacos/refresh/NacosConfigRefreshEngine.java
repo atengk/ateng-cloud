@@ -189,14 +189,20 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             return new SafeConfigRefreshEvent(this, dataId, group, Collections.emptySet(), Collections.emptyMap(), "");
         }
 
+        if (properties != null && properties.getConfig() != null && !properties.getConfig().isEnabled()) {
+            log.debug("[ateng-cloud-nacos] Nacos 配置中心治理增强未启用，跳过安全热更执行。");
+            return new SafeConfigRefreshEvent(this, dataId, group, Collections.emptySet(), Collections.emptyMap(), "");
+        }
+
+        String effectiveGroup = StringUtils.hasText(group) ? group :
+                (properties != null && properties.getConfig() != null && StringUtils.hasText(properties.getConfig().getDefaultGroup())
+                        ? properties.getConfig().getDefaultGroup() : "DEFAULT_GROUP");
+
         long startTime = System.currentTimeMillis();
         boolean anyError = false;
         String errorMessage = null;
 
-        // 1. 确保 @ConfigurationProperties 纯属性 POJO 增量热绑
-        rebindConfigurationProperties();
-
-        // 2. 注入或维持 MDC 链路追踪上下文
+        // 1. 注入或维持 MDC 链路追踪上下文 (置于最前置，确保重绑与广播全程具备 traceId)
         String existingTraceId = MDC.get(MDC_TRACE_ID_KEY);
         String traceId = StringUtils.hasText(existingTraceId) ? existingTraceId : generateTraceId();
         boolean traceIdInjected = false;
@@ -207,15 +213,18 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 traceIdInjected = true;
             }
 
+            // 2. 确保 @ConfigurationProperties 纯属性 POJO 增量热绑
+            rebindConfigurationProperties();
+
             // 3. 计算配置项详细变更对比 (oldValue -> newValue)
             Map<String, ConfigChangeItem> changeDetails = computeChangeDetails(changedKeys);
 
             // 4. 构建强类型事件
             SafeConfigRefreshEvent event = new SafeConfigRefreshEvent(
-                    this, dataId, group, changedKeys, changeDetails, traceId);
+                    this, dataId, effectiveGroup, changedKeys, changeDetails, traceId);
 
             log.info("[ateng-cloud-nacos] 开始广播配置安全热更 [DataId: '{}', Group: '{}', TraceId: '{}', ChangedCount: {}]",
-                    dataId != null ? dataId : "-", group != null ? group : "-", traceId, changedKeys.size());
+                    dataId != null ? dataId : "-", effectiveGroup, traceId, changedKeys.size());
 
             // 审计日志打印（对敏感属性严格执行星号脱敏）
             for (ConfigChangeItem item : changeDetails.values()) {
@@ -231,7 +240,13 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             }
 
             // 6. 发布 Spring 原生强类型事件，支持 @EventListener 响应
-            publishSafeEvent(event);
+            boolean eventError = publishSafeEvent(event);
+            if (eventError) {
+                anyError = true;
+                if (errorMessage == null) {
+                    errorMessage = "SafeConfigRefreshEvent publication encountered errors";
+                }
+            }
 
             log.info("[ateng-cloud-nacos] 配置安全热更新执行完成 [TraceId: '{}', ChangedKeys: {}]", traceId, changedKeys);
             return event;
@@ -372,15 +387,20 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
 
     /**
      * 发布 Spring 强类型事件
+     *
+     * @param event 待发布的配置安全热更事件
+     * @return 是否发生异常（true 表示发布期间发生异常，false 表示正常完成）
      */
-    private void publishSafeEvent(SafeConfigRefreshEvent event) {
+    private boolean publishSafeEvent(SafeConfigRefreshEvent event) {
         if (eventPublisher == null) {
-            return;
+            return false;
         }
         try {
             eventPublisher.publishEvent(event);
+            return false;
         } catch (Throwable t) {
             log.error("[ateng-cloud-nacos] 发布 SafeConfigRefreshEvent 事件时捕获异常: {}", t.getMessage(), t);
+            return true;
         }
     }
 

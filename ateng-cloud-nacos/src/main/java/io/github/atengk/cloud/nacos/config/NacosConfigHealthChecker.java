@@ -2,11 +2,15 @@ package io.github.atengk.cloud.nacos.config;
 
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.nacos.api.config.ConfigService;
+import io.github.atengk.cloud.nacos.constant.NacosConfigConstants;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.boot.context.properties.bind.BindResult;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
@@ -83,18 +87,25 @@ public class NacosConfigHealthChecker implements SmartInitializingSingleton {
             return false;
         }
 
-        // 探测单一属性声明 spring.config.import
+        // 1. 探测单一属性声明 spring.config.import
         String singleImport = environment.getProperty("spring.config.import");
-        if (StringUtils.hasText(singleImport) && singleImport.contains("nacos:")) {
+        if (StringUtils.hasText(singleImport) && singleImport.contains(NacosConfigConstants.PREFIX_NACOS_IMPORT)) {
             return true;
         }
 
-        // 探测列表格式声明 spring.config.import[0], [1], ...
-        for (int i = 0; i < 20; i++) {
-            String indexedImport = environment.getProperty("spring.config.import[" + i + "]");
-            if (StringUtils.hasText(indexedImport) && indexedImport.contains("nacos:")) {
-                return true;
+        // 2. 依托 Spring Boot 原生类型安全 Binder 探测列表声明（YAML 列表或 indexed 属性），杜绝硬编码循环与数组边界溢出
+        try {
+            Binder binder = Binder.get(environment);
+            BindResult<List<String>> importList = binder.bind("spring.config.import", Bindable.listOf(String.class));
+            if (importList.isBound() && importList.get() != null) {
+                for (String item : importList.get()) {
+                    if (StringUtils.hasText(item) && item.contains(NacosConfigConstants.PREFIX_NACOS_IMPORT)) {
+                        return true;
+                    }
+                }
             }
+        } catch (Exception ex) {
+            log.debug("Failed to bind spring.config.import via Binder: {}", ex.getMessage());
         }
 
         return false;

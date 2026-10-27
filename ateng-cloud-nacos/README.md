@@ -30,6 +30,7 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `NacosGracefulShutdownLifecycle` | 生命周期钩子 | `SmartLifecycle` 最高优先级（`PHASE_MAX`）排空钩子 | 容器停机最先触发注销与排空 |
 | `NacosServiceEndpoint` | Actuator 端点 | `/actuator/nacosService` 专属运维与状态端点 | 展示实例元数据、受管监听器列表与最近热更状态 |
 | `ZoneAffinityInstanceFilter` | 路由过滤器 | 机房 (Zone) 就近亲和与跨区平滑容灾降级过滤器 | 标配 `@ConditionalOnMissingBean` |
+| `NacosConfigConstants` | 常量规约类 | Nacos 配置导入前缀、默认分组与三层配置 Data ID 推荐命名规约 | 开箱即用通用常量 |
 | `NacosResultCode` | 错误码枚举 | Nacos 统一业务错误码 (`4101~4106`，归属 `NETWORK_RPC`) | 底层异常因果转译映射 |
 
 ---
@@ -38,13 +39,15 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 
 | 方法签名 | 返回类型 | 功能说明与生产语义 | 离线自洽保底行为 |
 | :--- | :--- | :--- | :--- |
-| `getConfig(dataId [, group])` | `String` | 读取指定配置集内容（未配置时抛出业务异常） | 离线抛出 `NACOS_CONFIG_DISABLED` |
+| `getConfig(dataId [, group])` | `String` | 读取指定配置集内容（未找到或离线时返回 null） | 离线保底返回 `null` |
 | `findConfig(dataId [, group])` | `Optional<String>` | 弹性读取指定配置集内容（不存在或离线时返回 empty） | 保底返回 `Optional.empty()` |
-| `publishConfig(dataId [, group], content [, type])` | `boolean` | 发布或全量覆盖指定配置集内容 | 离线抛出 `NACOS_CONFIG_DISABLED` |
-| `publishConfigCas(dataId [, group], content, casMd5 [, type])` | `boolean` | 基于配置内容 MD5 执行 CAS 乐观锁并发安全发布 | 离线抛出 `NACOS_CONFIG_DISABLED` |
-| `removeConfig(dataId [, group])` | `boolean` | 物理移除指定的 Nacos 配置集 | 离线抛出 `NACOS_CONFIG_DISABLED` |
-| `addConfigListener(dataId [, group], listener)` | `void` | 动态注册底层 Nacos 原生配置监听器回调 | 离线平滑 No-Op |
-| `removeConfigListener(dataId [, group], listener)` | `void` | 动态注销底层 Nacos 原生配置监听器回调 | 离线平滑 No-Op |
+| `publishConfig(dataId [, group], content [, type])` | `boolean` | 发布或全量覆盖指定配置集内容 | 离线保底返回 `false` |
+| `publishConfigCas(dataId [, group], content, casMd5 [, type])` | `boolean` | 基于配置内容 MD5 执行 CAS 乐观锁并发安全发布 | 离线保底返回 `false` |
+| `removeConfig(dataId [, group])` | `boolean` | 物理移除指定的 Nacos 配置集 | 离线保底返回 `false` |
+| `addConfigListener(dataId [, group], listener)` | `void` | 动态注册底层 Nacos 原生配置监听器回调 | 具备因果异常转译，离线平滑 No-Op |
+| `removeConfigListener(dataId [, group], listener)` | `void` | 动态注销底层 Nacos 原生配置监听器回调 | 具备因果异常转译，离线平滑 No-Op |
+| `ensureConfigAvailable()` | `void` | 强校验配置中心就绪状态，不可用时抛出业务异常 | 离线抛出 `NACOS_CONFIG_DISABLED` |
+| `ensureDiscoveryAvailable()` | `void` | 强校验服务发现就绪状态，不可用时抛出业务异常 | 离线抛出 `NACOS_DISCOVERY_DISABLED` |
 | `refreshConfig(changedKeys)` | `SafeConfigRefreshEvent` | 声明式按属性键集合触发安全热更与 `@ConfigurationProperties` 重绑 | 返回强类型刷新事件对象 |
 | `isConfigAvailable()` | `boolean` | 判断当前 Nacos 配置中心客户端是否就绪可用 | 离线返回 `false` |
 | `isDiscoveryAvailable()` | `boolean` | 判断当前 Nacos 服务发现客户端是否就绪可用 | 离线返回 `false` |
