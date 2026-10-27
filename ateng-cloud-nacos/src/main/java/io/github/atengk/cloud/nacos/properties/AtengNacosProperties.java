@@ -240,13 +240,14 @@ public class AtengNacosProperties {
          * 忽略的虚拟或桥接网卡名称正则表达式黑名单
          */
         private List<String> ignoredInterfaces = new ArrayList<>(Arrays.asList(
-                "docker0", "flannel.*", "cni.*", "veth.*", "vmnet.*", "virbr.*", "br-.*"
+                "docker0", "flannel.*", "cni.*", "veth.*", "vmnet.*", "virbr.*", "br-.*",
+                ".*vbox.*", ".*virtualbox.*", ".*vmware.*", ".*hyper-v.*", ".*vethernet.*"
         ));
 
         /**
-         * 当最终仅侦测到 127.0.0.1 回环地址时是否抛出异常阻断启动（生产建议开启，单测可关闭）
+         * 当最终仅侦测到 127.0.0.1 回环地址时是否抛出异常阻断启动（生产默认开启 Fail-Fast 防线，杜绝回环 IP 注册）
          */
-        private boolean failOnLoopback = false;
+        private boolean failOnLoopback = true;
 
         public String getNetworkInterface() {
             return networkInterface;
@@ -287,7 +288,7 @@ public class AtengNacosProperties {
     public static class EndpointProperties {
 
         /**
-         * 是否暴露 /actuator/nacos-service 专属运维端点
+         * 是否暴露 /actuator/nacosService 专属运维端点
          */
         private boolean enabled = true;
 

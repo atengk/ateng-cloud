@@ -91,4 +91,20 @@ class NacosMetadataProviderTest {
         provider.populateMetadata(target);
         assertThat(target).containsEntry("customizer-1", "val1");
     }
+
+    @Test
+    @DisplayName("测试 DefaultNacosMetadataCustomizer 默认定制行为")
+    void testDefaultNacosMetadataCustomizer() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        properties.getMetadata().getCustom().put("service-type", "internal");
+
+        io.github.atengk.cloud.nacos.spi.DefaultNacosMetadataCustomizer customizer =
+                new io.github.atengk.cloud.nacos.spi.DefaultNacosMetadataCustomizer(properties);
+
+        Map<String, String> map = new HashMap<>();
+        customizer.customize(map);
+
+        assertThat(map).containsEntry("framework", "ateng-cloud");
+        assertThat(map).containsEntry("service-type", "internal");
+    }
 }

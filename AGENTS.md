@@ -132,6 +132,12 @@
   2. **临时资源绝对隔离**：单测涉及文件与磁盘 IO 时，强制使用 JUnit 5 原生 `@TempDir` 注入临时目录，测试结束后由引擎自动物理销毁；
   3. **上下文零污染**：任何涉及修改上下文（如 `UserContextHolder`、`TenantContextHolder`、`RpcContext`、MDC 等）的测试用例，必须在 `@AfterEach` 中无条件执行重置与清理，杜绝跨测试用例的线程脏读。
 
+- **远程服务本地真实连接与双模自适应集成铁律 (Dual-Mode Integration Invariants)**：
+  1. **单测试套件与双模自适应 (Dual-Mode Single-Suite)**：坚决杜绝在工程中编写和维护两套重复测试代码（严禁编写 `*LocalTest.java` 复制业务用例）；测试集中维护在场景样例工程中，离线 Mock/桩配置统一标配 `@Profile("!local")`，默认/CI 环境走离线自洽，激活 `local` 时让位原生 Starter 自动装配直连真实服务；
+  2. **配置资产与零泄密物理隔离 (Resilient Import & Secret Hygiene)**：全局 `.gitignore` 强制忽略 `**/application-local*.yml` 等真实凭据文件；各 Sample 必须提供全大写语义占位符模板 `application-local.example.yml`；基准 `application.yml` 统一通过 `optional:classpath:application-local.yml` 弹性探测，确保 CI 静默跳过不崩溃；
+  3. **真机强断言与确定性清理 (Real Assertion & Cleanup Invariant)**：激活 `local` 实测时，必须真实向外部服务发起交互并强断言成功；在 `@AfterEach` 中执行确定性补偿与资源清理；网络异常严禁静默吞掉；
+  4. **环境缺失豁免规范 (Environment Exemption Rule)**：本地确无条件提供对应中间件时，在工单与 Audit Checklist 登记 `[豁免：无可用环境]`，以离线自洽测试准出。
+
 - **五维生产就绪交付模型 (The 5D Production-Ready Invariant)**：
   子模块 `README.md` 面向真实生产接入者，严禁仅停留在简单 Demo 的自嗨罗列；任何新增或修改的功能特性，必须正交覆盖以下五个维度，缺一即阻断准出：
   1. **维度零：特性与公共 API 全景速查矩阵**：核心显要位置 100% 收录全景表格（收录所有门面类、公共方法、核心注解、配置属性 `@ConfigurationProperties` 与扩展 SPI）；
@@ -213,6 +219,7 @@
        - [ ] **九道成熟度防线自检**：是否通过对称门面、边界 Fail-Fast、确定性清理、超时防悬挂、驱动异常转译等全部 9 项检查？
        - [ ] **微服务专属铁律自检**：网关是否纯响应式（0 Servlet 依赖）、Feign 写接口读超时是否彻底禁重试、是否开启 Same-Token 内部防穿透与 Nacos 现代加载？
        - [ ] **单测环境隔离**：是否使用 `@TempDir`、在 `@AfterEach` 中清理上下文、100% 离线自洽（关闭外部 Nacos/Sentinel 物理网络依赖）？
+       - [ ] **双模自适应与物理隔离 (Dual-Mode)**：是否在 `.gitignore` 中物理忽略 `**/application-local*.yml`、提供全大写语义占位符模板 `application-local.example.yml`、配置 `optional:` 弹性探测并在测试类中以 `@Profile("!local")` 自洽隔离？若本地连接真实环境，是否在激活 `local` 时跑通全真交互并在 `@AfterEach` 确定性清理？（确无环境需登记 `[豁免：无可用环境]`）
        - [ ] **传输契约隔离**：Controller 传输边界是否 100% 杜绝持久层实体（Entity）泄露？
      - **审查红牌阻断 (Red Card Gate)**：调用 `/code-review` 开展双轴审查；若审查发现模块公开功能在 Sample 中缺位、文档示例未经 Sample 真实跑通、文档漏写公开功能，或触碰成熟度红线，一律出具红牌阻断，强制返修直至双绿；
   4. **受控提交**：按第 5 节执行受控提交并推送（代码与文档同工单同提交原子交付）；

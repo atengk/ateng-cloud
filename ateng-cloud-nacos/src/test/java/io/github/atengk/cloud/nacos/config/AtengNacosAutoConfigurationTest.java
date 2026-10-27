@@ -34,6 +34,7 @@ class AtengNacosAutoConfigurationTest {
                 .run(context -> {
             assertThat(context).hasSingleBean(AtengNacosProperties.class);
             assertThat(context).hasSingleBean(NacosNetworkAddressDetector.class);
+            assertThat(context).hasSingleBean(io.github.atengk.cloud.nacos.spi.DefaultNacosMetadataCustomizer.class);
             assertThat(context).hasSingleBean(NacosMetadataProvider.class);
             assertThat(context).hasSingleBean(NacosDiscoveryPropertiesPostProcessor.class);
             assertThat(context).hasSingleBean(NacosLifecycleStateMachine.class);

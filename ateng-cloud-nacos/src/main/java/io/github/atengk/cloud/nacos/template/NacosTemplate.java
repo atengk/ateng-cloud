@@ -22,6 +22,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -203,7 +204,7 @@ public class NacosTemplate {
         if (discoveryProperties == null) {
             return Optional.empty();
         }
-        String serviceName = discoveryProperties.getService();
+        String serviceName = extractPureServiceName(discoveryProperties.getService());
         String groupName = discoveryProperties.getGroup();
         String ip = discoveryProperties.getIp();
         int port = discoveryProperties.getPort();
@@ -380,6 +381,38 @@ public class NacosTemplate {
     }
 
     /**
+     * 判断指定 IP 与端口是否对应当前运行微服务实例
+     *
+     * @param ip   目标实例 IP
+     * @param port 目标实例端口
+     * @return 是否属于当前节点自身
+     */
+    public boolean isCurrentInstance(String ip, int port) {
+        NacosDiscoveryProperties discoveryProperties = discoveryPropertiesProvider.getIfAvailable();
+        if (discoveryProperties == null) {
+            return false;
+        }
+        return Objects.equals(discoveryProperties.getIp(), ip) && discoveryProperties.getPort() == port;
+    }
+
+    /**
+     * 清洗服务名，剔除可能附带的分组前缀（如 DEFAULT_GROUP@@sample-service -> sample-service）
+     *
+     * @param serviceName 原始服务名
+     * @return 纯净的服务名
+     */
+    public static String extractPureServiceName(String serviceName) {
+        if (!StringUtils.hasText(serviceName)) {
+            return serviceName;
+        }
+        int index = serviceName.indexOf(Constants.SERVICE_INFO_SPLITER);
+        if (index >= 0) {
+            return serviceName.substring(index + Constants.SERVICE_INFO_SPLITER.length());
+        }
+        return serviceName;
+    }
+
+    /**
      * 动态设置指定服务实例的启用/禁用状态
      *
      * @param serviceName 服务名
@@ -406,16 +439,31 @@ public class NacosTemplate {
             return;
         }
         executeWithExceptionTranslation("setInstanceEnabled", () -> {
+            String pureServiceName = extractPureServiceName(serviceName);
+            String group = resolveGroupName(groupName);
+            Instance instance = findOrCreateInstance(pureServiceName, group, ip, port);
+            instance.setServiceName(pureServiceName);
+            instance.setEnabled(enabled);
+
+            // 若目标为当前节点自身：使用 NamingService gRPC 链路做原子增量覆盖（原生兼容 Nacos 1.x/2.x/3.x）
+            if (isCurrentInstance(ip, port)) {
+                NamingService namingService = getNamingService();
+                if (namingService != null) {
+                    namingService.registerInstance(pureServiceName, group, instance);
+                    log.info("Successfully updated current Nacos instance enabled state to '{}' via gRPC in '{}:{}'",
+                            enabled, group, pureServiceName);
+                    return null;
+                }
+            }
+
+            // 跨实例外部运维：使用 NamingMaintainService
             NamingMaintainService maintainService = getNamingMaintainService();
             if (maintainService == null) {
                 throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR, "NamingMaintainService unavailable");
             }
-            String group = resolveGroupName(groupName);
-            Instance instance = findOrCreateInstance(serviceName, group, ip, port);
-            instance.setEnabled(enabled);
-            maintainService.updateInstance(serviceName, group, instance);
+            maintainService.updateInstance(pureServiceName, group, instance);
             log.info("Successfully set Nacos instance {}:{} enabled state to '{}' for service '{}:{}'",
-                    ip, port, enabled, group, serviceName);
+                    ip, port, enabled, group, pureServiceName);
             return null;
         });
     }
@@ -447,20 +495,40 @@ public class NacosTemplate {
             return;
         }
         executeWithExceptionTranslation("updateInstanceWeight", () -> {
+            String pureServiceName = extractPureServiceName(serviceName);
+            String group = resolveGroupName(groupName);
+            Instance instance = findOrCreateInstance(pureServiceName, group, ip, port);
+            instance.setServiceName(pureServiceName);
+            instance.setWeight(weight);
+
+            // 若目标为当前节点自身：使用 NamingService gRPC 链路无损覆盖
+            if (isCurrentInstance(ip, port)) {
+                NamingService namingService = getNamingService();
+                if (namingService != null) {
+                    namingService.registerInstance(pureServiceName, group, instance);
+                    if (weight <= 0.0) {
+                        log.warn("Current Nacos instance weight set to {} (traffic isolated) via gRPC in '{}:{}'",
+                                weight, group, pureServiceName);
+                    } else {
+                        log.info("Successfully updated current Nacos instance weight to {} via gRPC in '{}:{}'",
+                                weight, group, pureServiceName);
+                    }
+                    return null;
+                }
+            }
+
+            // 跨实例外部运维：使用 NamingMaintainService
             NamingMaintainService maintainService = getNamingMaintainService();
             if (maintainService == null) {
                 throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR, "NamingMaintainService unavailable");
             }
-            String group = resolveGroupName(groupName);
-            Instance instance = findOrCreateInstance(serviceName, group, ip, port);
-            instance.setWeight(weight);
-            maintainService.updateInstance(serviceName, group, instance);
+            maintainService.updateInstance(pureServiceName, group, instance);
             if (weight <= 0.0) {
                 log.warn("Nacos instance {}:{} weight set to {} (traffic completely isolated) in '{}:{}'",
-                        ip, port, weight, group, serviceName);
+                        ip, port, weight, group, pureServiceName);
             } else {
                 log.info("Successfully updated Nacos instance {}:{} weight to {} in '{}:{}'",
-                        ip, port, weight, group, serviceName);
+                        ip, port, weight, group, pureServiceName);
             }
             return null;
         });
@@ -468,6 +536,9 @@ public class NacosTemplate {
 
     /**
      * 动态注册或更新当前服务实例的元数据
+     *
+     * <p>优先将元数据同步至本地缓存与配置属性，随后通过受管 {@link NamingService}
+     * 基于长连接 gRPC 协议推送至 Nacos 集群完成原子覆写，原生兼容 Nacos 1.x、2.x 及 3.x。</p>
      *
      * @param key   元数据键
      * @param value 元数据值
@@ -480,22 +551,13 @@ public class NacosTemplate {
         if (discoveryProperties != null) {
             discoveryProperties.getMetadata().put(key, value);
         }
-        getMyInstance().ifPresent(instance -> {
-            try {
-                NamingMaintainService maintainService = getNamingMaintainService();
-                if (maintainService != null) {
-                    instance.getMetadata().put(key, value);
-                    maintainService.updateInstance(instance.getServiceName(), resolveGroupName(null), instance);
-                    log.info("Successfully registered metadata '{}'='{}' for current Nacos instance", key, value);
-                }
-            } catch (Exception ex) {
-                log.warn("Failed to push updated metadata to Nacos server: {}", ex.getMessage());
-            }
-        });
+        pushSelfInstanceMetadata(key, value, true);
     }
 
     /**
      * 动态移除当前服务实例指定的元数据
+     *
+     * <p>从本地配置属性及 Nacos 注册中心当前实例元数据中移除指定键值，并基于 gRPC 协议推送更新。</p>
      *
      * @param key 元数据键
      */
@@ -507,18 +569,39 @@ public class NacosTemplate {
         if (discoveryProperties != null) {
             discoveryProperties.getMetadata().remove(key);
         }
-        getMyInstance().ifPresent(instance -> {
-            try {
-                NamingMaintainService maintainService = getNamingMaintainService();
-                if (maintainService != null) {
-                    instance.getMetadata().remove(key);
-                    maintainService.updateInstance(instance.getServiceName(), resolveGroupName(null), instance);
-                    log.info("Successfully removed metadata key '{}' for current Nacos instance", key);
+        pushSelfInstanceMetadata(key, null, false);
+    }
+
+    private void pushSelfInstanceMetadata(String key, String value, boolean isAddition) {
+        NacosDiscoveryProperties discoveryProperties = discoveryPropertiesProvider.getIfAvailable();
+        String serviceName = discoveryProperties != null ? extractPureServiceName(discoveryProperties.getService()) : null;
+        String group = resolveGroupName(discoveryProperties != null ? discoveryProperties.getGroup() : null);
+        String ip = discoveryProperties != null ? discoveryProperties.getIp() : null;
+        int port = discoveryProperties != null ? discoveryProperties.getPort() : 0;
+
+        if (StringUtils.hasText(serviceName) && StringUtils.hasText(ip) && port > 0) {
+            executeWithExceptionTranslation(isAddition ? "registerMetadata" : "removeMetadata", () -> {
+                NamingService namingService = getNamingService();
+                if (namingService != null) {
+                    Instance instance = findOrCreateInstance(serviceName, group, ip, port);
+                    instance.setServiceName(serviceName);
+                    if (isAddition) {
+                        instance.getMetadata().put(key, value);
+                    } else {
+                        instance.getMetadata().remove(key);
+                    }
+                    namingService.registerInstance(serviceName, group, instance);
+                    if (isAddition) {
+                        log.info("Successfully registered metadata '{}'='{}' for current Nacos instance via gRPC", key, value);
+                    } else {
+                        log.info("Successfully removed metadata key '{}' for current Nacos instance via gRPC", key);
+                    }
+                } else {
+                    log.debug("NamingService unavailable in current context. Updated local metadata provider only.");
                 }
-            } catch (Exception ex) {
-                log.warn("Failed to push removed metadata to Nacos server: {}", ex.getMessage());
-            }
-        });
+                return null;
+            });
+        }
     }
 
     /**
@@ -548,18 +631,30 @@ public class NacosTemplate {
             return;
         }
         executeWithExceptionTranslation("updateInstanceMetadata", () -> {
+            String pureServiceName = extractPureServiceName(serviceName);
+            String group = resolveGroupName(groupName);
+            Instance instance = findOrCreateInstance(pureServiceName, group, ip, port);
+            instance.setServiceName(pureServiceName);
+            if (metadata != null) {
+                instance.getMetadata().putAll(metadata);
+            }
+
+            if (isCurrentInstance(ip, port)) {
+                NamingService namingService = getNamingService();
+                if (namingService != null) {
+                    namingService.registerInstance(pureServiceName, group, instance);
+                    log.info("Successfully updated current Nacos instance metadata via gRPC in '{}:{}'", group, pureServiceName);
+                    return null;
+                }
+            }
+
             NamingMaintainService maintainService = getNamingMaintainService();
             if (maintainService == null) {
                 throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR, "NamingMaintainService unavailable");
             }
-            String group = resolveGroupName(groupName);
-            Instance instance = findOrCreateInstance(serviceName, group, ip, port);
-            if (metadata != null) {
-                instance.getMetadata().putAll(metadata);
-            }
-            maintainService.updateInstance(serviceName, group, instance);
+            maintainService.updateInstance(pureServiceName, group, instance);
             log.info("Successfully updated metadata for Nacos instance {}:{} in service '{}:{}'",
-                    ip, port, group, serviceName);
+                    ip, port, group, pureServiceName);
             return null;
         });
     }
@@ -580,28 +675,46 @@ public class NacosTemplate {
         try {
             return action.execute();
         } catch (NacosException e) {
-            log.error("Nacos operation '{}' failed with NacosException: {}", operation, e.getErrMsg(), e);
+            String errMsg = e.getErrMsg();
+            if (errMsg != null && (errMsg.contains("no such api") || errMsg.contains("501"))) {
+                errMsg = errMsg + " (提示: Nacos 3.x 默认未内置遗留 HTTP v1 OpenAPI，跨实例管理请在服务端挂载 nacos-api-legacy-adapter 插件)";
+            }
             throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR,
-                    "Nacos " + operation + " 失败: " + e.getErrMsg(), e);
+                    "Nacos " + operation + " 失败: " + errMsg, e);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Nacos operation '{}' encountered unexpected error: {}", operation, e.getMessage(), e);
             throw new BusinessException(NacosResultCode.NACOS_OPERATION_FAILED,
                     "Nacos " + operation + " 异常: " + e.getMessage(), e);
         }
     }
 
     private Instance findOrCreateInstance(String serviceName, String groupName, String ip, int port) {
-        List<Instance> instances = getAllInstances(serviceName, groupName);
+        String pureServiceName = extractPureServiceName(serviceName);
+        List<Instance> instances = getAllInstances(pureServiceName, groupName);
+        NacosDiscoveryProperties discoveryProperties = discoveryPropertiesProvider.getIfAvailable();
         return instances.stream()
                 .filter(i -> Objects.equals(i.getIp(), ip) && i.getPort() == port)
                 .findFirst()
+                .map(inst -> {
+                    inst.setServiceName(pureServiceName);
+                    if (isCurrentInstance(ip, port) && discoveryProperties != null && discoveryProperties.getMetadata() != null) {
+                        discoveryProperties.getMetadata().forEach((k, v) -> inst.getMetadata().putIfAbsent(k, v));
+                    }
+                    return inst;
+                })
                 .orElseGet(() -> {
                     Instance inst = new Instance();
-                    inst.setServiceName(serviceName);
+                    inst.setServiceName(pureServiceName);
                     inst.setIp(ip);
                     inst.setPort(port);
+                    inst.setClusterName(properties != null && StringUtils.hasText(properties.getCluster())
+                            ? properties.getCluster() : Constants.DEFAULT_CLUSTER_NAME);
+                    inst.setEphemeral(true);
+                    if (isCurrentInstance(ip, port) && discoveryProperties != null && discoveryProperties.getMetadata() != null) {
+                        inst.setMetadata(new HashMap<>(discoveryProperties.getMetadata()));
+                        inst.setWeight(discoveryProperties.getWeight());
+                    }
                     return inst;
                 });
     }

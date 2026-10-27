@@ -18,12 +18,33 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
 | `NacosDiscoveryPropertiesPostProcessor` | 属性后置处理器 | 注册前将检测 IP、集群与元数据注入 NacosDiscoveryProperties | 条件装配于 `NacosDiscoveryProperties` |
 | `NacosLifecycleStateMachine` | 状态机管理器 | 原子驱动双阶段优雅下线排空与上线恢复 | 状态流转 `UP` -> `DRAINING` -> `OUT_OF_SERVICE` |
 | `NacosGracefulShutdownLifecycle` | 生命周期钩子 | `SmartLifecycle` 最高优先级（`PHASE_MAX`）排空钩子 | 容器停机最先触发注销与排空 |
-| `NacosServiceEndpoint` | Actuator 端点 | `/actuator/nacos-service` 专属运维与状态端点 | 支持读写分离与外部流水线主动摘牌 |
+| `NacosServiceEndpoint` | Actuator 端点 | `/actuator/nacosService` 专属运维与状态端点 | 支持读写分离与外部流水线主动摘牌 |
 | `ZoneAffinityInstanceFilter` | 路由过滤器 | 机房 (Zone) 就近亲和与跨区平滑容灾降级过滤器 | 标配 `@ConditionalOnMissingBean` |
 | `NacosTemplate` | 核心门面类 | Nacos 注册发现、机房亲和筛选与对称运维门面 | 标配 `@ConditionalOnMissingBean`，空安全 |
 | `NacosResultCode` | 错误码枚举 | Nacos 统一业务错误码 (`4101~4104`，归属 `NETWORK_RPC`) | 底层异常因果转译映射 |
 
-### 2. 配置属性速查表 (`ateng.cloud.nacos.*`)
+### 2. NacosTemplate 核心门面 API 速查表
+
+| 方法签名 | 返回类型 | 功能说明与生产语义 | 离线自洽保底行为 |
+| :--- | :--- | :--- | :--- |
+| `getAllInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务全量实例列表（含未通过健康检查实例） | 保底返回空集合 `[]` |
+| `getHealthyInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务通过健康检查的实例列表 | 保底返回空集合 `[]` |
+| `getInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务健康且可用实例列表（自动过滤 `weight <= 0.0` 与禁用节点） | 保底返回空集合 `[]` |
+| `selectOneHealthyInstance(serviceName [, groupName])` | `Optional<Instance>` | 基于 Nacos 随机权重算法选举单个健康且可用实例 | 保底返回 `Optional.empty()` |
+| `getMyInstance()` | `Optional<Instance>` | 获取当前服务节点在 Nacos 注册的自身实例信息快照 | 保底返回 `Optional.empty()` |
+| `getSameZoneInstances(serviceName [, groupName])` | `List<Instance>` | 查询机房（Zone）就近亲和优先的可用实例，本区全宕平滑降级全集群 | 保底返回空集合 `[]` |
+| `getServices(pageNo, pageSize [, groupName])` | `List<String>` | 分页拉取 Nacos 注册表中的服务名称列表 | 保底返回空集合 `[]` |
+| `isUnderProtection(serviceName [, groupName])` | `boolean` | 检测目标服务集群是否触发 Nacos 实例保护阈值（阈值内输出 WARN） | 保底返回 `false` |
+| `setInstanceEnabled(serviceName, [groupName,] ip, port, enabled)` | `void` | 动态启用或禁用目标服务实例（跨实例通过 MaintainService 治理） | 平滑 No-Op |
+| `updateInstanceWeight(serviceName, [groupName,] ip, port, weight)` | `void` | 动态调节目标服务实例权重（设为 `0.0` 流量隔离，负数抛出异常） | 平滑 No-Op |
+| `registerMetadata(key, value)` | `void` | 动态为当前自身实例追加或覆盖指定单项元数据并立即向 Nacos 推送 | 平滑 No-Op |
+| `removeMetadata(key)` | `void` | 动态从当前自身实例移除指定键名的元数据并立即向 Nacos 推送 | 平滑 No-Op |
+| `updateInstanceMetadata(serviceName, [groupName,] ip, port, metadata)` | `void` | 覆盖更新指定实例全量元数据字典（原子推送） | 平滑 No-Op |
+| `markOnline()` | `void` | 主动将当前服务节点挂牌注册至 Nacos 并恢复 Spring 就绪探针 `UP` | 平滑 No-Op |
+| `markOffline()` | `void` | 主动将当前服务节点从 Nacos 注销并执行 `drain-timeout` 优雅停机排空 | 平滑 No-Op |
+| `isCurrentInstance(ip, port)` | `boolean` | 精准判断目标 IP 与端口是否匹配当前本地服务节点 | 依据配置与探测比对 |
+
+### 3. 配置属性速查表 (`ateng.cloud.nacos.*`)
 
 | 配置项 | 类型 | 默认值 | 详细业务说明 |
 | :--- | :--- | :--- | :--- |
@@ -40,8 +61,8 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
 | `ateng.cloud.nacos.network.network-interface` | `String` | `""` | 显式指定绑定的物理网卡名（如 `eth0`） |
 | `ateng.cloud.nacos.network.preferred-networks` | `List<String>` | `[]` | 首选网段前缀列表（如 `["10.", "172.16."]`) |
 | `ateng.cloud.nacos.network.ignored-interfaces` | `List<String>` | `["docker0", ...]` | 忽略的虚拟或桥接网卡正则黑名单 |
-| `ateng.cloud.nacos.network.fail-on-loopback` | `boolean` | `false` | 仅侦测到 127.0.0.1 时是否 Fail-Fast 阻断启动 |
-| `ateng.cloud.nacos.endpoint.enabled` | `boolean` | `true` | 是否暴露 `/actuator/nacos-service` 运维端点 |
+| `ateng.cloud.nacos.network.fail-on-loopback` | `boolean` | `true` | 仅侦测到 127.0.0.1 时是否 Fail-Fast 阻断启动 |
+| `ateng.cloud.nacos.endpoint.enabled` | `boolean` | `true` | 是否暴露 `/actuator/nacosService` 运维端点 |
 
 ---
 
@@ -76,7 +97,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,nacos-service
+        include: health,info,nacosService
   endpoint:
     health:
       show-details: always
@@ -217,6 +238,24 @@ public class NacosOpsDemoController {
         nacosTemplate.removeMetadata(key);
         return Result.success();
     }
+
+    /**
+     * 主动将当前服务挂牌上线
+     */
+    @PostMapping("/online")
+    public Result<Void> markOnline() {
+        nacosTemplate.markOnline();
+        return Result.success();
+    }
+
+    /**
+     * 主动触发当前服务优雅下线排空
+     */
+    @PostMapping("/offline")
+    public Result<Void> markOffline() {
+        nacosTemplate.markOffline();
+        return Result.success();
+    }
 }
 ```
 
@@ -230,15 +269,15 @@ public class NacosOpsDemoController {
 
 ```bash
 # 1. 查询当前节点运行状态与元数据
-curl http://localhost:8080/actuator/nacos-service
+curl http://localhost:8080/actuator/nacosService
 
 # 2. 主动发起下线与排空（同步阻塞等待 drain-timeout 完成后返回）
-curl -X POST http://localhost:8080/actuator/nacos-service \
+curl -X POST http://localhost:8080/actuator/nacosService \
      -H "Content-Type: application/json" \
      -d '{"action": "offline"}'
 
 # 3. 重新挂牌上线恢复接收流量
-curl -X POST http://localhost:8080/actuator/nacos-service \
+curl -X POST http://localhost:8080/actuator/nacosService \
      -H "Content-Type: application/json" \
      -d '{"action": "online"}'
 ```
@@ -339,6 +378,8 @@ sequenceDiagram
    - 排空时间 `drain-timeout`（生产默认 10s）必须严格小于 Kubernetes Pod 配置的 `terminationGracePeriodSeconds`（建议设为 30s），预留充足缓冲防止被 K8s `SIGKILL` 强杀。
 7. **100% 离线自洽单测铁律与平滑空转**：
    - 在单测环境（`spring.cloud.nacos.discovery.enabled: false`）下，`NacosTemplate` 安全空转（查询返回空集合或 `Optional.empty()`），优雅下线、探针联动与端点平滑降级（No-Op），保障 CI 流水线零外部物理依赖秒级全绿。
+8. **双模自适应集成与本地真实连接规范 (Dual-Mode Integration)**：
+   - 基准样例工程通过 `optional:classpath:application-local.yml` 弹性探测本地真实配置；本地联调时复制 `application-local.example.yml` 为 `application-local.yml` 并激活 `local` Profile 即可直连真实 Nacos 实例，测试套件依托 `@Profile("!local")` 自动让位原生自动装配，并在 `@AfterEach` 中执行确定性状态清理与元数据排空；未激活 `local` 时默认走 100% 离线自洽构建，保障 CI 零外部依赖秒级全绿。
 
 ---
 
@@ -347,6 +388,6 @@ sequenceDiagram
 - **样例沙箱锚定**：上述代码与配置片段 100% 逆向提取自 [`sample-cloud-nacos`](../ateng-cloud-samples/sample-cloud-nacos) 真实运行工程。
 - **自动化测试保证**：端到端覆盖于 `SampleCloudNacosApplicationTest`：
   - `testGetMetadataEndpoint`：断言校验 `startup-time`、`warmup-duration`、`zone` 及 SPI 定制标签均端到端正确生效；
-  - `testGetActuatorNacosServiceEndpoint`：验证 `/actuator/nacos-service` 状态与元数据正确读取；
+  - `testGetActuatorNacosServiceEndpoint`：验证 `/actuator/nacosService` 状态与元数据正确读取；
   - `testActuatorNacosServiceOfflineAndOnlineActions`：验证执行 offline 摘牌排空时，就绪探针立即切换为 `OUT_OF_SERVICE`，执行 online 时平稳恢复 `UP`；
-  - `testNacosTemplateOpsEndpoints`：验证 `NacosTemplate` 健康实例查询、同机房亲和筛选、自身实例感知、保护阈值探测、动态元数据维护及主动上下线全链路离线平滑通过。
+  - `testNacosTemplateOpsEndpoints`：验证 `NacosTemplate` 健康实例查询、同机房亲和筛选、自身实例感知、保护阈值探测、实例启用/禁用状态与权重调节、动态元数据维护及主动上下线全链路离线平滑通过。

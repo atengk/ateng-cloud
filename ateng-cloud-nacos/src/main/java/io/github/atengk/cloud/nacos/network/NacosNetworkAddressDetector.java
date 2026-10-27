@@ -40,13 +40,13 @@ public class NacosNetworkAddressDetector {
 
         // 1. 若显式指定了物理网卡名，强制优先从该网卡获取
         if (StringUtils.hasText(networkProps.getNetworkInterface())) {
-            String specifiedIf = networkProps.getNetworkInterface().trim();
-            log.info("Nacos network interface explicitly specified: '{}'", specifiedIf);
-            String ip = getIpFromSpecifiedInterface(specifiedIf);
+            String specifiedInterface = networkProps.getNetworkInterface().trim();
+            log.info("Nacos network interface explicitly specified: '{}'", specifiedInterface);
+            String ip = getIpFromSpecifiedInterface(specifiedInterface);
             if (StringUtils.hasText(ip)) {
                 return ip;
             }
-            log.warn("Specified network interface '{}' not found or has no valid IPv4 address. Falling back to auto-detection.", specifiedIf);
+            log.warn("Specified network interface '{}' not found or has no valid IPv4 address. Falling back to auto-detection.", specifiedInterface);
         }
 
         // 2. 遍历宿主机/容器所有网卡并执行清洗过滤
@@ -96,19 +96,20 @@ public class NacosNetworkAddressDetector {
     /**
      * 判断指定网卡名称是否符合忽略黑名单
      */
-    public boolean isIgnoredInterface(String ifName, List<String> ignoredPatterns) {
-        if (!StringUtils.hasText(ifName) || ignoredPatterns == null || ignoredPatterns.isEmpty()) {
+    public boolean isIgnoredInterface(String interfaceName, List<String> ignoredPatterns) {
+        if (!StringUtils.hasText(interfaceName) || ignoredPatterns == null || ignoredPatterns.isEmpty()) {
             return false;
         }
         for (String patternStr : ignoredPatterns) {
             if (StringUtils.hasText(patternStr)) {
                 try {
-                    if (Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE).matcher(ifName).matches()) {
+                    Pattern pattern = Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE);
+                    if (pattern.matcher(interfaceName).find() || pattern.matcher(interfaceName).matches()) {
                         return true;
                     }
                 } catch (Exception e) {
                     // 若正则语法有误则做简单的包含判断
-                    if (ifName.equalsIgnoreCase(patternStr)) {
+                    if (interfaceName.toLowerCase().contains(patternStr.toLowerCase())) {
                         return true;
                     }
                 }
@@ -117,11 +118,11 @@ public class NacosNetworkAddressDetector {
         return false;
     }
 
-    private String getIpFromSpecifiedInterface(String ifName) {
+    private String getIpFromSpecifiedInterface(String interfaceName) {
         try {
-            NetworkInterface ni = NetworkInterface.getByName(ifName);
-            if (ni != null && ni.isUp()) {
-                Enumeration<InetAddress> addresses = ni.getInetAddresses();
+            NetworkInterface networkInterface = NetworkInterface.getByName(interfaceName);
+            if (networkInterface != null && networkInterface.isUp()) {
+                Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
                 while (addresses.hasMoreElements()) {
                     InetAddress addr = addresses.nextElement();
                     if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
@@ -130,7 +131,7 @@ public class NacosNetworkAddressDetector {
                 }
             }
         } catch (Exception ex) {
-            log.warn("Error reading specified network interface '{}': {}", ifName, ex.getMessage());
+            log.warn("Error reading specified network interface '{}': {}", interfaceName, ex.getMessage());
         }
         return null;
     }
@@ -144,19 +145,19 @@ public class NacosNetworkAddressDetector {
             }
 
             while (interfaces.hasMoreElements()) {
-                NetworkInterface ni = interfaces.nextElement();
-                if (!ni.isUp() || ni.isLoopback() || ni.isPointToPoint()) {
+                NetworkInterface networkInterface = interfaces.nextElement();
+                if (!networkInterface.isUp() || networkInterface.isLoopback() || networkInterface.isPointToPoint() || networkInterface.isVirtual()) {
                     continue;
                 }
 
-                String name = ni.getName();
-                String displayName = ni.getDisplayName();
+                String name = networkInterface.getName();
+                String displayName = networkInterface.getDisplayName();
                 if (isIgnoredInterface(name, ignoredPatterns) || isIgnoredInterface(displayName, ignoredPatterns)) {
                     log.debug("Ignored virtual/bridge network interface: name='{}', display='{}'", name, displayName);
                     continue;
                 }
 
-                Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
                 while (addresses.hasMoreElements()) {
                     InetAddress addr = addresses.nextElement();
                     if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {

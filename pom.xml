@@ -119,6 +119,7 @@
                 <groupId>io.github.atengk</groupId>
                 <artifactId>ateng-cloud-bom</artifactId>
                 <version>${project.version}</version>
+                <type>pom</type>
             </dependency>
             <dependency>
                 <groupId>io.github.atengk</groupId>

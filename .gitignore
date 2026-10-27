@@ -37,8 +37,14 @@ Thumbs.db
 *.swp
 *~
 
-# Local Secret Profiles (Zero-Secret Invariant)
-application-local.yml
-application-local.yaml
+# Local Environment Configuration (Credentials & Secrets)
+**/application-local*.yml
+**/application-local*.yaml
+**/application-local*.properties
 *-local.yml
 *-local.yaml
+!**/application-local.example.yml
+!**/application-local.example.yaml
+!**/application-local.example.properties
+!**/*-local.example.yml
+!**/*-local.example.yaml

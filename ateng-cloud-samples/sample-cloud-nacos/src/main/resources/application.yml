@@ -6,12 +6,22 @@ spring:
     name: sample-cloud-nacos
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:test}
+  config:
+    import:
+      # 弹性探测本地真实配置文件；物理不存在时自动静默忽略，保障 CI 离线自洽
+      - "optional:classpath:application-local.yml"
+  cloud:
+    nacos:
+      discovery:
+        enabled: false # 默认离线关闭外部物理发现连接，保障 CI 100% 离线自洽
+      config:
+        enabled: false
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,nacos-service
+        include: health,info,nacosService
   endpoint:
     health:
       show-details: always

@@ -35,6 +35,8 @@ class NacosNetworkAddressDetectorTest {
         assertThat(detector.isIgnoredInterface("veth12345", ignoredPatterns)).isTrue();
         assertThat(detector.isIgnoredInterface("br-9876", ignoredPatterns)).isTrue();
         assertThat(detector.isIgnoredInterface("vmnet8", ignoredPatterns)).isTrue();
+        assertThat(detector.isIgnoredInterface("VirtualBox Host-Only Ethernet Adapter", Arrays.asList(".*vbox.*", ".*virtualbox.*"))).isTrue();
+        assertThat(detector.isIgnoredInterface("vEthernet (FSE HostVnic)", Arrays.asList(".*vethernet.*"))).isTrue();
 
         // 真实物理网卡绝不能被误伤忽略
         assertThat(detector.isIgnoredInterface("eth0", ignoredPatterns)).isFalse();
@@ -67,5 +69,17 @@ class NacosNetworkAddressDetectorTest {
 
         assertThat(ip).isNotBlank();
         assertThat(ip.split("\\.")).hasSize(4);
+    }
+
+    @Test
+    @DisplayName("测试当全部网卡被过滤仅剩回环且开启 failOnLoopback 时强校验 Fail-Fast 阻断")
+    void testFailFastWhenOnlyLoopbackAvailable() {
+        AtengNacosProperties.NetworkProperties props = new AtengNacosProperties.NetworkProperties();
+        props.setIgnoredInterfaces(Collections.singletonList(".*")); // 忽略所有网卡强制回环
+        props.setFailOnLoopback(true);
+
+        assertThatThrownBy(() -> detector.detectIp(props))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("fail-on-loopback is enabled");
     }
 }

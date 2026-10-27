@@ -95,17 +95,18 @@ jobs:
           fi
 
   # ----------------------------------------------------------------------------
-  # Job 3: 跨 LTS 版本自动化单元测试矩阵 (Maven)
+  # Job 3: 跨 LTS 版本与多操作系统自动化单元测试矩阵 (Maven)
   # ----------------------------------------------------------------------------
   test:
-    name: 单元测试 (Java ${{ matrix.java-version }})
-    runs-on: ubuntu-latest
+    name: 单元测试 (${{ matrix.os }} / Java ${{ matrix.java-version }})
+    runs-on: ${{ matrix.os }}
     needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed != 'false'
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         java-version: ${{ github.event_name == 'pull_request' && fromJSON('["21"]') || fromJSON('["17", "21"]') }}
 
     steps:
@@ -119,7 +120,8 @@ jobs:
           java-version: ${{ matrix.java-version }}
           cache: 'maven'
 
-      - name: 安装测试所需中文字体 (CJK Fonts)
+      - name: 安装测试所需中文字体 (仅 Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y fonts-wqy-microhei
 
       - name: 编译并执行全量单元与集成测试

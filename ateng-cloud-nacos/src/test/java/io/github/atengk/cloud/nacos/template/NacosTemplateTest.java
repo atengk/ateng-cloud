@@ -250,6 +250,41 @@ class NacosTemplateTest {
         verify(maintainService, org.mockito.Mockito.times(2)).updateInstance(eq("order-service"), anyString(), any(Instance.class));
     }
 
+    @Test
+    @DisplayName("本节点实例状态、权重与元数据动态维护：调用 NamingService.registerInstance (gRPC)")
+    void testCurrentInstanceOperationsViaGrpc() throws Exception {
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+        discoveryProperties.setService("order-service");
+        discoveryProperties.setIp("192.168.1.100");
+        discoveryProperties.setPort(8080);
+
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+        when(namingService.getAllInstances(anyString(), anyString())).thenReturn(Collections.emptyList());
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("serviceManager", serviceManager);
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        template.registerMetadata("new-key", "new-val");
+        template.setInstanceEnabled("order-service", "192.168.1.100", 8080, false);
+        template.updateInstanceWeight("order-service", "192.168.1.100", 8080, 0.5);
+        template.removeMetadata("new-key");
+
+        verify(namingService, org.mockito.Mockito.times(4)).registerInstance(eq("order-service"), anyString(), any(Instance.class));
+    }
+
     private Instance createInstance(String ip, int port, String zone, double weight, boolean healthy, boolean enabled) {
         Instance inst = new Instance();
         inst.setIp(ip);

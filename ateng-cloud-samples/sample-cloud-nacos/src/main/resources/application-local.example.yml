@@ -1,0 +1,20 @@
+# ==============================================================================
+# 本地真实服务连接配置模板（请将本文件复制为 application-local.yml 并填写真实凭据）
+# 注意：application-local.yml 已被 .gitignore 全局物理忽略，严禁向 Git 提交任何真实凭据！
+# ==============================================================================
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    nacos:
+      server-addr: YOUR_NACOS_SERVER:8848
+      username: YOUR_NACOS_USERNAME
+      password: YOUR_NACOS_PASSWORD
+      discovery:
+        enabled: true
+        namespace: YOUR_NAMESPACE
+      config:
+        enabled: false
+        namespace: YOUR_NAMESPACE
+        file-extension: yaml

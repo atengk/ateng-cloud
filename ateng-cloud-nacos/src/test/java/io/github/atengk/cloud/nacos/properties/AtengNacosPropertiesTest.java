@@ -42,7 +42,7 @@ class AtengNacosPropertiesTest {
 
         // 默认网络配置
         AtengNacosProperties.NetworkProperties net = props.getNetwork();
-        assertThat(net.isFailOnLoopback()).isFalse();
+        assertThat(net.isFailOnLoopback()).isTrue();
         assertThat(net.getNetworkInterface()).isEmpty();
         assertThat(net.getIgnoredInterfaces()).contains("docker0");
 

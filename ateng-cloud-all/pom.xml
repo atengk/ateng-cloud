@@ -22,20 +22,5 @@
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-nacos</artifactId>
         </dependency>
-
-        <!-- 后续阶段核心构件聚合锚点预留:
-        <dependency>
-            <groupId>io.github.atengk</groupId>
-            <artifactId>ateng-cloud-feign</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.github.atengk</groupId>
-            <artifactId>ateng-cloud-sentinel</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.github.atengk</groupId>
-            <artifactId>ateng-cloud-traffic</artifactId>
-        </dependency>
-        -->
     </dependencies>
 </project>

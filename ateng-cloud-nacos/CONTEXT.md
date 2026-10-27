@@ -63,3 +63,12 @@ _Avoid_: 本地兜底, 离线缓存, 静态备份
 **Protection Threshold**:
 微服务健康实例占比低于设定安全水位时触发的过载保护状态，客户端感知该状态以防盲目剔除幸存节点导致雪崩。
 _Avoid_: 限流阈值, 熔断水位, 警戒线
+
+**Dual-Mode Adaptive Test**:
+基于 `@Profile("!local")` 在同一测试套件中无缝切换离线自洽 Mock 与本地真实网络通信的测试集成架构。
+_Avoid_: 本地双跑测试, 离线测试分离, 双套测试
+
+**Resilient Config Import**:
+基于 Spring Boot 3 `optional:classpath:` 探测规范在外部配置缺失时静默降级而不阻断容器启动的弹性加载机制。
+_Avoid_: 静默加载, 隐式配置, 容错导入
+

@@ -15,13 +15,13 @@ import java.util.Map;
 /**
  * Nacos 服务实例专属运维与生命周期端点
  *
- * <p>暴露路径为 {@code /actuator/nacos-service}，支持查看当前节点元数据与状态，
+ * <p>暴露路径为 {@code /actuator/nacosService}，支持查看当前节点元数据与状态，
  * 以及支持外部发布平台或 K8s PreStop Hook 主动发起摘牌与上线操作。</p>
  *
  * @author Ateng
  * @since 2026-10-27
  */
-@Endpoint(id = "nacos-service")
+@Endpoint(id = "nacosService")
 public class NacosServiceEndpoint {
 
     private final NacosLifecycleStateMachine stateMachine;

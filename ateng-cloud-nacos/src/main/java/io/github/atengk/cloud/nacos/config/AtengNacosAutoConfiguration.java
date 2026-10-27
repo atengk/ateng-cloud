@@ -11,6 +11,7 @@ import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.spi.DefaultNacosMetadataCustomizer;
 import io.github.atengk.cloud.nacos.spi.NacosMetadataCustomizer;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.slf4j.Logger;
@@ -41,6 +42,7 @@ import java.util.List;
  */
 @AutoConfiguration
 @EnableConfigurationProperties(AtengNacosProperties.class)
+@ConditionalOnClass(NacosDiscoveryProperties.class)
 @ConditionalOnProperty(prefix = "ateng.cloud.nacos", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AtengNacosAutoConfiguration {
 
@@ -57,6 +59,15 @@ public class AtengNacosAutoConfiguration {
     @ConditionalOnMissingBean
     public NacosNetworkAddressDetector nacosNetworkAddressDetector() {
         return new NacosNetworkAddressDetector();
+    }
+
+    /**
+     * 默认实例元数据定制器 SPI 保底实现
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public DefaultNacosMetadataCustomizer defaultNacosMetadataCustomizer(AtengNacosProperties properties) {
+        return new DefaultNacosMetadataCustomizer(properties);
     }
 
     /**
@@ -78,10 +89,11 @@ public class AtengNacosAutoConfiguration {
     @ConditionalOnClass(NacosDiscoveryProperties.class)
     @ConditionalOnMissingBean
     public static NacosDiscoveryPropertiesPostProcessor nacosDiscoveryPropertiesPostProcessor(
-            AtengNacosProperties properties,
-            NacosNetworkAddressDetector networkAddressDetector,
-            NacosMetadataProvider metadataProvider) {
-        return new NacosDiscoveryPropertiesPostProcessor(properties, networkAddressDetector, metadataProvider);
+            ObjectProvider<AtengNacosProperties> propertiesProvider,
+            ObjectProvider<NacosNetworkAddressDetector> networkAddressDetectorProvider,
+            ObjectProvider<NacosMetadataProvider> metadataProvider,
+            ObjectProvider<Environment> environmentProvider) {
+        return new NacosDiscoveryPropertiesPostProcessor(propertiesProvider, networkAddressDetectorProvider, metadataProvider, environmentProvider);
     }
 
     /**
