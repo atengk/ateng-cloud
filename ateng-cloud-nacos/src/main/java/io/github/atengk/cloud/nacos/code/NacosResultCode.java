@@ -40,7 +40,17 @@ public enum NacosResultCode implements IResultCode {
     /**
      * Nacos 动态配置中心未启用
      */
-    NACOS_CONFIG_DISABLED(4106, "Nacos 动态配置中心未启用");
+    NACOS_CONFIG_DISABLED(4106, "Nacos 动态配置中心未启用"),
+
+    /**
+     * Nacos 配置解析失败
+     */
+    NACOS_CONFIG_PARSE_FAILED(4107, "Nacos 配置解析失败"),
+
+    /**
+     * Nacos 配置语法校验失败
+     */
+    NACOS_CONFIG_VALIDATION_FAILED(4108, "Nacos 配置语法校验失败");
 
     private final Integer code;
     private final String msg;

@@ -15,6 +15,8 @@ import com.alibaba.nacos.api.naming.pojo.Service;
 import com.alibaba.nacos.api.naming.pojo.ServiceInfo;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
+import io.github.atengk.cloud.nacos.config.NacosConfigParser;
+import io.github.atengk.cloud.nacos.constant.ConfigFormat;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
@@ -23,6 +25,8 @@ import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -36,7 +40,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -50,12 +59,14 @@ import java.util.stream.Collectors;
  * 3. <b>机房亲和路由</b>：集成 {@link ZoneAffinityInstanceFilter}，支持同机房优先与跨区平滑容灾降级；
  * 4. <b>动态权重响应与过载保护</b>：严格过滤权重 {@code <= 0.0} 节点，探测并透传集群过载保护阈值状态；
  * 5. <b>异常因果转译</b>：100% 拦截底层 {@link NacosException} 并转译为包含原始因果链的 {@link BusinessException}；
- * 6. <b>离线平滑空转</b>：在 {@code discovery.enabled=false} 或未配置外部 Nacos 环境下安全空转，保障离线单测平滑。</p>
+ * 6. <b>多格式强类型解析与发布预检</b>：支持泛型读取与反序列化，发布配置前进行语法 Fail-Fast 校验；
+ * 7. <b>编程式受管订阅</b>：提供 {@code subscribeConfig} 高阶门面，内置链路追踪与异常屏障，容器关闭自动释放；
+ * 8. <b>离线平滑空转</b>：在 {@code discovery.enabled=false} 或未配置外部 Nacos 环境下安全空转，保障离线单测平滑。</p>
  *
  * @author Ateng
  * @since 2026-10-27
  */
-public class NacosTemplate {
+public class NacosTemplate implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(NacosTemplate.class);
 
@@ -67,6 +78,8 @@ public class NacosTemplate {
     private final NacosMetadataProvider metadataProvider;
     private final ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider;
     private final ZoneAffinityInstanceFilter zoneAffinityFilter;
+    private final NacosConfigParser configParser;
+    private final Set<AutoCloseable> activeSubscriptions = ConcurrentHashMap.newKeySet();
 
     public NacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
                          ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider,
@@ -103,6 +116,7 @@ public class NacosTemplate {
         this.metadataProvider = metadataProvider;
         this.stateMachineProvider = stateMachineProvider;
         this.zoneAffinityFilter = zoneAffinityFilter != null ? zoneAffinityFilter : new ZoneAffinityInstanceFilter();
+        this.configParser = new NacosConfigParser();
     }
 
     // ==========================================
@@ -794,7 +808,7 @@ public class NacosTemplate {
      * @return 配置内容字符串（未找到或离线时返回 null）
      */
     public String getConfig(String dataId) {
-        return getConfig(dataId, null, null);
+        return getConfig(dataId, null, (Duration) null);
     }
 
     /**
@@ -805,7 +819,7 @@ public class NacosTemplate {
      * @return 配置内容字符串（未找到或离线时返回 null）
      */
     public String getConfig(String dataId, String groupName) {
-        return getConfig(dataId, groupName, null);
+        return getConfig(dataId, groupName, (Duration) null);
     }
 
     /**
@@ -840,7 +854,7 @@ public class NacosTemplate {
      * @return 包含配置内容的 Optional（若配置不存在或离线则返回 Optional.empty()）
      */
     public Optional<String> findConfig(String dataId) {
-        return findConfig(dataId, null, null);
+        return findConfig(dataId, null, (Duration) null);
     }
 
     /**
@@ -851,7 +865,7 @@ public class NacosTemplate {
      * @return 包含配置内容的 Optional（若配置不存在或离线则返回 Optional.empty()）
      */
     public Optional<String> findConfig(String dataId, String groupName) {
-        return findConfig(dataId, groupName, null);
+        return findConfig(dataId, groupName, (Duration) null);
     }
 
     /**
@@ -868,6 +882,184 @@ public class NacosTemplate {
     }
 
     /**
+     * 读取指定配置并自动反序列化为目标 POJO（使用默认分组与超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 反序列化后的配置对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, Class<T> targetType) {
+        return getConfig(dataId, null, null, null, targetType);
+    }
+
+    /**
+     * 读取指定配置并自动反序列化为目标 POJO（使用指定分组与默认超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 反序列化后的配置对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, String groupName, Class<T> targetType) {
+        return getConfig(dataId, groupName, null, null, targetType);
+    }
+
+    /**
+     * 读取指定配置并自动反序列化为目标 POJO（使用指定分组与超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param timeout    获取超时时间（为 null 时使用默认配置超时）
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 反序列化后的配置对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, String groupName, Duration timeout, Class<T> targetType) {
+        return getConfig(dataId, groupName, timeout, null, targetType);
+    }
+
+    /**
+     * 读取指定配置并依据指定格式自动反序列化为目标 POJO
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param timeout    获取超时时间（为 null 时使用默认配置超时）
+     * @param format     显式配置格式（为 null 时依据 Data ID 扩展名推断）
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 反序列化后的配置对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, String groupName, Duration timeout, ConfigFormat format, Class<T> targetType) {
+        Assert.notNull(targetType, "targetType must not be null");
+        String rawContent = getConfig(dataId, groupName, timeout);
+        if (!StringUtils.hasText(rawContent)) {
+            return null;
+        }
+        ConfigFormat resolvedFormat = format != null ? format : ConfigFormat.fromDataId(dataId);
+        return configParser.parse(rawContent, resolvedFormat, targetType);
+    }
+
+    /**
+     * 查询指定配置并自动反序列化为 Optional 包装对象（使用默认分组与超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 包含配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, Class<T> targetType) {
+        return Optional.ofNullable(getConfig(dataId, targetType));
+    }
+
+    /**
+     * 查询指定配置并自动反序列化为 Optional 包装对象（使用指定分组与默认超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 包含配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, String groupName, Class<T> targetType) {
+        return Optional.ofNullable(getConfig(dataId, groupName, targetType));
+    }
+
+    /**
+     * 查询指定配置并自动反序列化为 Optional 包装对象（使用指定分组与超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param timeout    获取超时时间（为 null 时使用默认配置超时）
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 包含配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, String groupName, Duration timeout, Class<T> targetType) {
+        return Optional.ofNullable(getConfig(dataId, groupName, timeout, targetType));
+    }
+
+    /**
+     * 查询指定配置并依据指定格式自动反序列化为 Optional 包装对象
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param timeout    获取超时时间（为 null 时使用默认配置超时）
+     * @param format     显式配置格式（为 null 时依据 Data ID 扩展名推断）
+     * @param targetType 目标 POJO 类型
+     * @param <T>        目标类型泛型
+     * @return 包含配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, String groupName, Duration timeout, ConfigFormat format, Class<T> targetType) {
+        return Optional.ofNullable(getConfig(dataId, groupName, timeout, format, targetType));
+    }
+
+    /**
+     * 对给定的配置内容执行语法有效性预检
+     *
+     * @param content 配置文本内容
+     * @param format  配置格式（如 YAML, JSON, PROPERTIES）
+     * @throws BusinessException 当语法损坏或格式非法时抛出
+     */
+    public void validateConfig(String content, ConfigFormat format) {
+        configParser.validate(content, format);
+    }
+
+    /**
+     * 向默认分组发布配置对象（根据 Data ID 扩展名自动推断格式并序列化，推送前执行语法预检）
+     *
+     * @param dataId  配置集唯一标识
+     * @param content 配置对象（POJO、Map 或字符串）
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, Object content) {
+        return publishConfig(dataId, null, content, (ConfigFormat) null);
+    }
+
+    /**
+     * 向指定分组发布配置对象（根据 Data ID 扩展名自动推断格式并序列化，推送前执行语法预检）
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param content   配置对象（POJO、Map 或字符串）
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, String groupName, Object content) {
+        return publishConfig(dataId, groupName, content, (ConfigFormat) null);
+    }
+
+    /**
+     * 向默认分组发布指定格式的配置对象（序列化并执行语法预检）
+     *
+     * @param dataId  配置集唯一标识
+     * @param content 配置对象（POJO、Map 或字符串）
+     * @param format  配置格式
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, Object content, ConfigFormat format) {
+        return publishConfig(dataId, null, content, format);
+    }
+
+    /**
+     * 向指定分组发布指定格式的配置对象（序列化并执行语法预检）
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param content   配置对象（POJO、Map 或字符串）
+     * @param format    配置格式（为 null 时依据 Data ID 扩展名推断）
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, String groupName, Object content, ConfigFormat format) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(content, "content must not be null");
+        ConfigFormat resolvedFormat = format != null ? format : ConfigFormat.fromDataId(dataId);
+        String text = (content instanceof String str) ? str : configParser.serialize(content, resolvedFormat);
+        validateConfig(text, resolvedFormat);
+        return publishConfig(dataId, groupName, text, resolvedFormat.getValue());
+    }
+
+    /**
      * 向默认分组发布配置
      *
      * @param dataId  配置集唯一标识
@@ -875,7 +1067,7 @@ public class NacosTemplate {
      * @return 是否发布成功
      */
     public boolean publishConfig(String dataId, String content) {
-        return publishConfig(dataId, null, content, null);
+        return publishConfig(dataId, null, content, (String) null);
     }
 
     /**
@@ -887,7 +1079,7 @@ public class NacosTemplate {
      * @return 是否发布成功
      */
     public boolean publishConfig(String dataId, String groupName, String content) {
-        return publishConfig(dataId, groupName, content, null);
+        return publishConfig(dataId, groupName, content, (String) null);
     }
 
     /**
@@ -901,6 +1093,11 @@ public class NacosTemplate {
      */
     public boolean publishConfig(String dataId, String groupName, String content, String type) {
         Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(content, "content must not be null");
+        ConfigFormat format = StringUtils.hasText(type)
+                ? ConfigFormat.fromType(type)
+                : ConfigFormat.fromDataId(dataId);
+        validateConfig(content, format);
         if (!isConfigAvailable()) {
             log.warn("Nacos config is not available. Skipping publishConfig for dataId '{}'", dataId);
             return false;
@@ -944,6 +1141,11 @@ public class NacosTemplate {
      */
     public boolean publishConfigCas(String dataId, String groupName, String content, String casMd5, String type) {
         Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(content, "content must not be null");
+        ConfigFormat format = StringUtils.hasText(type)
+                ? ConfigFormat.fromType(type)
+                : ConfigFormat.fromDataId(dataId);
+        validateConfig(content, format);
         if (!isConfigAvailable()) {
             log.warn("Nacos config is not available. Skipping publishConfigCas for dataId '{}'", dataId);
             return false;
@@ -1061,6 +1263,121 @@ public class NacosTemplate {
             }
             return null;
         });
+    }
+
+    /**
+     * 编程式订阅指定 Data ID 的动态配置变更（使用默认分组并根据后缀推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param targetType 反序列化目标类型
+     * @param callback   配置变更回调消费函数
+     * @param <T>        配置对象泛型
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public <T> AutoCloseable subscribeConfig(String dataId, Class<T> targetType, Consumer<T> callback) {
+        return subscribeConfig(dataId, null, null, targetType, callback);
+    }
+
+    /**
+     * 编程式订阅指定 Data ID 与分组的动态配置变更（根据后缀自动推断格式）
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param targetType 反序列化目标类型
+     * @param callback   配置变更回调消费函数
+     * @param <T>        配置对象泛型
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public <T> AutoCloseable subscribeConfig(String dataId, String groupName, Class<T> targetType, Consumer<T> callback) {
+        return subscribeConfig(dataId, groupName, null, targetType, callback);
+    }
+
+    /**
+     * 编程式订阅指定 Data ID、分组与显式格式的动态配置变更
+     *
+     * @param dataId     配置集唯一标识
+     * @param groupName  配置分组名（为 null 时使用默认组）
+     * @param format     显式配置格式（为 null 时依据 dataId 扩展名推断）
+     * @param targetType 反序列化目标类型
+     * @param callback   配置变更回调消费函数
+     * @param <T>        配置对象泛型
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public <T> AutoCloseable subscribeConfig(String dataId, String groupName, ConfigFormat format, Class<T> targetType, Consumer<T> callback) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(targetType, "targetType must not be null");
+        Assert.notNull(callback, "callback must not be null");
+
+        if (!isConfigAvailable()) {
+            log.debug("Nacos config is not available. Skipping subscribeConfig for dataId '{}'", dataId);
+            return () -> {};
+        }
+
+        ConfigFormat resolvedFormat = format != null ? format : ConfigFormat.fromDataId(dataId);
+        String targetGroup = resolveConfigGroup(groupName);
+
+        // 1. 尝试首次立即拉取并派发当前最新有效配置
+        deliverInitialConfig(dataId, targetGroup, resolvedFormat, targetType, callback);
+
+        // 2. 构建具备 MDC 追踪与异常物理隔离屏障的原生监听器
+        Listener listener = new Listener() {
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+
+            @Override
+            public void receiveConfigInfo(String configInfo) {
+                boolean traceIdCreated = false;
+                if (MDC.get("traceId") == null) {
+                    MDC.put("traceId", UUID.randomUUID().toString().replace("-", ""));
+                    traceIdCreated = true;
+                }
+                try {
+                    T parsed = configParser.parse(configInfo, resolvedFormat, targetType);
+                    callback.accept(parsed);
+                } catch (Throwable t) {
+                    log.error("Error processing dynamic Nacos config subscription for dataId '{}', group '{}'", dataId, targetGroup, t);
+                } finally {
+                    if (traceIdCreated) {
+                        MDC.remove("traceId");
+                    }
+                }
+            }
+        };
+
+        // 3. 注册底层监听器
+        addConfigListener(dataId, targetGroup, listener);
+
+        // 4. 封装自闭合句柄并登记至活动订阅集合中受管
+        ManagedSubscription subscription = new ManagedSubscription(dataId, targetGroup, listener);
+        activeSubscriptions.add(subscription);
+        return subscription;
+    }
+
+    private <T> void deliverInitialConfig(String dataId, String targetGroup, ConfigFormat format, Class<T> targetType, Consumer<T> callback) {
+        try {
+            String currentContent = getConfig(dataId, targetGroup);
+            if (StringUtils.hasText(currentContent)) {
+                boolean traceIdCreated = false;
+                if (MDC.get("traceId") == null) {
+                    MDC.put("traceId", UUID.randomUUID().toString().replace("-", ""));
+                    traceIdCreated = true;
+                }
+                try {
+                    T parsed = configParser.parse(currentContent, format, targetType);
+                    if (parsed != null) {
+                        callback.accept(parsed);
+                    }
+                } finally {
+                    if (traceIdCreated) {
+                        MDC.remove("traceId");
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to fetch or parse initial Nacos config for dataId '{}', group '{}'", dataId, targetGroup, ex);
+        }
     }
 
     /**
@@ -1256,5 +1573,59 @@ public class NacosTemplate {
         return discoveryProperties != null && StringUtils.hasText(discoveryProperties.getGroup())
                 ? discoveryProperties.getGroup()
                 : Constants.DEFAULT_GROUP;
+    }
+
+    /**
+     * 容器关闭时统一受管自动释放所有未显式关闭的动态配置订阅，防御内存与监听句柄泄露
+     */
+    @Override
+    public void destroy() {
+        for (AutoCloseable sub : activeSubscriptions) {
+            try {
+                sub.close();
+            } catch (Exception ex) {
+                log.warn("Error closing active Nacos config subscription on destroy", ex);
+            }
+        }
+        activeSubscriptions.clear();
+    }
+
+    /**
+     * 获取当前处于活动受管状态的动态配置订阅数
+     *
+     * @return 活动订阅数
+     */
+    public int getActiveSubscriptionCount() {
+        return activeSubscriptions.size();
+    }
+
+    /**
+     * 获取内部多格式配置解析引擎
+     *
+     * @return NacosConfigParser 实例
+     */
+    public NacosConfigParser getConfigParser() {
+        return configParser;
+    }
+
+    private final class ManagedSubscription implements AutoCloseable {
+        private final String dataId;
+        private final String group;
+        private final Listener listener;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        private ManagedSubscription(String dataId, String group, Listener listener) {
+            this.dataId = dataId;
+            this.group = group;
+            this.listener = listener;
+        }
+
+        @Override
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                activeSubscriptions.remove(this);
+                removeConfigListener(dataId, group, listener);
+            }
+        }
     }
 }

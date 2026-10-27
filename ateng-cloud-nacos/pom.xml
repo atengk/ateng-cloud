@@ -23,6 +23,12 @@
             <artifactId>ateng-boot-core</artifactId>
         </dependency>
 
+        <!-- Jackson YAML 数据格式解析支持 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+
         <!-- Spring Boot 自动装配支持 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
