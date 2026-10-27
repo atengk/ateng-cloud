@@ -120,10 +120,6 @@ jobs:
           java-version: ${{ matrix.java-version }}
           cache: 'maven'
 
-      - name: 安装测试所需中文字体 (仅 Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y fonts-wqy-microhei
-
       - name: 编译并执行全量单元与集成测试
         run: mvn clean test -B -T 1C -nsu
 

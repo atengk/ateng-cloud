@@ -679,12 +679,12 @@ public class NacosTemplate {
             if (errMsg != null && (errMsg.contains("no such api") || errMsg.contains("501"))) {
                 errMsg = errMsg + " (提示: Nacos 3.x 默认未内置遗留 HTTP v1 OpenAPI，跨实例管理请在服务端挂载 nacos-api-legacy-adapter 插件)";
             }
-            throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR,
+            throw new BusinessException(NacosResultCode.NACOS_CLIENT_ERROR.getCode(),
                     "Nacos " + operation + " 失败: " + errMsg, e);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
-            throw new BusinessException(NacosResultCode.NACOS_OPERATION_FAILED,
+            throw new BusinessException(NacosResultCode.NACOS_OPERATION_FAILED.getCode(),
                     "Nacos " + operation + " 异常: " + e.getMessage(), e);
         }
     }
