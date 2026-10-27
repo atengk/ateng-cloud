@@ -58,6 +58,10 @@ class NacosServiceEndpointTest {
         assertThat(status).containsEntry("serviceName", "demo-service");
         assertThat(status).containsEntry("zone", "beijing-az1");
         assertThat(status).containsEntry("cluster", "default-cluster");
+        assertThat(status).containsEntry("warmupDuration", "60s");
+        assertThat(status).containsKey("warmupUptimeSeconds");
+        assertThat(status).containsKey("warmupRemainingSeconds");
+        assertThat(status).containsKey("warmupCompleted");
         @SuppressWarnings("unchecked")
         Map<String, String> metadata = (Map<String, String>) status.get("metadata");
         assertThat(metadata).containsEntry("version", "1.0.0");

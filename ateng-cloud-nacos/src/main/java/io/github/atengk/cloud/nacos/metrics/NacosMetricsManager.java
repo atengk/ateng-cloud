@@ -2,6 +2,9 @@ package io.github.atengk.cloud.nacos.metrics;
 
 import io.github.atengk.cloud.nacos.lifecycle.NacosInstanceLifecycleState;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
+import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
+import io.github.atengk.cloud.nacos.metadata.NacosWarmupHelper;
+import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -42,10 +45,13 @@ public class NacosMetricsManager {
     public static final String METRIC_CONFIG_REFRESH_FAILURE = "nacos.config.refresh.failure";
     public static final String METRIC_INSTANCES_HEALTHY = "nacos.instances.healthy";
     public static final String METRIC_LIFECYCLE_STATE = "nacos.lifecycle.state";
+    public static final String METRIC_WARMUP_REMAINING_SECONDS = "nacos.instance.warmup.remaining.seconds";
 
     private final MeterRegistry meterRegistry;
     private final ObjectProvider<NacosTemplate> nacosTemplateProvider;
     private final ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider;
+    private final ObjectProvider<NacosMetadataProvider> metadataProvider;
+    private final AtengNacosProperties properties;
     private final String serviceName;
     private final AtomicBoolean grpcConnected = new AtomicBoolean(true);
 
@@ -57,9 +63,20 @@ public class NacosMetricsManager {
                                ObjectProvider<NacosTemplate> nacosTemplateProvider,
                                ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
                                Environment environment) {
+        this(meterRegistry, nacosTemplateProvider, stateMachineProvider, environment, null, null);
+    }
+
+    public NacosMetricsManager(@Nullable MeterRegistry meterRegistry,
+                               ObjectProvider<NacosTemplate> nacosTemplateProvider,
+                               ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
+                               Environment environment,
+                               @Nullable ObjectProvider<NacosMetadataProvider> metadataProvider,
+                               @Nullable AtengNacosProperties properties) {
         this.meterRegistry = meterRegistry;
         this.nacosTemplateProvider = nacosTemplateProvider;
         this.stateMachineProvider = stateMachineProvider;
+        this.metadataProvider = metadataProvider;
+        this.properties = properties;
         this.serviceName = resolveServiceName(environment);
 
         if (this.meterRegistry != null) {
@@ -111,6 +128,12 @@ public class NacosMetricsManager {
         // 5. nacos.lifecycle.state (Gauge)
         Gauge.builder(METRIC_LIFECYCLE_STATE, this, NacosMetricsManager::getLifecycleState)
                 .description("Nacos instance graceful lifecycle state (1: UP, 0: OUT_OF_SERVICE)")
+                .tag("service", serviceName)
+                .register(meterRegistry);
+
+        // 6. nacos.instance.warmup.remaining.seconds (Gauge)
+        Gauge.builder(METRIC_WARMUP_REMAINING_SECONDS, this, NacosMetricsManager::getWarmupRemainingSeconds)
+                .description("Remaining seconds of Nacos instance startup preheating window")
                 .tag("service", serviceName)
                 .register(meterRegistry);
 
@@ -202,6 +225,20 @@ public class NacosMetricsManager {
             log.debug("Error reading Nacos lifecycle state: {}", ex.getMessage());
         }
         return 0.0;
+    }
+
+    /**
+     * 读取当前节点预热窗口剩余秒数标尺（预热结束或已过预热期时为 0.0）
+     */
+    public double getWarmupRemainingSeconds() {
+        try {
+            NacosMetadataProvider provider = metadataProvider != null ? metadataProvider.getIfAvailable() : null;
+            NacosWarmupHelper.WarmupStatus warmup = NacosWarmupHelper.calculateWarmupStatus(provider, properties);
+            return (double) warmup.warmupRemainingSeconds();
+        } catch (Exception ex) {
+            log.debug("Error computing warmup remaining seconds: {}", ex.getMessage());
+            return 0.0;
+        }
     }
 
     /**

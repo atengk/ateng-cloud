@@ -10,6 +10,7 @@ import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
 import io.github.atengk.cloud.nacos.event.NacosConnectionManager;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.guard.SingletonImmutabilityGuard;
+import io.github.atengk.cloud.nacos.health.NacosHealthChecker;
 import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
@@ -183,15 +184,17 @@ public class AtengNacosAutoConfiguration {
     }
 
     /**
-     * Nacos 现代配置中心启动健康自检与诊断器
+     * Nacos 全景健康就绪诊断器与深水区安全防线
      */
     @Bean
     @ConditionalOnMissingBean
-    public NacosConfigHealthChecker nacosConfigHealthChecker(
+    public NacosHealthChecker nacosHealthChecker(
             AtengNacosProperties properties,
             Environment environment,
-            ObjectProvider<NacosConfigManager> configManagerProvider) {
-        return new NacosConfigHealthChecker(properties, environment, configManagerProvider);
+            ObjectProvider<NacosConfigManager> configManagerProvider,
+            ObjectProvider<NacosMetadataProvider> metadataProvider,
+            ObjectProvider<NacosTemplate> nacosTemplateProvider) {
+        return new NacosHealthChecker(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider);
     }
 
     /**
@@ -205,8 +208,11 @@ public class AtengNacosAutoConfiguration {
             ObjectProvider<MeterRegistry> meterRegistryProvider,
             ObjectProvider<NacosTemplate> nacosTemplateProvider,
             ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
-            Environment environment) {
-        return new NacosMetricsManager(meterRegistryProvider.getIfAvailable(), nacosTemplateProvider, stateMachineProvider, environment);
+            Environment environment,
+            ObjectProvider<NacosMetadataProvider> metadataProvider,
+            AtengNacosProperties properties) {
+        return new NacosMetricsManager(meterRegistryProvider.getIfAvailable(), nacosTemplateProvider,
+                stateMachineProvider, environment, metadataProvider, properties);
     }
 
     /**

@@ -2,6 +2,7 @@ package io.github.atengk.cloud.nacos.actuator;
 
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
+import io.github.atengk.cloud.nacos.metadata.NacosWarmupHelper;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
@@ -67,6 +68,12 @@ public class NacosServiceEndpoint {
         if (metadataProvider != null) {
             result.put("metadata", metadataProvider.getMetadata());
         }
+
+        NacosWarmupHelper.WarmupStatus warmup = NacosWarmupHelper.calculateWarmupStatus(metadataProvider, properties);
+        result.put("warmupDuration", warmup.warmupDuration());
+        result.put("warmupUptimeSeconds", warmup.warmupUptimeSeconds());
+        result.put("warmupRemainingSeconds", warmup.warmupRemainingSeconds());
+        result.put("warmupCompleted", warmup.warmupCompleted());
 
         if (refreshEngine != null) {
             Map<String, Object> configInfo = new LinkedHashMap<>();

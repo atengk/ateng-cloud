@@ -112,8 +112,9 @@ class NacosConfigHierarchyIntegrationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(AtengNacosProperties.class);
-                    assertThat(context).hasSingleBean(NacosConfigHealthChecker.class);
-                    NacosConfigHealthChecker healthChecker = context.getBean(NacosConfigHealthChecker.class);
+                    assertThat(context).hasSingleBean(io.github.atengk.cloud.nacos.health.NacosHealthChecker.class);
+                    io.github.atengk.cloud.nacos.health.NacosHealthChecker healthChecker =
+                            context.getBean(io.github.atengk.cloud.nacos.health.NacosHealthChecker.class);
                     assertThat(healthChecker.detectConfigImportDirective()).isTrue();
                 });
     }
@@ -131,7 +132,8 @@ class NacosConfigHierarchyIntegrationTest {
                 )
                 .run(context -> {
                     assertThat(context).hasNotFailed();
-                    NacosConfigHealthChecker healthChecker = context.getBean(NacosConfigHealthChecker.class);
+                    io.github.atengk.cloud.nacos.health.NacosHealthChecker healthChecker =
+                            context.getBean(io.github.atengk.cloud.nacos.health.NacosHealthChecker.class);
                     assertThat(healthChecker.detectConfigImportDirective()).isTrue();
                 });
     }

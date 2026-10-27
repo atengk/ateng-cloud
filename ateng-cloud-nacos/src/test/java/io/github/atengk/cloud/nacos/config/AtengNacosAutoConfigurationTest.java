@@ -44,7 +44,7 @@ class AtengNacosAutoConfigurationTest {
             assertThat(context).hasSingleBean(NacosServiceEndpoint.class);
             assertThat(context).hasSingleBean(ZoneAffinityInstanceFilter.class);
             assertThat(context).hasSingleBean(NacosTemplate.class);
-            assertThat(context).hasSingleBean(NacosConfigHealthChecker.class);
+            assertThat(context).hasSingleBean(io.github.atengk.cloud.nacos.health.NacosHealthChecker.class);
             assertThat(context).hasSingleBean(NacosConfigRefreshEngine.class);
             assertThat(context).hasSingleBean(SingletonImmutabilityGuard.class);
             assertThat(context).hasSingleBean(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
@@ -66,6 +66,7 @@ class AtengNacosAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(NacosServiceEndpoint.class);
                     assertThat(context).doesNotHaveBean(ZoneAffinityInstanceFilter.class);
                     assertThat(context).doesNotHaveBean(NacosTemplate.class);
+                    assertThat(context).doesNotHaveBean(io.github.atengk.cloud.nacos.health.NacosHealthChecker.class);
                     assertThat(context).doesNotHaveBean(NacosConfigHealthChecker.class);
                     assertThat(context).doesNotHaveBean(NacosConfigRefreshEngine.class);
                     assertThat(context).doesNotHaveBean(SingletonImmutabilityGuard.class);

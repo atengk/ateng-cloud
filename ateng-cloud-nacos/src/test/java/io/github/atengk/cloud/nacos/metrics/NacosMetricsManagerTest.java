@@ -14,6 +14,7 @@ import org.springframework.mock.env.MockEnvironment;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -80,6 +81,11 @@ class NacosMetricsManagerTest {
         Gauge lifecycleGauge = meterRegistry.find("nacos.lifecycle.state").gauge();
         assertThat(lifecycleGauge).isNotNull();
         assertThat(lifecycleGauge.value()).isEqualTo(1.0);
+
+        // 6. nacos.instance.warmup.remaining.seconds (Gauge)
+        Gauge warmupGauge = meterRegistry.find("nacos.instance.warmup.remaining.seconds").gauge();
+        assertThat(warmupGauge).isNotNull();
+        assertThat(warmupGauge.value()).isGreaterThanOrEqualTo(0.0);
     }
 
     @Test
@@ -127,6 +133,37 @@ class NacosMetricsManagerTest {
         assertThat(grpcGauge.value()).isEqualTo(0.0);
         assertThat(healthyGauge.value()).isEqualTo(0.0);
         assertThat(lifecycleGauge.value()).isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("预热剩余秒数标尺：验证启动预热中与预热完成时 Gauge 准确导出")
+    void testWarmupRemainingSecondsMetric() {
+        long now = System.currentTimeMillis();
+        long startupTime = now - 20_000L; // 已启动 20s，预热 60s -> 剩余 40s
+
+        io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider metadataProvider =
+                mock(io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider.class);
+        when(metadataProvider.getMetadata()).thenReturn(Map.of(
+                io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider.KEY_STARTUP_TIME, String.valueOf(startupTime),
+                io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider.KEY_WARMUP_DURATION, "60s"
+        ));
+
+        io.github.atengk.cloud.nacos.properties.AtengNacosProperties properties =
+                new io.github.atengk.cloud.nacos.properties.AtengNacosProperties();
+
+        NacosMetricsManager metricsManager = new NacosMetricsManager(
+                meterRegistry,
+                mockObjectProvider(nacosTemplate),
+                mockObjectProvider(stateMachine),
+                environment,
+                mockObjectProvider(metadataProvider),
+                properties
+        );
+
+        Gauge warmupGauge = meterRegistry.find("nacos.instance.warmup.remaining.seconds").gauge();
+        assertThat(warmupGauge).isNotNull();
+        assertThat(warmupGauge.value()).isLessThanOrEqualTo(40.0);
+        assertThat(warmupGauge.value()).isGreaterThanOrEqualTo(35.0);
     }
 
     @Test
