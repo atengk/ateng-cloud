@@ -80,4 +80,17 @@ _Avoid_: 作用域拦截器, 刷新检查器
 在审计日志、`toString` 打印与监控导出边界对命中敏感特征（`password`, `secret`, `token`, `key` 等）的值自动实施星号掩码，且在业务内存中 100% 保留真实明文的防御屏障。
 _Avoid_: 日志脱敏器, 敏感字段擦除
 
+**Connection Event Bus**:
+Nacos 客户端底层长连接（gRPC）生命周期状态变更时向 Spring 上下文广播的强类型领域事件体系，携带模块类型、连接状态与远端地址。
+_Avoid_: 连接轮询器, 断线重连器, 状态探针
+
+**Zone & Warmup Load Balancing**:
+协同 Spring Cloud LoadBalancer 实现的同机房可用区就近亲和与启动预热期平滑线性升权调度机制。
+_Avoid_: 局部负载均衡, 客户端寻址器, 权重放大器
+
+**Typed Config Subscription**:
+基于强类型泛型 POJO 反序列化、自动异常屏障与生命周期受管注销的动态配置编程式订阅机制。
+_Avoid_: 动态监听器, 原始回调, 字符串钩子
+
+
 

@@ -1,1 +1,2 @@
 io.github.atengk.cloud.nacos.config.AtengNacosAutoConfiguration
+io.github.atengk.cloud.nacos.loadbalancer.AtengNacosLoadBalancerAutoConfiguration

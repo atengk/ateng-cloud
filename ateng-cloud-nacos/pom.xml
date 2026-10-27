@@ -41,6 +41,13 @@
             <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
         </dependency>
 
+        <!-- Spring Cloud LoadBalancer 负载均衡支持 (可选依赖，零臃肿底座) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Spring Boot Actuator 运维与监控端点支持 (可选依赖) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -67,6 +67,12 @@ public class AtengNacosProperties {
     @NestedConfigurationProperty
     private MetricsProperties metrics = new MetricsProperties();
 
+    /**
+     * Spring Cloud LoadBalancer 负载均衡治理增强配置
+     */
+    @NestedConfigurationProperty
+    private LoadBalancerProperties loadbalancer = new LoadBalancerProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -137,6 +143,14 @@ public class AtengNacosProperties {
 
     public void setMetrics(MetricsProperties metrics) {
         this.metrics = metrics;
+    }
+
+    public LoadBalancerProperties getLoadbalancer() {
+        return loadbalancer;
+    }
+
+    public void setLoadbalancer(LoadBalancerProperties loadbalancer) {
+        this.loadbalancer = loadbalancer;
     }
 
     /**
@@ -416,6 +430,64 @@ public class AtengNacosProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    /**
+     * Spring Cloud LoadBalancer 负载均衡治理增强配置
+     */
+    public static class LoadBalancerProperties {
+
+        /**
+         * 是否激活 Nacos 客户端负载均衡增强（同机房就近亲和与启动预热加权调度）
+         */
+        private boolean enabled = true;
+
+        /**
+         * 是否开启同机房可用区（Zone Affinity）优先调度（本区全宕平滑降级全集群）
+         */
+        private boolean zoneAffinity = true;
+
+        /**
+         * 是否开启平滑启动预热（Startup Preheating）动态权重调度
+         */
+        private boolean warmup = true;
+
+        /**
+         * 启动预热期间保底底噪权重比例（默认 0.10 即 10%，防止冷启动完全饥饿或除零）
+         */
+        private double warmupFloorWeightRatio = 0.10;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isZoneAffinity() {
+            return zoneAffinity;
+        }
+
+        public void setZoneAffinity(boolean zoneAffinity) {
+            this.zoneAffinity = zoneAffinity;
+        }
+
+        public boolean isWarmup() {
+            return warmup;
+        }
+
+        public void setWarmup(boolean warmup) {
+            this.warmup = warmup;
+        }
+
+        public double getWarmupFloorWeightRatio() {
+            return warmupFloorWeightRatio;
+        }
+
+        public void setWarmupFloorWeightRatio(double warmupFloorWeightRatio) {
+            this.warmupFloorWeightRatio = warmupFloorWeightRatio;
         }
     }
 }
