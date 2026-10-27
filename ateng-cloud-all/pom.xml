@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.atengk</groupId>
+        <artifactId>ateng-cloud</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>ateng-cloud-all</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>ateng-cloud 微服务全能聚合全家桶 (一键引入 nacos、feign、sentinel 等通用微服务骨干构件)</description>
+
+    <dependencies>
+        <!-- Nacos 服务注册与动态配置中心 -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-nacos</artifactId>
+        </dependency>
+
+        <!-- 后续阶段核心构件聚合锚点预留:
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-feign</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-sentinel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-traffic</artifactId>
+        </dependency>
+        -->
+    </dependencies>
+</project>

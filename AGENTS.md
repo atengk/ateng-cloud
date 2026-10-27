@@ -10,10 +10,11 @@
 
 ---
 
-## 2. 微服务核心架构不变量与铁律 (Microservice Architecture & Invariants)
+## 2. 核心架构与编码契约 (Architecture & Invariants)
 
-微服务基础设施在生产环境中面临网络抖动、链路穿透、瞬时雪崩等极端挑战，确立以下 7 大不可逾越的微服务专属架构铁律：
+微服务基础设施在生产环境中面临网络抖动、链路穿透、瞬时雪崩等极端挑战，确立以下微服务专属架构铁律与通用工程编码契约：
 
+### 2.1 微服务 7 大专属架构铁律
 1. **网关运行时纯洁性与物理隔离铁律 (Reactive vs Servlet Invariant)**：
    - `ateng-cloud-gateway` **绝对严禁引入** `ateng-boot-web`（Servlet 阻塞栈）及其任何关联依赖；
    - 网关仅依赖 `ateng-boot-core`，基于 Spring WebFlux 与 Netty 事件循环纯响应式实现；
@@ -35,6 +36,40 @@
    - 大文件、视频与大报表上传坚决禁止流经网关或微服务内存中转，100% 依托 `ateng-boot-storage` S3 预签名直传（Presigned URL）直达对象存储桶。
 7. **分布式追踪底座零冗余收敛 (Observability Convergence)**：
    - 坚决不在 `ateng-cloud` 建立空壳同名追踪模块，分布式调用链追踪全面依托 `ateng-boot-observability` 门面与 W3C `traceparent` 标准格式，消除不同 APM 协议壁垒。
+
+### 2.2 核心通用编码契约
+- **显式响应契约 (Explicit Contract)**：Controller 统一显式声明返回强类型 `Result<T>`，依托强类型契约自洽；坚决杜绝引入 `@ResponseBodyAdvice` 全局自动拦截包装。
+- **零臃肿与底座优先 (Zero-Bloat & Core-First)**：
+  - 100% 依托 JDK 17 与 Spring 6 原生能力，杜绝引入 `hutool-all`、`guava`、`commons-collections` 等重型全量第三方工具包；
+  - 工具类就近内聚于归属模块，坚决杜绝垃圾桶模块；
+  - **通用原语底座收敛**：跨中间件解耦的通用上下文（用户/租户）、序列化门面、数据脱敏、退避重试、分批切片等通用原语，强制优先复用已发布的 `ateng-boot-core` 与 `ateng-boot-observability`，杜绝在子模块重复造轮子。
+- **分层双防校验体系 (Defense-in-Depth Validation)**：
+  - **第一道防线（传输边界 / Controller）**：负责无状态语法与格式性校验，统一使用 JSR-303 注解声明以实现 Fail-Fast；批量列表入参强制使用 `ValidList<E>` 杜绝 Spring 默认漏检；分组校验统一使用 `ValidationGroups` 标准标记；
+  - **第二道防线（业务边界 / Service）**：负责业务语义与状态不变量校验，统一推行 `BusinessAssert` 语义化断言；非 Web 边界消费使用 `ValidatorUtil.validate(obj)` 执行快速失败编程式防卫。
+- **数据安全与“内存真明文”不变量 (In-Memory Plaintext Invariant)**：
+  - 业务层与实体对象在内存中始终保持 100% 原始真实明文（严禁在业务逻辑中直接对实体属性打星号）；
+  - 存储加密收敛于持久层（入库密文、出库明文），展示脱敏收敛于视图序列化/导出拦截器，彻底杜绝掩码脏数据写回数据库。
+- **传输契约与持久层绝对解耦 (Transport Decoupling & Zero-Entity-Leakage)**：
+  - Controller 传输边界 **100% 严禁接收或直接返回 ORM 实体（Entity）**；
+  - 入参统一使用专用 Request / DTO / Command（挂载 JSR-303 格式校验），出参统一使用专用 VO / Response（分页统一入参 `PageQuery`，统一返回 `PageResult<VO>`）；
+  - 实体与传输对象间严禁直接泄露未授权持久化字段或引发序列化漏洞；解耦转换由开发者在 Service / 接入边界完成纯净流式解耦。
+- **防御性自动装配四道铁律 (Defensive Autoconfiguration Invariants)**：
+  - **标准规范注册**：自动装配类统配 `@AutoConfiguration` 标注，统一且只能注册于 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`（严格遵循 Spring Boot 3 规范，严禁使用旧版 `spring.factories`）；
+  - **缺配置平滑探测**：装配类标配 `@ConditionalOnClass` 与 `@ConditionalOnProperty` 守卫，必要时结合探测机制，严禁在未配置关键外部连接信息时盲目初始化导致启动崩溃；
+  - **`@Bean` 级别缺省守卫**：每个对外暴露的公共 `@Bean` 方法必须显式标配 `@ConditionalOnMissingBean`，保障下游开发者声明同名或同类型 Bean 时能够平滑无缝接管；
+  - **装配时序显式声明**：存在隐式依赖关系的自动装配类，必须显式标注 `@AutoConfigureAfter` 或 `@AutoConfigureBefore`，防御 Bean 初始化时序错乱；
+  - Jackson 定制统一注入 `Jackson2ObjectMapperBuilderCustomizer`，严禁覆盖 `ObjectMapper` Bean。
+- **BOM 依赖统管与向后兼容 (BOM-First & Backward Compatibility)**：
+  - 依赖及其版本必须且只能在根 `pom.xml` 或 `ateng-cloud-bom/pom.xml` 的 `<dependencyManagement>` 集中纳管；各子模块 `pom.xml` 声明依赖时一律免配 `<version>` 标签；
+  - 对外暴露的公共 API 签名、核心注解属性与依赖基线严守向后兼容。
+- **空安全与保底返回 (Null Safety & Defensive Return)**：
+  - 查询列表/集合无匹配时保底返回空集合（如 `Collections.emptyList()`），严禁返回 `null`；
+  - 单实体查询无结果时底层允许返回 `null`，但调用方必须立即通过前置卫语句显式拦截防御。
+- **强类型配置属性与元数据 (IDE-Friendly Properties & Strong Typing)**：
+  - 配置属性类统一定义于 `io.github.atengk.cloud.*.properties`，标配 `@ConfigurationProperties(prefix = "ateng.cloud.*")`，字段提供完整 JavaDoc 说明与生产合理默认值，由 `spring-boot-configuration-processor` 自动编译生成 IDE 智能补全元数据；
+  - **强类型时间与容量规范**：凡涉及超时、间隔与缓存 TTL 必须统一声明为 `java.time.Duration`；凡涉及文件、内存与缓冲容量必须统一声明为 `org.springframework.util.unit.DataSize`，彻底取缔无量纲裸 `Long`/`Integer`，消除单位歧义；
+  - **嵌套配置显式注解**：复杂嵌套配置对象必须标配 `@NestedConfigurationProperty`，确保 IDE 补全元数据与属性层级绑定 100% 生效；
+  - 新建源码与核心 API 标配清晰业务注释，类头部标注 `@author Ateng` 与 `@since YYYY-MM-DD`。
 
 ---
 
@@ -60,8 +95,7 @@
    - **防御性锁释放范式**：使用并发锁（本地锁或分布式锁）时，必须严格遵循状态判断释放范式（仅当当前线程真实持有锁时才在 `finally` 触发释放），严禁无脑释放未持有的锁导致产生次生异常掩盖真实业务异常。
 6. **生产就绪配置与防无界悬挂 (Safe Config & Production Defaults Invariant)**：
    - 所有配置属性必须提供符合高并发生产标准的合理默认值；
-   - 凡涉及网络通信、连接池分配、消息重试与队列等待处，必须显式配置超时阈值（Timeout）与重试上限，严禁无超时无限挂起导致应用线程耗尽；
-   - 时间统配 `java.time.Duration`，容量统配 `org.springframework.util.unit.DataSize`，嵌套配置标配 `@NestedConfigurationProperty`。
+   - 凡涉及网络通信、连接池分配、消息重试与队列等待处，必须显式配置超时阈值（Timeout）与重试上限，严禁无超时无限挂起导致应用线程耗尽。
 7. **因果异常体系与底层驱动解耦 (Causal Exceptions & SDK Decoupling Invariant)**：
    - 严禁吞咽异常（禁止空的 `catch` 块或仅打印不处理）；
    - 子模块对外暴露的公共 API 必须在模块边界完成底层驱动异常的受控拦截，将其转译为框架受管的语义化业务异常（`BusinessException`）并赋予清晰的错误码（`IResultCode`）；
@@ -74,23 +108,23 @@
    - 核心逻辑必须设计对抗性测试用例（Adversarial Testing），全真覆盖空入参、边界溢出、异常分支、失败补偿清理、并发竞争与配置开闭测试用例。
 
 - **审查红线阻断机制 (Review Redlines Gate)**：
-  在代码审查（`/code-review`）中，上述 **7 大微服务专属铁律** 与 **九道通用成熟度防线** 被列为一票否决红线项。凡发现触碰任一红线，审查 Agent 直接出具 Red Card 阻断本次提交准出。
+  在代码审查（`/code-review`）中，上述 **7 大微服务专属铁律**、**九道通用成熟度防线** 以及 **传输层实体隔离 (Zero-Entity-Leakage)** 被列为一票否决红线项。凡发现触碰任一红线，审查 Agent 直接出具 Red Card 阻断本次提交准出。
 
 ---
 
 ## 4. 质量门禁与全维文档闭环 (Quality Gates & Documentation Invariants)
 
 - **三阶梯测试准出与并行加速 (Three-Tier Test Gate & Parallel Build)**：
-  自动化构建与测试统一附加 `-T 1C -nsu -B` 确保日志流式纯净并实现 CPU 核心级并行加速；严禁每次改动在本地无脑执行全项目串行单测：
+  根目录 `.mvn/maven.config` 默认注入 `-T 1C -nsu` 加速配置，自动化环境统一附加 `-B` 确保日志流式纯净；严禁每次改动在本地无脑执行全项目串行单测：
   1. **阶梯一：特性日常自验（秒级极速反馈）**：单个模块改动时，采用多线程依赖树精准定向测试：
      ```bash
      mvn test -pl <changed-module> -am -T 1C -nsu -B
      ```
-  2. **阶梯二：本地提交准出验收（精准端到端集成）**：准备提交前，执行变更模块与对应场景样例工程定向联动验证，杜绝无脑全量回归：
+  2. **阶梯二：本地提交准出验收（精准端到端集成）**：准备提交前，执行变更模块与对应场景样例工程（`ateng-cloud-samples/sample-cloud-<scenario>`，1:1 精确对齐各 Starter，重大底层重构联动 `smoke-test`）定向联动验证，杜绝无脑全量回归：
      ```bash
      mvn test -pl <changed-module>,ateng-cloud-samples/sample-cloud-<scenario> -am -T 1C -nsu -B
      ```
-  3. **阶梯三：全反应堆多 JDK 矩阵终极守护 (Post-Push CI Gate)**：全反应堆所有模块在 Linux/Windows 及 JDK 17 & 21 矩阵下的全量回归，100% 交由 GitHub Actions CI 云端并行工作流异步守护；本地推送后通过 `gh run watch <run-id>` 闭环跟踪至全绿。
+  3. **阶梯三：全反应堆多 JDK 矩阵终极守护 (Post-Push CI Gate)**：全反应堆所有模块（100% 模块全集）在 Linux/Windows 及 JDK 17 & 21 矩阵下的全量回归，100% 交由 GitHub Actions CI 云端并行工作流异步守护；本地推送后通过 `gh run watch <run-id>` 闭环跟踪至全绿。
 - **纯文档修改测试豁免 (Doc-Only Exemption)**：若本次变更仅涉及文档（如 `*.md`、纯文本或注释说明）而未改动任何业务源码、配置文件与工程依赖，一律免除执行本地 Maven 单元测试与场景准出验证，直接受控提交。
 
 - **全自洽微服务单测三项铁律 (The 3 Hermetic Test Rules)**：
@@ -106,10 +140,29 @@
   4. **维度三：核心生产边界与非功能语义**：显式声明高并发、网络抖动、读写超时、熔断降级与异常转译的底层边界机制；
   5. **维度四：物理排版与代码全真验证**：示例代码必跑通并锚定单测、YAML 配置逐字对齐属性类、Markdown 代码块严格闭合无破损。
 
-- **“Sample-First 研发闭环与 100% 场景实测铁律” (Sample-Before-Docs)**：
-  - 子模块实现的每一个对外公开功能，**必须 100% 在归属的 `sample-cloud-<scenario>` 中提供真实、端到端可运行的场景用例**；
-  - 在编写或更新子模块 `README.md` 前，**必须先完成对应 Sample 场景用例的编写与实测验证并确保测试全绿**；
-  - `README.md` 中展示的 Java 代码、YAML 片段及执行结果，**必须 100% 直接从已跑通的 Sample 源码、配置及实测日志中 1:1 逆向提取**。
+- **“Sample-First 研发闭环与 100% 场景实测铁律” (Sample-Before-Docs & 100% Feature Coverage Invariant)**：
+  - **功能 100% 场景对齐刚性铁律**：模块实现的每一个对外公开功能（包括所有公开门面类及 Public 方法、声明式核心注解 `@*` 及其关键属性、配置属性类 `@ConfigurationProperties` 的配置项、扩展点 SPI），**必须 100% 在归属的 `sample-cloud-<scenario>` 中提供真实、自洽、端到端可运行的演示用例**；
+  - **Sample-First 流程不变量（绝对前置工序）**：在编写或更新子模块 `README.md` 前，**必须先完成对应 Sample 场景用例的编写与实测验证并确保测试全绿**。严禁在尚未写出可运行 Sample 时凭空手敲文档！
+  - **代码源头全真逆向提取**：`README.md` 中展示的 Java 示例代码、YAML 配置片段及执行结果，**必须 100% 直接从已跑通的 Sample 源码、配置及实测日志/响应中 1:1 逆向提取**。若某特性未在 Sample 中跑通，一律严禁写入文档！
+  - **配置源头锚定**：YAML/Properties 配置片段必须 100% 与当前模块的 `@ConfigurationProperties` 字段逐字对齐；
+  - **文档排版防裂守卫 (Markdown Integrity Guard)**：
+    1. 表格单元格内若涉及泛型类型（如 `Result<T>`）、管道符或位运算（`|`），必须使用行内代码反引号包裹（如 `` `Result<T>` ``）或转义（`\|`），严禁导致表格破损错位；
+    2. 嵌套代码块严格遵循反引号阶梯（外四反引号 ```` 嵌套内三反引号 ```）；
+    3. 文档互链 100% 使用相对路径，严禁包含本地绝对路径（如 `D:/...`、`file:///`）与死链。
+
+- **子模块与样例工程职责正交与 1:1 矩阵 (Submodule & Samples 1:1 Alignment)**：
+  彻底废除跨组件混合大杂烩，建立微服务 Starter 与场景样例工程绝对的 1:1 映射关系：
+  - `ateng-cloud-nacos` ↔ `sample-cloud-nacos`（演示服务注册发现、配置中心动态刷新与无损上下线状态机，零外部网络依赖）
+  - `ateng-cloud-feign` ↔ `sample-cloud-feign`（演示四维上下文透传、双模自适应解包、防重试雪崩与熔断降级）
+  - `ateng-cloud-dubbo` ↔ `sample-cloud-dubbo`（演示 Triple 协议、Filter 上下文注入与强契约解包）
+  - `ateng-cloud-gateway` ↔ `sample-cloud-gateway`（演示 WebFlux 纯响应式网关、Netty 2MB 载荷硬防爆、动态路由热更新与 Sa-Token 鉴权）
+  - `ateng-cloud-sentinel` ↔ `sample-cloud-sentinel`（演示统一受管降级工厂 AtengFallbackFactory 与流量防卫规则）
+  - `ateng-cloud-traffic` ↔ `sample-cloud-traffic-gray`（演示 X-Traffic-Tag 流量染色穿透与金丝雀灰度平滑降级）
+  - `ateng-cloud-all` ↔ `sample-cloud-smoke-test`（微服务通用 Starter 聚合一键起步与离线冒烟门禁）
+  - 子模块 `README.md` 是该模块唯一权威的**“全功能契约真理源”**，承载完备的全景矩阵与五维交付规范；
+  - 场景样例工程（`ateng-cloud-samples/sample-cloud-*`）是面向开发者的**“最小可运行沙箱与开箱体验工程”**，其代码专职作为文档代码片段的真实测试源头，两者代码 1:1 锚定。
+
+- **重构防漂移与审查拦截 (Anti-Drift & Review Gate)**：修改核心 API 签名、类名或配置项时，必须全工程检索所属子模块 `README.md` 同步修正，杜绝陈旧失效代码；`/code-review` 强制将文档一致性、全景矩阵覆盖率与格式完整度列为红牌必检项。
 
 - **四维职责清晰正交与多上下文拓扑 (Multi-Context Invariant)**：
   - `README.md` 面向开发者，聚焦痛点与最小可用代码；
@@ -133,10 +186,11 @@
   ```bash
   bash scripts/commit.sh -t <type> -s <scope> -m "<主说明>" [-l "<细项1>" -l "<细项2>"] [-c <issue>] [-n] [-p] -y
   ```
+  单次包含多项改动时须在正文中以 `-l` 逐项罗列；涉及工单闭环时使用 `-c <issue>` 自动生成 `Closes #N`，支持单/多工单；可用 `-n` 演练提交信息。
 - **推送后流水线守护 (Post-Push CI Monitoring Gate)**：
   代码推送到远程后必须对 GitHub Actions CI 流水线实施闭环监控；通过 `gh run list -L 1` 获取最新工作流 Run ID 并执行 `gh run watch <run-id>` 持续跟踪，直到全量构建与单元测试矩阵（JDK 17 & 21）100% 绿色通过；若检测到流水线失败，必须立即分析排查、修复本地代码并重新提交推送监控，直至流水线彻底成功后方可交付。
-- **主干发布与运维解耦 (Trunk-Based Release)**：
-  遵循 [docs/agents/release-workflow.md](./docs/agents/release-workflow.md)；版本发布必须且只能在 `main` 主干分支发起，前置要求工作区 100% 干净且与远端同步，统一通过 `bash scripts/release.sh` 调度。
+- **主干发布与运维解耦 (Trunk-Based Release & Decoupling)**：
+  执行版本发布或排查发版流水线时，遵循 [docs/agents/release-workflow.md](./docs/agents/release-workflow.md)；版本发布必须且只能在 `main` 主干分支发起，前置要求工作区 100% 干净且与远端同步，统一通过 `bash scripts/release.sh` 调度。
 
 ---
 
@@ -146,17 +200,25 @@
   GitHub Issues、PR 审阅与 CI 交互一律通过官方 `gh` 命令行闭环。工单生命周期严格遵循五阶段状态机：
   1. **认领**：查阅工单并指派当前开发者（`gh issue edit <n> --add-assignee "@me"`）；
   2. **TDD 与 Sample-First 逆向闭环实现**：
-     - 白盒对抗单测驱动核心代码实现；
-     - 在对应的 `sample-cloud-<scenario>` 中补全端到端场景用例并实测全绿；
-     - 1:1 逆向提取示例更新子模块 `README.md` 与全景矩阵；
+     - **2.1 核心驱动与白盒单测**：测试驱动编码，全面遵循第 3 节“工业级代码成熟度九道防线”与 7 大微服务铁律，在模块内部编写完善的白盒与对抗性单元测试；
+     - **2.2 Sample 端到端实测补全（Hard Gate）**：在归属的 `sample-cloud-<scenario>` 中编写真实端到端场景用例，100% 覆盖新增/修改的公开 API、核心注解、配置项与扩展 SPI，执行定向测试确保端到端全绿；
+     - **2.3 全真逆向提取生成 `README.md`**：从已跑通的 Sample 源码、配置与实测输出中 1:1 逆向提取示例与结果，在所属子模块 `README.md` 中按“五维生产就绪交付模型”补齐全景矩阵、开箱代码、扩展定制接入、核心生产边界与实测输出契约；
   3. **准出、自检与双轴审查**：
-     - 执行阶梯二准出测试（纯文档改动免测）；
-     - 对照 7 大微服务铁律与九道通用成熟度防线执行严格自检；
-     - 调用 `/code-review` 开展双轴审查，触碰红线直接返修；
-  4. **受控提交**：通过项目门面 `bash scripts/commit.sh` 提交并推送；
-  5. **闭环**：守护 CI 监控至全绿，通过文件回写验收清单（`gh issue comment <n> -F <file>`），关闭工单（`gh issue close <n>`）。
-- **工单操作与 CLI 避坑 (Issue Tracker & CLI)**：遵循 [docs/agents/issue-tracker.md](./docs/agents/issue-tracker.md)。
-- **分诊标签规范 (Triage Labels)**：遵循 [docs/agents/triage-labels.md](./docs/agents/triage-labels.md)。
-- **微服务模块孵化标准 (Modular Extensibility)**：遵循 [docs/agents/modular-extensibility.md](./docs/agents/modular-extensibility.md)。
-- **微服务模块加固与演进标准 (Module Hardening)**：遵循 [docs/agents/module-hardening-and-expansion.md](./docs/agents/module-hardening-and-expansion.md)。
+     - 执行第 4 节阶梯二准出测试（纯文档改动免测）；
+     - **《交付前成熟度与文档双向对齐清单 (Audit Checklist)》强制自检卡点**：
+       - [ ] **Sample 100% 场景对齐**：模块新增/修改的所有公共 API 方法、核心注解、配置项与 SPI，是否已 100% 在归属的 `sample-cloud-<scenario>` 中提供端到端真实可运行用例？
+       - [ ] **Sample-First 逆向闭环**：README.md 中的所有 Java 示例代码、YAML 配置与输出结果，是否 100% 提取自上述已验证跑通的 Sample 工程？
+       - [ ] **全景速查矩阵**：模块新增/修改的所有公共 API 方法、配置项、核心注解与 SPI 是否 100% 入表？
+       - [ ] **代码-文档真理一致性**：文档中展示的代码与 YAML 是否直接截取自已跑通的单测/Sample？方法名与参数签名是否完全对齐？
+       - [ ] **九道成熟度防线自检**：是否通过对称门面、边界 Fail-Fast、确定性清理、超时防悬挂、驱动异常转译等全部 9 项检查？
+       - [ ] **微服务专属铁律自检**：网关是否纯响应式（0 Servlet 依赖）、Feign 写接口读超时是否彻底禁重试、是否开启 Same-Token 内部防穿透与 Nacos 现代加载？
+       - [ ] **单测环境隔离**：是否使用 `@TempDir`、在 `@AfterEach` 中清理上下文、100% 离线自洽（关闭外部 Nacos/Sentinel 物理网络依赖）？
+       - [ ] **传输契约隔离**：Controller 传输边界是否 100% 杜绝持久层实体（Entity）泄露？
+     - **审查红牌阻断 (Red Card Gate)**：调用 `/code-review` 开展双轴审查；若审查发现模块公开功能在 Sample 中缺位、文档示例未经 Sample 真实跑通、文档漏写公开功能，或触碰成熟度红线，一律出具红牌阻断，强制返修直至双绿；
+  4. **受控提交**：按第 5 节执行受控提交并推送（代码与文档同工单同提交原子交付）；
+  5. **闭环**：守护 CI 监控至全绿，通过文件回写验收清单与提交哈希（`gh issue comment <n> -F <file>`），关闭工单（`gh issue close <n>`）。
+- **工单操作与 CLI 避坑 (Issue Tracker & CLI)**：遵循 [docs/agents/issue-tracker.md](./docs/agents/issue-tracker.md)（含特殊字符引号包裹、`-F` 文件回写防截断及 Wayfinding 映射）。
+- **分诊标签规范 (Triage Labels)**：遵循 [docs/agents/triage-labels.md](./docs/agents/triage-labels.md)（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。
+- **微服务模块孵化标准 (Modular Extensibility)**：遵循 [docs/agents/modular-extensibility.md](./docs/agents/modular-extensibility.md)（“工业级六件套”全场景对标与端到端纯内存自验门禁）。
+- **微服务模块加固与演进标准 (Module Hardening)**：遵循 [docs/agents/module-hardening-and-expansion.md](./docs/agents/module-hardening-and-expansion.md)（四阶段流水线门禁与企业级全场景矩阵）。
 - **领域词汇与架构决策 (Domain Docs)**：探索代码库、设计新领域实体或查阅架构决策时，阅读全局映射 [CONTEXT-MAP.md](./CONTEXT-MAP.md) 及各模块独立的 `CONTEXT.md`，架构选型遵循 [docs/adr/](./docs/adr/)，统一依托 `/domain-modeling` 技能受管推演。

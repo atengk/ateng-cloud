@@ -32,6 +32,8 @@ flowchart TD
 
 本仓库工程设计指南、契约规范与部署配置资产收敛于 [`docs/`](./docs/) 与 [`deploy/`](./deploy/) 体系：
 
+- [系统限界上下文拓扑图谱 (CONTEXT-MAP.md)](./CONTEXT-MAP.md) — 梳理微服务 Starter 限界上下文边界与系统协作拓扑。
+- [架构决策记录库 (docs/adr/)](./docs/adr/) — 沉淀不可逆重大架构选型决策（如多仓物理隔离、BOM 依赖统管等）。
 - [微服务配置中心治理与组件配置速查指南 (docs/guides/nacos-configuration-guide.md)](./docs/guides/nacos-configuration-guide.md) — 详述微服务配置分层哲学、Nacos 4 层 Data ID 分层矩阵、`ateng-boot` 存量组件微服务化纳管裁剪矩阵、`@RefreshScope` 禁令安全红线与各组件配置字典。
 - [标准 Nacos 配置模板资产库 (deploy/nacos/)](./deploy/nacos/) — 收录全网共享基线、Redis/MyBatis/RocketMQ/S3 共享配置、响应式网关专属配置及业务微服务标准模板。
 - [Agent 研发行为准则 (AGENTS.md)](./AGENTS.md) — 详述 7 大微服务专属架构铁律、九道工业级成熟度防线、质量门禁与审查红线。
