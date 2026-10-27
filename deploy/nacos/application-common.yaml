@@ -1,0 +1,91 @@
+# ==============================================================================
+# ateng-cloud 全网微服务基础公共配置 (Data ID: application-common.yaml)
+# 所属环境: 全环境基线 (DEFAULT_GROUP)
+# 适用范围: 所有微服务节点 (包括 Gateway 与所有下游业务微服务)
+# 治理生命周期说明:
+#   - [只读-需重启]: 修改后需要滚动重启服务方可生效
+#   - [环境热绑-只读属性]: 绑定于 @ConfigurationProperties，支持 Spring 原生 Environment 增量刷新
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Spring 核心基础与上下文配置
+# ------------------------------------------------------------------------------
+spring:
+  # 统一默认时区与编码 [只读-需重启]
+  jackson:
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+    locale: zh_CN
+    # 序列化配置: 空对象不抛异常，未知属性忽略反序列化
+    serialization:
+      fail-on-empty-beans: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# ------------------------------------------------------------------------------
+# 2. ateng-boot-core 核心底座公共配置
+# ------------------------------------------------------------------------------
+ateng:
+  boot:
+    core:
+      # 雪花发号器发号节点配置 [只读-需重启]
+      # 建议在容器或宿主机启动时通过环境变量动态注入，防止多实例发号冲突
+      snowflake:
+        worker-id: ${SNOWFLAKE_WORKER_ID:1}
+        datacenter-id: ${SNOWFLAKE_DATACENTER_ID:1}
+
+      # 受管异步线程池配置 (内置四维上下文 ContextCopyingTaskDecorator 透传) [只读-需重启]
+      async:
+        enabled: true
+        pool:
+          core-size: 8
+          max-size: 32
+          queue-capacity: 1024
+          keep-alive-seconds: 60
+          thread-name-prefix: "ateng-async-"
+
+# ------------------------------------------------------------------------------
+# 3. 日志与全链路 MDC 追踪格式配置 [环境热绑-只读属性]
+# ------------------------------------------------------------------------------
+logging:
+  level:
+    root: INFO
+    io.github.atengk: DEBUG
+    org.springframework.web: INFO
+    com.alibaba.nacos: WARN
+  pattern:
+    # 生产统一日志格式: 挂载 traceId 与 tenantId
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-},%X{tenantId:-}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-},%X{tenantId:-}] %logger{36} - %msg%n"
+
+# ------------------------------------------------------------------------------
+# 4. 可观测性 (Actuator / Micrometer Tracing / 健康探针) [只读-需重启]
+# 深度复用 ateng-boot-observability 底座能力
+# ------------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        # 生产暴露健康、指标与 Prometheus 端点 (禁止全量 wildcard 暴露)
+        include: "health,info,metrics,prometheus"
+      base-path: "/actuator"
+  endpoint:
+    health:
+      show-details: when-authorized
+      # K8s 云原生存活 (liveness) 与就绪 (readiness) 双探针支持
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name:unknown-service}
+  tracing:
+    # 链路采样率: 生产环境建议根据 QPS 设置为 0.1 (10%)，开发联调可置为 1.0 (100%)
+    sampling:
+      probability: ${TRACING_PROBABILITY:1.0}
+    propagation:
+      # 遵循 W3C TraceContext 标准协议 (traceparent)
+      type: W3C
+  zipkin:
+    tracing:
+      # 分布式追踪上报地址 (Tempo / Zipkin / Jaeger)
+      endpoint: ${ZIPKIN_ENDPOINT:http://127.0.0.1:9411/api/v2/spans}

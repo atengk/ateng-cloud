@@ -1,0 +1,125 @@
+# ==============================================================================
+# ateng-cloud 响应式微服务网关专属配置 (Data ID: gateway-service.yaml)
+# 所属环境: 全环境基线 (DEFAULT_GROUP)
+# 适用范围: 仅限 ateng-cloud-gateway 响应式服务节点 (Spring WebFlux + Netty)
+#
+# ------------------------------------------------------------------------------
+# 【绝对红线禁区警告 (Anti-Pattern Red Lines)】:
+# 1. 网关运行在 WebFlux / Netty 事件循环之上，【绝对严禁】引入 ateng-boot-web 依赖！
+# 2. 【严禁在此配置】任何 ateng.boot.web.* 属性（如防重幂等、加签验签、操作审计、Servlet TraceFilter）！
+#    一旦引入会导致阻塞 Netty EventLoop 线程，引发整网雪崩假死！
+# 3. 大文件上传严禁经由此网关中转，必须采用 S3 预签名直传！
+# ------------------------------------------------------------------------------
+# 治理生命周期说明:
+#   - [只读-需重启]: Netty 容器参数、安全拦截链
+#   - [环境热绑-只读属性]: 跨域白名单、路由定义（若走配置中心热推）
+# ==============================================================================
+
+server:
+  port: 8080
+  netty:
+    # 连接超时与空闲连接保持
+    connection-timeout: 3000ms
+
+spring:
+  main:
+    # 强制声明为响应式运行时 [只读-需重启]
+    web-application-type: reactive
+
+  cloud:
+    gateway:
+      # 1. Netty 微报文硬防爆: 单请求体内存上限严格限制为 2MB [只读-需重启]
+      # 杜绝恶意攻击者超大 JSON 报文耗尽 DirectMemory 造成 Netty OOM 假死
+      server:
+        netty:
+          max-in-memory-size: 2MB
+
+      # 2. 全局默认出站过滤器管道 [环境热绑-只读属性]
+      default-filters:
+        # 出站跨域标头自动去重: 彻底消除由于网关与下游微服务双重写入 CORS 导致的浏览器跨域报错
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
+
+      # 3. 网关单点集中收口 CORS 跨域配置 [环境热绑-只读属性]
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns:
+              - "*"
+            allowed-methods:
+              - "GET"
+              - "POST"
+              - "PUT"
+              - "DELETE"
+              - "OPTIONS"
+              - "PATCH"
+            allowed-headers:
+              - "*"
+            exposed-headers:
+              - "X-Trace-Id"
+              - "X-Traffic-Tag"
+            allow-credentials: true
+            max-age: 3600
+
+      # 4. 静态兜底/默认动态路由配置示例 (生产推荐使用 Nacos 动态路由持久化机制)
+      routes:
+        # 认证中心服务路由
+        - id: auth-service-route
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - StripPrefix=2
+
+        # 用户中台服务路由
+        - id: user-service-route
+          uri: lb://user-service
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - StripPrefix=2
+
+        # 订单中台服务路由
+        - id: order-service-route
+          uri: lb://order-service
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - StripPrefix=2
+
+# ------------------------------------------------------------------------------
+# 5. Sa-Token 响应式网关集中鉴权配置 (sa-token-reactor-spring-boot3-starter)
+# ------------------------------------------------------------------------------
+sa-token:
+  # Token 统一名称
+  token-name: "satoken"
+  # Token 有效期 (单位: 秒，默认 24 小时)
+  timeout: 86400
+  # 活跃超时时间 (单位: 秒，默认 2 小时)
+  active-timeout: 7200
+  # 是否允许同一账号多地并发登录
+  is-concurrent: true
+  # 是否在多人登录同一账号时共享 Token
+  is-share: false
+  # Token 风格 (推荐 uuid 随机串)
+  token-style: "uuid"
+  # 是否输出 Sa-Token 框架内部运行时详细日志
+  is-log: false
+  # 同源内部防穿透 Same-Token 机制 (网关负责生成并向下游注入受信凭据)
+  same-token:
+    # 网关侧只负责生成 Same-Token 并透传，不拦截外部公网请求
+    check: false
+
+# ------------------------------------------------------------------------------
+# 6. 多服务 OpenAPI 接口文档网关动态聚合配置 (SpringDoc)
+# ------------------------------------------------------------------------------
+springdoc:
+  swagger-ui:
+    # 网关聚合 Swagger UI 访问入口: http://localhost:8080/docs
+    path: /docs
+    urls:
+      - name: "01. 认证服务 (auth-service)"
+        url: /api/auth/v3/api-docs
+      - name: "02. 用户中心 (user-service)"
+        url: /api/user/v3/api-docs
+      - name: "03. 订单中心 (order-service)"
+        url: /api/order/v3/api-docs

@@ -1,0 +1,42 @@
+# ==============================================================================
+# ateng-cloud Redis 与 Redisson 双核协同公共配置 (Data ID: common-redis.yaml)
+# 所属环境: 全环境基线 (DEFAULT_GROUP)
+# 适用范围: 引入了 ateng-boot-redis 或依赖分布式会话/锁/延时队列的微服务节点
+# 治理生命周期说明:
+#   - [只读-需重启]: 连接池与底层 Client 构建
+#   - [环境热绑-只读属性]: 默认 TTL、Key 前缀等纯参数
+# ==============================================================================
+
+spring:
+  data:
+    redis:
+      # 连接参数 (遵循零明文红线，默认读取环境变量) [只读-需重启]
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:YOUR_REDIS_PASSWORD}
+      database: ${REDIS_DB:0}
+      timeout: 3000ms
+      client-type: lettuce
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+          max-wait: 3000ms
+        shutdown-timeout: 2000ms
+
+ateng:
+  boot:
+    redis:
+      # 业务缓存全局前缀，建议按应用名或公司品牌隔离 [环境热绑-只读属性]
+      prefix: "ateng-cloud:"
+      # 默认缓存过期时间 (强类型 Duration，默认 2 小时) [环境热绑-只读属性]
+      default-ttl: 7200s
+      # 空值缓存有效时间 (防缓存穿透，默认 5 分钟) [环境热绑-只读属性]
+      null-ttl: 300s
+      # 缓存防雪崩随机扰动上限 (默认 10 分钟浮动) [环境热绑-只读属性]
+      random-ttl-range: 600s
+      # Redisson 分布式锁默认看门狗租约超时时间 (默认 30 秒) [环境热绑-只读属性]
+      lock:
+        lease-time: 30s
+        wait-time: 5s

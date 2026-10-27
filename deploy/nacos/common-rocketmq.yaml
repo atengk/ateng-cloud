@@ -1,0 +1,32 @@
+# ==============================================================================
+# ateng-cloud RocketMQ 5.x 生产增强与事务消息公共配置 (Data ID: common-rocketmq.yaml)
+# 所属环境: 全环境基线 (DEFAULT_GROUP)
+# 适用范围: 引入了 ateng-boot-rocketmq 的微服务事件驱动或异步解耦节点
+# 核心架构契约:
+#   - 依据蓝图第 3.15 节，核心高并发交易主干推崇 RocketMQ 2PC 事务半消息 + @Idempotent 最终一致性；
+#   - 依据蓝图第 3.18 节，MQ 消息出入栈自动完成四维上下文与流量染色标记的对称透传与清理。
+# 治理生命周期说明:
+#   - [只读-需重启]: gRPC Client 与生产消费客户端实例化
+#   - [环境热绑-只读属性]: 超时时间、重试次数等策略参数
+# ==============================================================================
+
+rocketmq:
+  # RocketMQ 5.x gRPC Proxy 服务接入点 [只读-需重启]
+  endpoints: ${ROCKETMQ_ENDPOINTS:127.0.0.1:8081}
+  producer:
+    # 生产者组名默认以服务名为前缀
+    group: "${spring.application.name}-producer-group"
+    # 发送超时时间 (强类型 Duration，默认 3000ms)
+    send-message-timeout: 3000ms
+    # 同步发送失败重试次数
+    max-attempts: 2
+
+ateng:
+  boot:
+    rocketmq:
+      # 全链路上下文（TraceId、UserId、TenantId、TrafficTag）自动透传拦截器 [只读-需重启]
+      context-propagation:
+        enabled: true
+      # 消费端默认并发线程数
+      consumer:
+        consumption-thread-count: 16

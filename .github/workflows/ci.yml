@@ -1,0 +1,179 @@
+﻿# ==============================================================================
+# 工作流：Java 持续集成流水线 (Java CI - Maven)
+# 适用场景：ateng-cloud 基础框架与中间件 Starter 套件的 PR 门禁与质量保障
+# 触发条件：
+#   - push: 主干分支 (main) 代码推送
+#   - pull_request: 针对主干分支的 PR 创建、编辑、代码同步
+# 核心特性：
+#   - 动态并发控制 (Dynamic Concurrency)：PR 提交自动中断陈旧运行，主干提交按序排队
+#   - 内部路径短路直通 (Path Fast-Pass)：纯文档改动秒级放行，彻底消除分支保护规则死锁
+#   - 分层兼容性矩阵 (Matrix Strategy)：PR 快速验证主流 LTS (Java 21)，主干全量扫描 (Java 17 & 21)
+#   - 官方 actions/setup-java 与 Maven 依赖缓存加速
+#   - 终审门禁看板 (All Checks Passed)：统一盖戳并直出 GitHub Step Summary 结构化报表
+# ==============================================================================
+
+name: Java CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: PR 标题规范校验 (仅在 PR 触发时执行)
+  # ----------------------------------------------------------------------------
+  validate-pr-title:
+    name: 校验 PR 标题规范
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: 校验 PR 标题符合 Conventional Commits
+        uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+
+  # ----------------------------------------------------------------------------
+  # Job 2: 动态探测变更路径 (实现内部短路直通网关)
+  # ----------------------------------------------------------------------------
+  detect-changes:
+    name: 探测变更路径
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code_changed: ${{ steps.decide.outputs.code }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7
+
+      - name: 分析改动文件类型
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!(*.md|docs/**|.gitignore|.editorconfig|LICENSE)'
+
+      - name: 综合决策是否需要执行耗时测试 (发版提交智能短路直通)
+        id: decide
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message || github.event.pull_request.title || '' }}
+        run: |
+          if [[ "$COMMIT_MSG" =~ ^chore\(release\): ]]; then
+            echo "检测到当前提交为发版提交 (chore(release):)，自动短路跳过常规测试，由 Release 工作流全权闭环。"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=${{ steps.filter.outputs.code }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ----------------------------------------------------------------------------
+  # Job 3: 跨 LTS 版本自动化单元测试矩阵 (Maven)
+  # ----------------------------------------------------------------------------
+  test:
+    name: 单元测试 (Java ${{ matrix.java-version }})
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.code_changed != 'false'
+    timeout-minutes: 15
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        java-version: ${{ github.event_name == 'pull_request' && fromJSON('["21"]') || fromJSON('["17", "21"]') }}
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7
+
+      - name: 设置 Java 环境
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.java-version }}
+          cache: 'maven'
+
+      - name: 安装测试所需中文字体 (CJK Fonts)
+        run: sudo apt-get update && sudo apt-get install -y fonts-wqy-microhei
+
+      - name: 编译并执行全量单元与集成测试
+        run: mvn clean test -B -T 1C -nsu
+
+  # ----------------------------------------------------------------------------
+  # Job 4: 质量门禁终审盖戳 (分支保护规则唯一指定强绑门禁)
+  # ----------------------------------------------------------------------------
+  all-checks-passed:
+    name: 质量门禁终审 (All Checks Passed)
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-pr-title, test]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: 汇总校验各任务执行结果
+        run: |
+          TITLE_RESULT="${{ needs.validate-pr-title.result }}"
+          DETECT_RESULT="${{ needs.detect-changes.result }}"
+          TEST_RESULT="${{ needs.test.result }}"
+
+          echo "任务状态汇总: PR标题=[$TITLE_RESULT], 变更探测=[$DETECT_RESULT], 单元测试=[$TEST_RESULT]"
+
+          if [ "$TITLE_RESULT" = "failure" ] || [ "$TITLE_RESULT" = "cancelled" ]; then
+            echo "::error::PR 标题规范校验失败！请按照 Conventional Commits 规范修改 PR 标题。"
+            exit 1
+          fi
+
+          if [ "$DETECT_RESULT" = "failure" ] || [ "$DETECT_RESULT" = "cancelled" ]; then
+            echo "::error::变更路径探测任务异常中断！"
+            exit 1
+          fi
+
+          if [ "$TEST_RESULT" = "failure" ] || [ "$TEST_RESULT" = "cancelled" ]; then
+            echo "::error::Java 单元测试失败！门禁熔断阻断。"
+            exit 1
+          fi
+
+          echo "✅ 全部必要质量门禁已全部通过！"
+
+      - name: 生成门禁看板摘要报告
+        if: always()
+        run: |
+          {
+            echo "## 🚦 Java CI 质量门禁终审报告"
+            echo ""
+            echo "| 检查项 | 判定状态 | 执行说明 |"
+            echo "| :--- | :---: | :--- |"
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo "| **PR 标题规范校验** | ${{ needs.validate-pr-title.result == 'success' && '✅ 通过' || '❌ 失败' }} | Conventional Commits 语义化规范 |"
+            fi
+            echo "| **变更路径探测** | ${{ needs.detect-changes.result == 'success' && '✅ 通过' || '❌ 异常' }} | 区分文档短路与核心代码构建 |"
+            if [ "${{ needs.detect-changes.outputs.code_changed }}" = "false" ]; then
+              echo "| **单元测试矩阵** | ⚡ 短路直通 | 纯文档改动或发版提交 (chore(release):)，自动跳过耗时测试并放行 |"
+            else
+              echo "| **Maven 单元测试** | ${{ needs.test.result == 'success' && '✅ 通过' || '❌ 失败' }} | 跨 LTS 版本回归验证 (JDK 17 & 21) |"
+            fi
+            echo ""
+            echo "> 💡 **分支保护规则建议**：请在 GitHub 仓库设置中将 \`质量门禁终审 (All Checks Passed)\` 设为唯一 Required Status Check。"
+          } >> "$GITHUB_STEP_SUMMARY"

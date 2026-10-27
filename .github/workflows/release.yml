@@ -1,0 +1,314 @@
+﻿# ==============================================================================
+# 工作流：Java 统合发版流水线 (Java Release & Publishing)
+# 适用场景：ateng-cloud 基础框架与中间件 Starter 套件标准化发版
+# 触发条件：
+#   - push tags: 推送符合语义化版本格式的 Git 标签 (v*.*.*)
+#   - workflow_dispatch: GitHub 网页端手动输入版本号一键触发
+# 核心特性：
+#   - 动态安全调度：支持网页端零终端依赖发版，自动自检分支与冲突并回推 Git Tag
+#   - 产物不可变打包与 SHA-256 校验和清单生成
+#   - 自动化 Release 发布与发布日志生成 (git-cliff / GitHub Release Notes)
+#   - 支持一键发布至 Maven Central（受控于 ENABLE_MAVEN_PUBLISH 变量）
+# ==============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号 (例如 v1.0.0 或 v1.0.0-beta.1)'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: 网页调度前置防呆与 Tag 回写
+  # ----------------------------------------------------------------------------
+  prepare-tag:
+    name: 调度自检与准备 Tag
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 5
+    outputs:
+      tag_name: ${{ steps.check.outputs.tag_name }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 校验版本号格式与触发分支自检
+        id: check
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "::error::安全熔断！当前触发分支为 [${{ github.ref_name }}]，发版必须且只能在 main 主干分支调度！"
+            exit 1
+          fi
+
+          INPUT_VERSION="${{ inputs.version }}"
+          if [[ ! "$INPUT_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::版本号格式不合规！必须符合 vX.Y.Z 语义化版本规范。"
+            exit 1
+          fi
+
+          if [[ "$INPUT_VERSION" =~ [sS][nN][aA][pP][sS][hH][oO][tT] ]]; then
+            echo "::error::非法版本！Sonatype Central Portal 禁止发布 SNAPSHOT 快照版本。若需预发布请使用语义化版本（如 -rc.1 或 -beta.1）。"
+            exit 1
+          fi
+
+          if git rev-parse "$INPUT_VERSION" >/dev/null 2>&1; then
+            echo "::error::标签 $INPUT_VERSION 在远端仓库已存在，禁止重复覆盖！"
+            exit 1
+          fi
+
+          echo "tag_name=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: 创建并回推 Git Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.check.outputs.tag_name }}" -m "Release ${{ steps.check.outputs.tag_name }}"
+          git push origin "${{ steps.check.outputs.tag_name }}"
+
+  # ----------------------------------------------------------------------------
+  # Job 2: 构建多模块产物与校验和
+  # ----------------------------------------------------------------------------
+  build-artifacts:
+    name: 构建打包与生成校验清单
+    runs-on: ubuntu-latest
+    needs: [prepare-tag]
+    if: always() && (github.event_name == 'push' || needs.prepare-tag.result == 'success')
+    timeout-minutes: 20
+    outputs:
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      raw_version: ${{ steps.meta.outputs.raw_version }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 校验发版 Tag 谱系合法性 (必须源自主干 main)
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          TAG_COMMIT=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
+            echo "::error::安全熔断！发版标签 $GITHUB_REF 指向的提交 [$TAG_COMMIT] 未合入 main 主干！"
+            echo "::error::ateng-cloud 遵循严格的主干发版铁律，严禁从任何未经合入的特性分支或孤立提交发版。"
+            exit 1
+          fi
+          echo "发版 Tag 谱系校验通过: 确认源自 main 主干。"
+
+      - name: 解析版本元数据
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ needs.prepare-tag.outputs.tag_name }}"
+          else
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          fi
+
+          if [[ "$TAG_NAME" =~ [sS][nN][aA][pP][sS][hH][oO][tT] ]]; then
+            echo "::error::安全熔断！Sonatype Central Portal 禁止发布带有 SNAPSHOT 的快照构件。请使用正式版或语义化预发布版本（如 -rc.1）。"
+            exit 1
+          fi
+
+          RAW_VERSION="${TAG_NAME#v}"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "raw_version=$RAW_VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG_NAME" =~ - ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 设置 Java 环境
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: 更新 pom.xml 版本并构建打包
+        run: |
+          mvn versions:set -DnewVersion=${{ steps.meta.outputs.raw_version }} -DgenerateBackupPoms=false
+          mvn clean package -DskipTests -B -T 1C -nsu
+          mkdir -p dist
+          find . -name "*.jar" -not -path "*/target/*-sources.jar" -not -path "*/target/*-javadoc.jar" -exec cp {} dist/ \; 2>/dev/null || true
+          cd dist
+          for file in *; do
+            if [ -f "$file" ] && [ "$file" != "checksums.txt" ]; then
+              sha256sum "$file"
+            fi
+          done > checksums.txt
+          if [ -s checksums.txt ]; then
+            echo "=== 构建产物校验和清单 ==="
+            cat checksums.txt
+          fi
+
+      - name: 归档不可变制品附件
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dist
+          path: dist/*
+          retention-days: 1
+
+  # ----------------------------------------------------------------------------
+  # Job 3: 发布 GitHub Release 与挂载附件
+  # ----------------------------------------------------------------------------
+  publish-release:
+    name: 发布 GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-artifacts]
+    if: always() && needs.build-artifacts.result == 'success'
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: 检出源码 (全量历史供日志生成)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.build-artifacts.outputs.tag_name }}
+
+      - name: 下载构建制品
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist
+
+      - name: 生成发布日志 (git-cliff)
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        continue-on-error: true
+        with:
+          config: ${{ hashFiles('.cliff.toml') != '' && '.cliff.toml' || '' }}
+          args: --tag ${{ needs.build-artifacts.outputs.tag_name }} --latest --strip header --github-repo ${{ github.repository }}
+        env:
+          OUTPUT: CHANGELOG_RELEASE.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 创建 GitHub Release 并挂载附件
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.build-artifacts.outputs.tag_name }}
+          name: ${{ needs.build-artifacts.outputs.tag_name }}
+          body: ${{ steps.git-cliff.outputs.content }}
+          generate_release_notes: false
+          draft: false
+          prerelease: ${{ needs.build-artifacts.outputs.is_prerelease == 'true' }}
+          files: |
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ----------------------------------------------------------------------------
+  # Job 4: 可选发布至 Maven Central
+  # ----------------------------------------------------------------------------
+  publish-maven:
+    name: 发布至 Maven Central
+    runs-on: ubuntu-latest
+    needs: [build-artifacts]
+    if: always() && needs.build-artifacts.result == 'success' && vars.ENABLE_MAVEN_PUBLISH == 'true'
+    timeout-minutes: 20
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build-artifacts.outputs.tag_name }}
+
+      - name: 前置发布凭据完整性自检
+        run: |
+          MISSING_SECRETS=""
+          [ -z "${{ secrets.CENTRAL_USERNAME }}" ] && MISSING_SECRETS="$MISSING_SECRETS CENTRAL_USERNAME"
+          [ -z "${{ secrets.CENTRAL_PASSWORD }}" ] && MISSING_SECRETS="$MISSING_SECRETS CENTRAL_PASSWORD"
+          [ -z "${{ secrets.MAVEN_GPG_PRIVATE_KEY }}" ] && MISSING_SECRETS="$MISSING_SECRETS MAVEN_GPG_PRIVATE_KEY"
+          [ -z "${{ secrets.MAVEN_GPG_PASSPHRASE }}" ] && MISSING_SECRETS="$MISSING_SECRETS MAVEN_GPG_PASSPHRASE"
+
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "::error::检测到 ENABLE_MAVEN_PUBLISH=true 但以下 GitHub Secrets 缺失:$MISSING_SECRETS"
+            echo "请参考 docs/guides/maven-central-publishing.md 在仓库 Settings -> Secrets 中补齐上述凭据。"
+            exit 1
+          fi
+
+      - name: 设置 Java 环境与 GPG
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: 锁定 Maven 3.9.9 标准环境 (规避 3.10+ 本地元数据缺陷)
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: '3.9.9'
+
+      - name: 发布构件至 Maven Central
+        run: |
+          mvn versions:set -DnewVersion=${{ needs.build-artifacts.outputs.raw_version }} -DgenerateBackupPoms=false
+          mvn clean deploy -P release -DskipTests -B -T 1 -Dgpg.passphrase="${{ secrets.MAVEN_GPG_PASSPHRASE }}"
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+  # ----------------------------------------------------------------------------
+  # Job 5: 输出发版看板摘要报告
+  # ----------------------------------------------------------------------------
+  summary:
+    name: 输出发版看板报告
+    runs-on: ubuntu-latest
+    needs: [build-artifacts, publish-release, publish-maven]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: 生成富文本发版报告
+        run: |
+          TAG="${{ needs.build-artifacts.outputs.tag_name }}"
+          if [ "${{ needs.build-artifacts.outputs.is_prerelease }}" = "true" ]; then
+            TYPE_DESC="🧪 Pre-release (预发版)"
+          else
+            TYPE_DESC="🎉 稳定正式版"
+          fi
+
+          if [ "${{ needs.publish-release.result }}" = "success" ]; then
+            REL_DESC="✅ 成功"
+          else
+            REL_DESC="❌ 失败"
+          fi
+
+          if [ "${{ needs.publish-maven.result }}" = "success" ]; then
+            MAVEN_DESC="✅ 成功"
+          elif [ "${{ needs.publish-maven.result }}" = "skipped" ]; then
+            MAVEN_DESC="⚡ 已跳过 (未启用)"
+          else
+            MAVEN_DESC="❌ 失败"
+          fi
+
+          {
+            echo "## 🚀 ateng-cloud 统合发版全景看板"
+            echo ""
+            echo "| 发版维度 | 状态 | 详细信息 |"
+            echo "| :--- | :---: | :--- |"
+            echo "| **发版版本** | \`$TAG\` | $TYPE_DESC |"
+            echo "| **GitHub Release** | $REL_DESC | Jar 包与校验和附件已挂载 |"
+            echo "| **Maven 官方分发** | $MAVEN_DESC | Central 仓库发布 |"
+          } >> "$GITHUB_STEP_SUMMARY"

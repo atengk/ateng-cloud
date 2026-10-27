@@ -1,0 +1,27 @@
+# ==============================================================================
+# ateng-cloud 对象存储与 S3 预签名直传公共配置 (Data ID: common-storage.yaml)
+# 所属环境: 全环境基线 (DEFAULT_GROUP)
+# 适用范围: 引入了 ateng-boot-storage 的微服务节点 (如文件服务、资源中心、业务微服务)
+# 核心架构契约:
+#   - 依据蓝图第 3.14 节，大文件/音视频/大报表 100% 严禁流经网关或微服务内存中转！
+#   - 必须通过预签名 URL (Presigned URL) 引导客户端直传至 S3 / MinIO 存储桶。
+# 治理生命周期说明:
+#   - [只读-需重启]: S3 客户端实例与连接池构建
+#   - [环境热绑-只读属性]: 存储桶名称、预签名时效等属性
+# ==============================================================================
+
+ateng:
+  boot:
+    storage:
+      # 存储类型: s3 (完全兼容 AWS S3, MinIO, 阿里云 OSS, 腾讯云 COS, 华为云 OBS) [只读-需重启]
+      type: s3
+      s3:
+        endpoint: ${S3_ENDPOINT:http://127.0.0.1:9000}
+        access-key: ${S3_ACCESS_KEY:YOUR_S3_ACCESS_KEY}
+        secret-key: ${S3_SECRET_KEY:YOUR_S3_SECRET_KEY}
+        bucket-name: ${S3_BUCKET_NAME:ateng-cloud-bucket}
+        region: ${S3_REGION:us-east-1}
+        # 是否启用路径样式访问 (MinIO 必须开启 path-style-access: true)
+        path-style-access: true
+        # 预签名直传凭证有效时间窗口 (默认 15 分钟) [环境热绑-只读属性]
+        presigned-expiry: 15m

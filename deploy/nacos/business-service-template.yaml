@@ -1,0 +1,134 @@
+# ==============================================================================
+# ateng-cloud 业务微服务节点标准配置模板 (Data ID: <service-name>.yaml，如 order-service.yaml)
+# 所属环境: 全环境基线 (DEFAULT_GROUP)
+# 适用范围: 任意基于 Spring MVC (Servlet) 的内部下游微服务 (如 User, Order, Payment 等)
+# 核心架构契约:
+#   - 必须开启 Sa-Token 内部防穿透 Same-Token 严格校验 (防内网端口绕过网关直连)；
+#   - 必须配置 Feign 读超时严禁重试原则，杜绝非幂等写接口引发雪崩；
+#   - 深度集成 ateng-boot-web 提供的防重幂等、限流防刷、慢请求告警与接口审计能力。
+# 治理生命周期说明:
+#   - [只读-需重启]: 端口、Servlet 容器参数、Sentinel 注册
+#   - [环境热绑-只读属性]: 超时时间、限流阈值、幂等过期时间
+# ==============================================================================
+
+server:
+  port: ${SERVER_PORT:8081}
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 20
+    accept-count: 1000
+    max-connections: 10000
+
+spring:
+  main:
+    # 业务微服务采用标准 Servlet 运行时 [只读-需重启]
+    web-application-type: servlet
+
+  # ----------------------------------------------------------------------------
+  # 1. Spring Cloud OpenFeign 客户端与弹性防御 [环境热绑-只读属性]
+  # ----------------------------------------------------------------------------
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            # 双阶分级超时控制 (连接超时 2 秒快速失败，读取超时 5 秒)
+            connect-timeout: 2000
+            read-timeout: 5000
+            # 日志级别: BASIC 输出请求方法、URL、响应状态码及执行时间
+            logger-level: BASIC
+      # 启用 Apache HttpClient 5 线程池或 OkHttp 连接池底座
+      httpclient:
+        hc5:
+          enabled: true
+
+    # --------------------------------------------------------------------------
+    # 2. Sentinel 流量防卫与受管熔断降级 [只读-需重启]
+    # --------------------------------------------------------------------------
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8080}
+        port: 8719
+      eager: true
+
+# ------------------------------------------------------------------------------
+# 3. Sa-Token 内部微服务零信任防御 (Same-Token 防内网穿透) [环境热绑-只读属性]
+# ------------------------------------------------------------------------------
+sa-token:
+  token-name: "satoken"
+  # 开启同源 Same-Token 校验: 凡未经网关中转或未携带内部私有签名的请求，直接 Fail-Fast 401 拦截
+  same-token:
+    check: true
+
+# ------------------------------------------------------------------------------
+# 4. ateng-cloud 专属微服务治理能力配置 [环境热绑-只读属性]
+# ------------------------------------------------------------------------------
+ateng:
+  cloud:
+    # Feign 双模智能自适应解包引擎 (自动校验 code==200 并剥离 Result<T>，报错转译为 BusinessException)
+    feign:
+      adaptive-unwrap:
+        enabled: true
+      # 防雪崩弹性重试纪律: 默认彻底关闭 ReadTimeout 重试，仅允许连接建立失败重试 1 次
+      retry:
+        enabled: true
+        max-attempts: 1
+        only-connect-timeout: true
+
+    # Sentinel 受管降级工厂 (统一包装为标准 Result<T> FLOW_LIMIT / DEGRADE 错误码)
+    sentinel:
+      enabled: true
+
+    # 全链路流量染色与金丝雀灰度路由 (穿透 X-Traffic-Tag，无灰度实例时平滑回退基线)
+    traffic:
+      enabled: true
+      header-name: "X-Traffic-Tag"
+      fallback-to-default: true
+
+  # ----------------------------------------------------------------------------
+  # 5. ateng-boot-web 运行时增强配置 (业务微服务按需选用) [环境热绑-只读属性]
+  # ----------------------------------------------------------------------------
+  boot:
+    web:
+      # 全链路追踪拦截器与 MDC 注入
+      trace:
+        enabled: true
+        header-name: "X-Trace-Id"
+
+      # 雪花算法 53 位 Long 转 String 防前端 JavaScript 精度失真
+      long-to-string: true
+
+      # 自适应接口防重幂等引擎 (@Idempotent)
+      idempotent:
+        enabled: true
+        key-prefix: "idempotent:${spring.application.name}:"
+        in-memory:
+          max-capacity: 10000
+          clean-interval: 60s
+
+      # 自适应限流防刷引擎 (@RateLimiter)
+      ratelimit:
+        enabled: true
+        in-memory:
+          max-capacity: 10000
+          clean-interval: 60s
+
+      # 慢请求主动性能告警 (超过强类型 Duration 阈值打印 WARN 级 SLOW_REQUEST 日志)
+      slow-request:
+        enabled: true
+        threshold: 3000ms
+        exclude-urls:
+          - "/actuator/**"
+
+      # 声明式接口耗时审计切面 (@WebLog)
+      log:
+        enabled: true
+
+      # 企业级操作审计切面 (@OperateLog)
+      operate-log:
+        enabled: true
+
+      # 请求体可重读缓存管道 (支持多次读取并限制最大 2MB 防 OOM)
+      body-cache:
+        max-body-size: 2MB
