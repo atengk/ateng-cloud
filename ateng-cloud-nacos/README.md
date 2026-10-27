@@ -19,6 +19,9 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
 | `NacosLifecycleStateMachine` | 状态机管理器 | 原子驱动双阶段优雅下线排空与上线恢复 | 状态流转 `UP` -> `DRAINING` -> `OUT_OF_SERVICE` |
 | `NacosGracefulShutdownLifecycle` | 生命周期钩子 | `SmartLifecycle` 最高优先级（`PHASE_MAX`）排空钩子 | 容器停机最先触发注销与排空 |
 | `NacosServiceEndpoint` | Actuator 端点 | `/actuator/nacos-service` 专属运维与状态端点 | 支持读写分离与外部流水线主动摘牌 |
+| `ZoneAffinityInstanceFilter` | 路由过滤器 | 机房 (Zone) 就近亲和与跨区平滑容灾降级过滤器 | 标配 `@ConditionalOnMissingBean` |
+| `NacosTemplate` | 核心门面类 | Nacos 注册发现、机房亲和筛选与对称运维门面 | 标配 `@ConditionalOnMissingBean`，空安全 |
+| `NacosResultCode` | 错误码枚举 | Nacos 统一业务错误码 (`4101~4104`，归属 `NETWORK_RPC`) | 底层异常因果转译映射 |
 
 ### 2. 配置属性速查表 (`ateng.cloud.nacos.*`)
 
@@ -117,6 +120,106 @@ public class NacosMetadataDemoController {
 }
 ```
 
+### 4. 使用 NacosTemplate 统一门面进行健康发现与运维
+
+注入 `NacosTemplate` 门面即可享受空安全保障（查询绝不返回 `null`，单实例返回 `Optional`）、机房亲和路由与对称运维能力：
+
+```java
+@RestController
+@RequestMapping("/api/nacos/ops")
+public class NacosOpsDemoController {
+
+    private final NacosTemplate nacosTemplate;
+
+    public NacosOpsDemoController(NacosTemplate nacosTemplate) {
+        this.nacosTemplate = nacosTemplate;
+    }
+
+    /**
+     * 查询指定服务的健康可用实例列表 (已过滤 weight <= 0.0 与禁用节点)
+     */
+    @GetMapping("/instances")
+    public Result<List<InstanceVO>> getInstances(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
+        List<InstanceVO> list = nacosTemplate.getInstances(serviceName).stream()
+                .map(InstanceVO::fromInstance)
+                .collect(Collectors.toList());
+        return Result.success(list != null ? list : Collections.emptyList());
+    }
+
+    /**
+     * 查询同机房亲和优先的健康实例列表 (本区全宕自动平滑降级全集群)
+     */
+    @GetMapping("/same-zone")
+    public Result<List<InstanceVO>> getSameZoneInstances(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
+        List<InstanceVO> list = nacosTemplate.getSameZoneInstances(serviceName).stream()
+                .map(InstanceVO::fromInstance)
+                .collect(Collectors.toList());
+        return Result.success(list != null ? list : Collections.emptyList());
+    }
+
+    /**
+     * 获取当前服务节点在 Nacos 注册的自身实例信息
+     */
+    @GetMapping("/me")
+    public Result<InstanceVO> getMyInstance() {
+        return nacosTemplate.getMyInstance()
+                .map(InstanceVO::fromInstance)
+                .map(Result::success)
+                .orElseGet(() -> Result.success(null));
+    }
+
+    /**
+     * 检测目标服务是否触发过载保护阈值
+     */
+    @GetMapping("/protection")
+    public Result<Boolean> isUnderProtection(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
+        return Result.success(nacosTemplate.isUnderProtection(serviceName));
+    }
+
+    /**
+     * 动态设置指定服务实例启用/禁用状态
+     */
+    @PostMapping("/instance/status")
+    public Result<Void> setInstanceEnabled(@RequestParam String serviceName,
+                                          @RequestParam String ip,
+                                          @RequestParam int port,
+                                          @RequestParam boolean enabled) {
+        nacosTemplate.setInstanceEnabled(serviceName, ip, port, enabled);
+        return Result.success();
+    }
+
+    /**
+     * 动态调节指定服务实例权重 (设为 0.0 实现流量隔离)
+     */
+    @PostMapping("/instance/weight")
+    public Result<Void> updateInstanceWeight(@RequestParam String serviceName,
+                                            @RequestParam String ip,
+                                            @RequestParam int port,
+                                            @RequestParam double weight) {
+        nacosTemplate.updateInstanceWeight(serviceName, ip, port, weight);
+        return Result.success();
+    }
+
+    /**
+     * 动态注册当前实例元数据
+     */
+    @PostMapping("/metadata")
+    public Result<Void> registerMetadata(@RequestParam String key, @RequestParam String value) {
+        nacosTemplate.registerMetadata(key, value);
+        return Result.success();
+    }
+
+    /**
+     * 动态移除当前实例元数据
+     */
+    @DeleteMapping("/metadata")
+    public Result<Void> removeMetadata(@RequestParam String key) {
+        nacosTemplate.removeMetadata(key);
+        return Result.success();
+    }
+}
+```
+
 ---
 
 ## 维度二：生产扩展接管
@@ -161,6 +264,27 @@ public class SampleMetadataCustomizer implements NacosMetadataCustomizer {
 }
 ```
 
+### 3. 自定义机房亲和过滤器与扩展接管
+
+`ZoneAffinityInstanceFilter` 与 `NacosTemplate` 均标配 `@ConditionalOnMissingBean`。若需定制多级机房亲和策略（如跨同城双活 AZ 加权或多地域就近），直接声明同类型 Bean 即可无缝接管：
+
+```java
+@Configuration(proxyBeanMethods = false)
+public class CustomNacosConfiguration {
+
+    @Bean
+    public ZoneAffinityInstanceFilter customZoneAffinityInstanceFilter() {
+        return new ZoneAffinityInstanceFilter() {
+            @Override
+            public List<Instance> filter(List<Instance> instances, String targetZone) {
+                // 自定义机房亲和与权重算法，无缝接管框架默认行为
+                return super.filter(instances, targetZone);
+            }
+        };
+    }
+}
+```
+
 ---
 
 ## 维度三：核心生产边界与非功能语义
@@ -193,16 +317,28 @@ sequenceDiagram
     Hook->>DevOps: 容器正常平稳退出 (Exit 0)
 ```
 
-1. **容器多网卡智能清洗防漂移**：
+### 2. 生产关键边界与治理不变量
+
+1. **同机房就近亲和与跨区容灾降级 (Zone Affinity & Fallback)**：
+   - 筛选处于相同机房区域（`zone`）的可用实例；
+   - 严格响应 Nacos 动态权重治理，权重 `<= 0.0` 或已禁用的节点自动被剔除；
+   - 当本机房无任何可用健康实例时，平滑降级（Cross-Zone Fallback）至全集群健康实例，防御机房级雪崩。
+2. **动态权重响应与集群过载保护阈值 (Dynamic Weight & Overload Defense)**：
+   - 当通过控制台或运维 API 将某节点权重调整为 `0.0` 时，调用端门面自动将其排除于路由列表外，实现安全灰度与流量隔离；
+   - 当检测到集群健康比跌破 Nacos 保护阈值（`isReachProtectionThreshold` 或 healthy ratio `<= protectThreshold`），自动输出 WARN 级告警并透传状态。
+3. **底层驱动异常因果转译体系 (Causal Exception Translation)**：
+   - 所有调用 Nacos 底层驱动可能抛出的 `NacosException`，100% 被捕获并转译为框架受管的 `BusinessException`；
+   - 错误码规划遵循 `ateng-boot-core` `ResultCodeSegment.NETWORK_RPC` 规范（`NacosResultCode.NACOS_CLIENT_ERROR` 等，4101~4104），且 100% 保留原始 `cause` 异常链，严禁异常吞咽与信息丢失。
+4. **容器多网卡智能清洗防漂移**：
    - 框架默认自动清洗常见容器网络虚拟网卡（`docker0`、`flannel.*`、`cni.*`、`veth.*`、`vmnet.*`、`virbr.*`、`br-.*`）；
    - 优先绑定可路由的内网网段（`10.*`、`172.16~31.*`、`192.168.*`），从源头杜绝容器注册为宿主机虚拟网卡或 `127.0.0.1` 导致集群不可达。
-2. **Kebab-Case 标准化元数据与平滑预热**：
+5. **Kebab-Case 标准化元数据与平滑预热**：
    - 元数据键名严格遵循小写中划线格式：`startup-time`、`warmup-duration`、`version`、`env`、`zone`、`cluster`、`traffic-tag`；
    - 启动时自动注入 `startup-time` 启动时间戳与 `warmup-duration: 60s`，供调用端负载均衡器执行动态平滑爬升，彻底消除冷启动雪崩。
-3. **K8s 停机协同与防强杀约束**：
+6. **K8s 停机协同与防强杀约束**：
    - 排空时间 `drain-timeout`（生产默认 10s）必须严格小于 Kubernetes Pod 配置的 `terminationGracePeriodSeconds`（建议设为 30s），预留充足缓冲防止被 K8s `SIGKILL` 强杀。
-4. **100% 离线自洽单测铁律**：
-   - 在单测环境（`spring.cloud.nacos.discovery.enabled: false`）下，优雅下线、探针联动与端点平滑降级（No-Op），保障 CI 流水线零外部物理依赖秒级全绿。
+7. **100% 离线自洽单测铁律与平滑空转**：
+   - 在单测环境（`spring.cloud.nacos.discovery.enabled: false`）下，`NacosTemplate` 安全空转（查询返回空集合或 `Optional.empty()`），优雅下线、探针联动与端点平滑降级（No-Op），保障 CI 流水线零外部物理依赖秒级全绿。
 
 ---
 
@@ -212,4 +348,5 @@ sequenceDiagram
 - **自动化测试保证**：端到端覆盖于 `SampleCloudNacosApplicationTest`：
   - `testGetMetadataEndpoint`：断言校验 `startup-time`、`warmup-duration`、`zone` 及 SPI 定制标签均端到端正确生效；
   - `testGetActuatorNacosServiceEndpoint`：验证 `/actuator/nacos-service` 状态与元数据正确读取；
-  - `testActuatorNacosServiceOfflineAndOnlineActions`：验证执行 offline 摘牌排空时，就绪探针立即切换为 `OUT_OF_SERVICE`，执行 online 时平稳恢复 `UP`。
+  - `testActuatorNacosServiceOfflineAndOnlineActions`：验证执行 offline 摘牌排空时，就绪探针立即切换为 `OUT_OF_SERVICE`，执行 online 时平稳恢复 `UP`；
+  - `testNacosTemplateOpsEndpoints`：验证 `NacosTemplate` 健康实例查询、同机房亲和筛选、自身实例感知、保护阈值探测、动态元数据维护及主动上下线全链路离线平滑通过。

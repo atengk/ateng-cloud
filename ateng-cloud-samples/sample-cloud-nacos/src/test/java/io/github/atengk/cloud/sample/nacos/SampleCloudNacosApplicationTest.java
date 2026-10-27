@@ -9,8 +9,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -90,5 +92,58 @@ class SampleCloudNacosApplicationTest {
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("UP")));
+    }
+
+    @Test
+    @DisplayName("测试 NacosTemplate 运维接口查询与平滑空转契约")
+    void testNacosTemplateOpsEndpoints() throws Exception {
+        // 1. 测试健康实例列表查询（离线空安全返回空集合）
+        mockMvc.perform(get("/api/nacos/ops/instances?serviceName=sample-cloud-nacos")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data", empty()));
+
+        // 2. 测试机房亲和筛选（离线空安全返回空集合）
+        mockMvc.perform(get("/api/nacos/ops/same-zone?serviceName=sample-cloud-nacos")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data", empty()));
+
+        // 3. 测试获取自身实例
+        mockMvc.perform(get("/api/nacos/ops/me")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)));
+
+        // 4. 测试保护阈值探测
+        mockMvc.perform(get("/api/nacos/ops/protection?serviceName=sample-cloud-nacos")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data", is(false)));
+
+        // 5. 测试动态元数据注册与移除
+        mockMvc.perform(post("/api/nacos/ops/metadata?key=canary-group&value=canary-a")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)));
+
+        mockMvc.perform(delete("/api/nacos/ops/metadata?key=canary-group")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)));
+
+        // 6. 测试动态上下线接口
+        mockMvc.perform(post("/api/nacos/ops/offline")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)));
+
+        mockMvc.perform(post("/api/nacos/ops/online")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)));
     }
 }

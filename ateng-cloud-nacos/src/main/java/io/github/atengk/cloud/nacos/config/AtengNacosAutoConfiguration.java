@@ -1,8 +1,10 @@
 package io.github.atengk.cloud.nacos.config;
 
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
+import com.alibaba.cloud.nacos.NacosServiceManager;
 import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
 import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
+import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
@@ -10,6 +12,7 @@ import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.NacosMetadataCustomizer;
+import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -128,5 +131,29 @@ public class AtengNacosAutoConfiguration {
                                                      AtengNacosProperties properties,
                                                      Environment environment) {
         return new NacosServiceEndpoint(stateMachine, metadataProvider, properties, environment);
+    }
+
+    /**
+     * 同机房 (Zone) 就近亲和过滤器
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ZoneAffinityInstanceFilter zoneAffinityInstanceFilter() {
+        return new ZoneAffinityInstanceFilter();
+    }
+
+    /**
+     * Nacos 统一运维抽象门面
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosTemplate nacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
+                                       ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider,
+                                       AtengNacosProperties properties,
+                                       NacosMetadataProvider metadataProvider,
+                                       ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
+                                       ZoneAffinityInstanceFilter zoneAffinityFilter) {
+        return new NacosTemplate(serviceManagerProvider, discoveryPropertiesProvider, properties,
+                metadataProvider, stateMachineProvider, zoneAffinityFilter);
     }
 }

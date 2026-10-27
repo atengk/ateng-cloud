@@ -1,11 +1,13 @@
 package io.github.atengk.cloud.nacos.config;
 
 import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
+import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -37,6 +39,8 @@ class AtengNacosAutoConfigurationTest {
             assertThat(context).hasSingleBean(NacosLifecycleStateMachine.class);
             assertThat(context).hasSingleBean(NacosGracefulShutdownLifecycle.class);
             assertThat(context).hasSingleBean(NacosServiceEndpoint.class);
+            assertThat(context).hasSingleBean(ZoneAffinityInstanceFilter.class);
+            assertThat(context).hasSingleBean(NacosTemplate.class);
         });
     }
 
@@ -52,6 +56,8 @@ class AtengNacosAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(NacosLifecycleStateMachine.class);
                     assertThat(context).doesNotHaveBean(NacosGracefulShutdownLifecycle.class);
                     assertThat(context).doesNotHaveBean(NacosServiceEndpoint.class);
+                    assertThat(context).doesNotHaveBean(ZoneAffinityInstanceFilter.class);
+                    assertThat(context).doesNotHaveBean(NacosTemplate.class);
                 });
     }
 }
