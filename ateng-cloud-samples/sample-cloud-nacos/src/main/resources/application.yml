@@ -29,6 +29,9 @@ management:
         enabled: true
 
 ateng:
+  boot:
+    encrypt:
+      enabled: true
   cloud:
     nacos:
       enabled: true
@@ -40,3 +43,10 @@ ateng:
         version: 1.0.0
         custom:
           team: core-platform
+
+demo:
+  config:
+    title: "Nacos Cloud Platform"
+    secret-key: "ENC(ydS/bhIcoogPc1a6V/whVwUR54CsaUtyWWu9LgIZai9jksDqNO2g5yRaprANGUdt8biXgfIE)"
+    timeout: 5s
+    pool-size: 20

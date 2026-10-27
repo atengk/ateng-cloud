@@ -27,7 +27,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * @author Ateng
  * @since 2026-10-27
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "ateng.boot.encrypt.password=ateng-encrypt-pwd-123456"
+})
 @AutoConfigureMockMvc
 @Import(SampleCloudNacosApplicationTest.OfflineMockConfig.class)
 @DisplayName("Nacos 场景端到端双模自适应集成实测")
@@ -88,7 +90,9 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.status", is("UP")))
                 .andExpect(jsonPath("$.serviceName", is("sample-cloud-nacos")))
                 .andExpect(jsonPath("$.zone", is("beijing-az1")))
-                .andExpect(jsonPath("$.metadata['version']", is("1.0.0")));
+                .andExpect(jsonPath("$.metadata['version']", is("1.0.0")))
+                .andExpect(jsonPath("$.config.enforceBeanImmutability", is(true)))
+                .andExpect(jsonPath("$.config.listeners").isArray());
     }
 
     @Test
@@ -195,5 +199,59 @@ class SampleCloudNacosApplicationTest {
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
+    }
+
+    @Test
+    @DisplayName("测试 ateng-boot-encrypt 密文透明解密与内存真明文/展示脱敏契约")
+    void testConfigTransparentDecryptionAndInMemoryPlaintext() throws Exception {
+        // 1. 读取展示视图：验证敏感字段已实施星号掩码脱敏
+        mockMvc.perform(get("/api/nacos/config/current")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.title", is("Nacos Cloud Platform")))
+                .andExpect(jsonPath("$.data.maskedSecretKey", is("******")))
+                .andExpect(jsonPath("$.data.poolSize", is(20)));
+
+        // 2. 读取业务真实字段：验证 ENC(...) 密文已由 ateng-boot-encrypt 透明解密且内存中为真实明文
+        mockMvc.perform(get("/api/nacos/config/secret")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data", is("MyNacosSuperSecretPassword")));
+    }
+
+    @Test
+    @DisplayName("测试模拟安全配置热更并触发 NacosConfigChangeListener SPI 与 Spring @EventListener")
+    void testSimulateRefreshAndSpiAndEventListenerPropagation() throws Exception {
+        // 1. 发起模拟热更
+        mockMvc.perform(post("/api/nacos/config/simulate-refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keys\": [\"demo.config.title\", \"demo.config.secret-key\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.success", is(true)))
+                .andExpect(jsonPath("$.data.changedKeysCount", is(2)))
+                .andExpect(jsonPath("$.data.traceId", notNullValue()));
+
+        // 2. 验证 SPI 与 Spring EventListener 均成功感知并处理
+        mockMvc.perform(get("/api/nacos/config/listener-status")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.spiChangeCount").isNumber())
+                .andExpect(jsonPath("$.data.eventListenerCount").isNumber());
+    }
+
+    @Test
+    @DisplayName("测试参数校验防卫：热更变更键名列表为空时 Fail-Fast 阻断")
+    void testSimulateRefreshValidationError() throws Exception {
+        mockMvc.perform(post("/api/nacos/config/simulate-refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keys\": []}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(400)))
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.msg", org.hamcrest.Matchers.containsString("变更键名集合不可为空")));
     }
 }

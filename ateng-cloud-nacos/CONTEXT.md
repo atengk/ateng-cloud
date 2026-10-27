@@ -72,3 +72,12 @@ _Avoid_: 本地双跑测试, 离线测试分离, 双套测试
 基于 Spring Boot 3 `optional:classpath:` 探测规范在外部配置缺失时静默降级而不阻断容器启动的弹性加载机制。
 _Avoid_: 静默加载, 隐式配置, 容错导入
 
+**Bean Immutability Guard**:
+在容器启动阶段扫描拦截标注 `@RefreshScope` 的 `@Service`/`@Repository` 业务单例，强行杜绝物理销毁导致在途事务断裂与锁悬挂的架构防卫机制。
+_Avoid_: 作用域拦截器, 刷新检查器
+
+**Sensitive Desensitization Barrier**:
+在审计日志、`toString` 打印与监控导出边界对命中敏感特征（`password`, `secret`, `token`, `key` 等）的值自动实施星号掩码，且在业务内存中 100% 保留真实明文的防御屏障。
+_Avoid_: 日志脱敏器, 敏感字段擦除
+
+

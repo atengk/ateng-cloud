@@ -1,6 +1,6 @@
 # ateng-cloud-nacos
 
-Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 Spring Boot 3 原生 `spring.config.import` 规范，内置容器多网卡精准绑定、多维元数据增强、60s 平滑预热、无损上下线治理与零破坏安全配置热更。
+Nacos 服务注册发现与现代动态配置中心基础设施构件，全面支持 Spring Boot 3 原生 `spring.config.import` 规范，内置容器多网卡精准绑定、多维元数据增强、60s 平滑预热、无损上下线治理、单例不可变安全配置热更、敏感属性星号脱敏屏障与 Micrometer 全维监控标尺。
 
 ---
 
@@ -12,37 +12,58 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
 | :--- | :--- | :--- | :--- |
 | `AtengNacosAutoConfiguration` | 自动装配类 | Nacos 基础设施自动装配总入口 | 当 `ateng.cloud.nacos.enabled=true` 时激活 |
 | `AtengNacosProperties` | 配置属性类 | 强类型映射配置前缀 `ateng.cloud.nacos` | 默认开启，排空 `10s`，预热 `60s` |
+| `NacosTemplate` | 核心门面类 | Nacos 注册发现、配置运维、机房亲和筛选与状态诊断对称门面 | 标配 `@ConditionalOnMissingBean`，空安全保底 |
+| `NacosConfigHealthChecker` | 启动诊断器 | 校验 `spring.config.import` 规范与配置中心服务连通状态 | 当 `ateng.cloud.nacos.config.check-on-startup=true` 激活 |
+| `SingletonImmutabilityGuard` | 架构守卫 | `BeanFactoryPostProcessor` 容器启动扫描，严禁业务单例标注 `@RefreshScope` | 标配开启，违规直接 Fail-Fast 阻断应用启动 |
+| `NacosConfigRefreshEngine` | 热更引擎 | 严格收敛于 `@ConfigurationProperties` 增量热绑，广播变更事件与链路追踪 | 驱动配置安全热更，维持 MDC 与异常隔离 |
+| `SafeConfigRefreshEvent` | 应用事件类 | 携带配置变更集、新旧对比明细及 `traceId` 的强类型 Spring 事件 | 继承 `ApplicationEvent`，脱敏边界自动掩码 |
+| `ConfigChangeItem` | 数据值对象 | 封装单项配置键、变更前旧值、变更后新值及变更类型 | 遵循“内存真明文”，`toString()` 输出脱敏掩码 |
+| `ConfigChangeType` | 枚举类 | 配置变更类型：`ADDED`、`MODIFIED`、`DELETED` | 精准描述属性生命周期变化 |
+| `NacosConfigChangeListener` | 扩展点 SPI | 支持按属性前缀（`getPrefix()`）过滤与按优先级排序的受管监听器 | 业务解耦声明，异常受到独立屏障隔离 |
+| `ConfigMasker` | 安全工具类 | 自动识别 `password`、`secret`、`token`、`key` 等敏感特征键并执行掩码 | 100% 复用 `ateng-boot-core` 通用脱敏原语 |
+| `NacosMetricsManager` | 监控管理器 | 向 Micrometer / Prometheus 导出 5 组核心运行与热更度量标尺 | 条件装配于 `MeterRegistry`，支持平滑降级 |
 | `NacosMetadataProvider` | 核心门面接口 | 收集全量元数据快照并支持填充至注册目标 | 默认实现为 `DefaultNacosMetadataProvider` |
 | `NacosMetadataCustomizer` | 扩展点 SPI | 业务按需增量改写或注入自定义实例元数据 | `@FunctionalInterface`，支持 `Ordered` 排序 |
 | `NacosNetworkAddressDetector` | 网络智能探测器 | 自动清洗虚拟网卡并绑定首选私网 IP | 默认忽略 `docker0`、`cni*` 等桥接网卡 |
 | `NacosDiscoveryPropertiesPostProcessor` | 属性后置处理器 | 注册前将检测 IP、集群与元数据注入 NacosDiscoveryProperties | 条件装配于 `NacosDiscoveryProperties` |
 | `NacosLifecycleStateMachine` | 状态机管理器 | 原子驱动双阶段优雅下线排空与上线恢复 | 状态流转 `UP` -> `DRAINING` -> `OUT_OF_SERVICE` |
 | `NacosGracefulShutdownLifecycle` | 生命周期钩子 | `SmartLifecycle` 最高优先级（`PHASE_MAX`）排空钩子 | 容器停机最先触发注销与排空 |
-| `NacosServiceEndpoint` | Actuator 端点 | `/actuator/nacosService` 专属运维与状态端点 | 支持读写分离与外部流水线主动摘牌 |
+| `NacosServiceEndpoint` | Actuator 端点 | `/actuator/nacosService` 专属运维与状态端点 | 展示实例元数据、受管监听器列表与最近热更状态 |
 | `ZoneAffinityInstanceFilter` | 路由过滤器 | 机房 (Zone) 就近亲和与跨区平滑容灾降级过滤器 | 标配 `@ConditionalOnMissingBean` |
-| `NacosTemplate` | 核心门面类 | Nacos 注册发现、机房亲和筛选与对称运维门面 | 标配 `@ConditionalOnMissingBean`，空安全 |
-| `NacosResultCode` | 错误码枚举 | Nacos 统一业务错误码 (`4101~4104`，归属 `NETWORK_RPC`) | 底层异常因果转译映射 |
+| `NacosResultCode` | 错误码枚举 | Nacos 统一业务错误码 (`4101~4106`，归属 `NETWORK_RPC`) | 底层异常因果转译映射 |
+
+---
 
 ### 2. NacosTemplate 核心门面 API 速查表
 
 | 方法签名 | 返回类型 | 功能说明与生产语义 | 离线自洽保底行为 |
 | :--- | :--- | :--- | :--- |
+| `getConfig(dataId [, group])` | `String` | 读取指定配置集内容（未配置时抛出业务异常） | 离线抛出 `NACOS_CONFIG_DISABLED` |
+| `findConfig(dataId [, group])` | `Optional<String>` | 弹性读取指定配置集内容（不存在或离线时返回 empty） | 保底返回 `Optional.empty()` |
+| `publishConfig(dataId [, group], content [, type])` | `boolean` | 发布或全量覆盖指定配置集内容 | 离线抛出 `NACOS_CONFIG_DISABLED` |
+| `publishConfigCas(dataId [, group], content, casMd5 [, type])` | `boolean` | 基于配置内容 MD5 执行 CAS 乐观锁并发安全发布 | 离线抛出 `NACOS_CONFIG_DISABLED` |
+| `removeConfig(dataId [, group])` | `boolean` | 物理移除指定的 Nacos 配置集 | 离线抛出 `NACOS_CONFIG_DISABLED` |
+| `addConfigListener(dataId [, group], listener)` | `void` | 动态注册底层 Nacos 原生配置监听器回调 | 离线平滑 No-Op |
+| `removeConfigListener(dataId [, group], listener)` | `void` | 动态注销底层 Nacos 原生配置监听器回调 | 离线平滑 No-Op |
+| `refreshConfig(changedKeys)` | `SafeConfigRefreshEvent` | 声明式按属性键集合触发安全热更与 `@ConfigurationProperties` 重绑 | 返回强类型刷新事件对象 |
+| `isConfigAvailable()` | `boolean` | 判断当前 Nacos 配置中心客户端是否就绪可用 | 离线返回 `false` |
+| `isDiscoveryAvailable()` | `boolean` | 判断当前 Nacos 服务发现客户端是否就绪可用 | 离线返回 `false` |
+| `getConfigServerStatus()` | `String` | 获取当前配置中心服务端通信状态（如 `UP`、`DOWN`） | 离线返回 `"DOWN"` |
 | `getAllInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务全量实例列表（含未通过健康检查实例） | 保底返回空集合 `[]` |
 | `getHealthyInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务通过健康检查的实例列表 | 保底返回空集合 `[]` |
-| `getInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务健康且可用实例列表（自动过滤 `weight <= 0.0` 与禁用节点） | 保底返回空集合 `[]` |
-| `selectOneHealthyInstance(serviceName [, groupName])` | `Optional<Instance>` | 基于 Nacos 随机权重算法选举单个健康且可用实例 | 保底返回 `Optional.empty()` |
+| `getInstances(serviceName [, groupName])` | `List<Instance>` | 查询健康且可用实例（自动过滤 `weight <= 0.0` 与禁用节点） | 保底返回空集合 `[]` |
+| `selectOneHealthyInstance(serviceName [, groupName])` | `Optional<Instance>` | 基于 Nacos 随机权重算法选举单个健康可用实例 | 保底返回 `Optional.empty()` |
 | `getMyInstance()` | `Optional<Instance>` | 获取当前服务节点在 Nacos 注册的自身实例信息快照 | 保底返回 `Optional.empty()` |
-| `getSameZoneInstances(serviceName [, groupName])` | `List<Instance>` | 查询机房（Zone）就近亲和优先的可用实例，本区全宕平滑降级全集群 | 保底返回空集合 `[]` |
-| `getServices(pageNo, pageSize [, groupName])` | `List<String>` | 分页拉取 Nacos 注册表中的服务名称列表 | 保底返回空集合 `[]` |
-| `isUnderProtection(serviceName [, groupName])` | `boolean` | 检测目标服务集群是否触发 Nacos 实例保护阈值（阈值内输出 WARN） | 保底返回 `false` |
-| `setInstanceEnabled(serviceName, [groupName,] ip, port, enabled)` | `void` | 动态启用或禁用目标服务实例（跨实例通过 MaintainService 治理） | 平滑 No-Op |
-| `updateInstanceWeight(serviceName, [groupName,] ip, port, weight)` | `void` | 动态调节目标服务实例权重（设为 `0.0` 流量隔离，负数抛出异常） | 平滑 No-Op |
-| `registerMetadata(key, value)` | `void` | 动态为当前自身实例追加或覆盖指定单项元数据并立即向 Nacos 推送 | 平滑 No-Op |
-| `removeMetadata(key)` | `void` | 动态从当前自身实例移除指定键名的元数据并立即向 Nacos 推送 | 平滑 No-Op |
-| `updateInstanceMetadata(serviceName, [groupName,] ip, port, metadata)` | `void` | 覆盖更新指定实例全量元数据字典（原子推送） | 平滑 No-Op |
-| `markOnline()` | `void` | 主动将当前服务节点挂牌注册至 Nacos 并恢复 Spring 就绪探针 `UP` | 平滑 No-Op |
-| `markOffline()` | `void` | 主动将当前服务节点从 Nacos 注销并执行 `drain-timeout` 优雅停机排空 | 平滑 No-Op |
-| `isCurrentInstance(ip, port)` | `boolean` | 精准判断目标 IP 与端口是否匹配当前本地服务节点 | 依据配置与探测比对 |
+| `getSameZoneInstances(serviceName [, groupName])` | `List<Instance>` | 查询机房（Zone）就近亲和健康实例，本区全宕平滑降级全集群 | 保底返回空集合 `[]` |
+| `isUnderProtection(serviceName [, groupName])` | `boolean` | 检测目标服务集群是否触发过载保护阈值 | 保底返回 `false` |
+| `setInstanceEnabled(serviceName, [groupName,] ip, port, enabled)` | `void` | 动态启用或禁用目标服务实例 | 离线平滑 No-Op |
+| `updateInstanceWeight(serviceName, [groupName,] ip, port, weight)` | `void` | 动态调节实例权重（设为 `0.0` 流量隔离，负数抛错） | 离线平滑 No-Op |
+| `registerMetadata(key, value)` | `void` | 动态为当前节点追加或覆盖元数据并立即向 Nacos 推送 | 离线平滑 No-Op |
+| `removeMetadata(key)` | `void` | 动态从当前节点移除指定元数据并立即向 Nacos 推送 | 离线平滑 No-Op |
+| `markOnline()` | `void` | 主动将当前服务挂牌上线并恢复 Spring 就绪探针 `UP` | 离线平滑 No-Op |
+| `markOffline()` | `void` | 主动将当前服务优雅摘牌并执行 `drain-timeout` 停机排空 | 离线平滑 No-Op |
+
+---
 
 ### 3. 配置属性速查表 (`ateng.cloud.nacos.*`)
 
@@ -52,6 +73,12 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
 | `ateng.cloud.nacos.drain-timeout` | `Duration` | `10s` | 实例优雅下线在途请求排空安全窗口时限 |
 | `ateng.cloud.nacos.zone` | `String` | `""` | 默认物理机房 / 可用区标识（如 `beijing-az1`） |
 | `ateng.cloud.nacos.cluster` | `String` | `""` | 默认集群标识（如 `default-cluster`） |
+| `ateng.cloud.nacos.config.enabled` | `boolean` | `true` | 是否激活 Nacos 动态配置中心治理增强 |
+| `ateng.cloud.nacos.config.timeout` | `Duration` | `3s` | 客户端配置运维操作默认超时时限 |
+| `ateng.cloud.nacos.config.default-group` | `String` | `DEFAULT_GROUP` | 默认配置分组名称 |
+| `ateng.cloud.nacos.config.check-on-startup` | `boolean` | `true` | 启动阶段是否执行配置中心连接与导入自检诊断 |
+| `ateng.cloud.nacos.config.enforce-bean-immutability` | `boolean` | `true` | 是否强制开启业务单例不可变性守卫（严禁 `@RefreshScope` 滥用） |
+| `ateng.cloud.nacos.metrics.enabled` | `boolean` | `true` | 是否导出 Nacos 治理与热更 Micrometer 监控指标 |
 | `ateng.cloud.nacos.metadata.startup-time` | `boolean` | `true` | 是否自动注入 JVM 启动毫秒时间戳 |
 | `ateng.cloud.nacos.metadata.warmup-duration` | `Duration` | `60s` | 平滑启动预热窗口时长（供负载均衡动态升权） |
 | `ateng.cloud.nacos.metadata.version` | `String` | `""` | 应用版本号（为空时自动从 Environment 读取） |
@@ -66,6 +93,18 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
 
 ---
 
+### 4. Micrometer 核心监控标尺矩阵
+
+| 指标名称 | 类型 | 标签 Tag | 描述说明与数值含义 |
+| :--- | :--- | :--- | :--- |
+| `nacos.grpc.connection.status` | Gauge | `service` | Nacos gRPC 长连接与配置中心连通状态（`1.0`: UP/正常，`0.0`: DOWN/断连） |
+| `nacos.config.refresh.total` | Counter | `service` | 动态配置安全热更累计触发总次数（随每次刷新递增） |
+| `nacos.config.refresh.failure` | Counter | `service` | 动态配置安全热更失败累计计数（重绑异常或监听器抛错触发） |
+| `nacos.instances.healthy` | Gauge | `service` | 当前微服务在 Nacos 注册中心已注册的健康可用实例数 |
+| `nacos.lifecycle.state` | Gauge | `service` | 当前节点优雅生命周期状态（`1.0`: UP/在线，`0.0`: OUT_OF_SERVICE/已下线排空） |
+
+---
+
 ## 维度一：最小起步体验
 
 ### 1. 引入依赖
@@ -76,39 +115,55 @@ Nacos 服务注册发现与动态配置中心基础设施构件，全面支持 S
     <artifactId>ateng-cloud-nacos</artifactId>
 </dependency>
 <dependency>
+    <groupId>io.github.atengk</groupId>
+    <artifactId>ateng-boot-encrypt</artifactId>
+</dependency>
+<dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-actuator</artifactId>
 </dependency>
 ```
 
-### 2. 最小化配置 (`application.yml`)
+### 2. 现代三层配置导入规范 (`application.yml`)
+
+彻底摒弃过时的 `bootstrap.yml`，全域统一遵循 Spring Boot 3 标准 `spring.config.import` 规范。推荐遵循三层配置继承拓扑：
 
 ```yaml
+server:
+  port: 8080
+
 spring:
   application:
-    name: demo-service
+    name: sample-cloud-nacos
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:test}
+  config:
+    import:
+      # 1. 弹性探测本地真实凭据配置（物理缺失时静默跳过，保障 CI 离线自洽）
+      - "optional:classpath:application-local.yml"
+      # 2. 共享公共基础配置（如微服务通用超时、线程池默认参数）
+      - "optional:nacos:shared-common.yaml?group=DEFAULT_GROUP&refreshEnabled=true"
+      # 3. 共享中间件与数据源配置（如共享 Redis、RabbitMQ 集群连接）
+      - "optional:nacos:shared-infrastructure.yaml?group=DEFAULT_GROUP&refreshEnabled=true"
+      # 4. 当前微服务应用专用配置（按应用名与当前激活 Profile 隔离）
+      - "optional:nacos:${spring.application.name}-${spring.profiles.active}.yaml?group=DEFAULT_GROUP&refreshEnabled=true"
   cloud:
     nacos:
       server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
       discovery:
         server-addr: ${spring.cloud.nacos.server-addr}
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,nacosService
-  endpoint:
-    health:
-      show-details: always
-      probes:
-        enabled: true
+        enabled: false # 默认离线关闭外部物理发现连接，保障 CI 100% 离线自洽
+      config:
+        server-addr: ${spring.cloud.nacos.server-addr}
+        enabled: false
 
 ateng:
+  boot:
+    encrypt:
+      enabled: true # 开启密文配置自动透明解密
   cloud:
     nacos:
       enabled: true
-      drain-timeout: 10s
       zone: beijing-az1
       cluster: default-cluster
       metadata:
@@ -117,144 +172,92 @@ ateng:
         version: 1.0.0
         custom:
           team: core-platform
+
+demo:
+  config:
+    title: "Nacos Cloud Platform"
+    secret-key: "ENC(ydS/bhIcoogPc1a6V/whVwUR54CsaUtyWWu9LgIZai9jksDqNO2g5yRaprANGUdt8biXgfIE)"
+    timeout: 5s
+    pool-size: 20
 ```
 
-### 3. 获取实例元数据快照
+### 3. 单例不可变配置属性 POJO (`DemoConfigProperties.java`)
 
-注入 `NacosMetadataProvider` 即可获取经由框架清洗与 SPI 定制后的不可变元数据字典：
+业务配置属性统一使用 `@ConfigurationProperties` 承载，热更新时仅增量重新绑定属性对象，坚决不物理销毁单例 Bean：
 
 ```java
-@RestController
-@RequestMapping("/api/nacos")
-public class NacosMetadataDemoController {
+@Component
+@ConfigurationProperties(prefix = "demo.config")
+public class DemoConfigProperties {
 
-    private final NacosMetadataProvider metadataProvider;
+    private String title = "Default Title";
+    private String secretKey = "";
+    private Duration timeout = Duration.ofSeconds(5);
+    private int poolSize = 10;
 
-    public NacosMetadataDemoController(NacosMetadataProvider metadataProvider) {
-        this.metadataProvider = metadataProvider;
-    }
-
-    @GetMapping("/metadata")
-    public Result<Map<String, String>> getMetadata() {
-        return Result.success(metadataProvider.getMetadata());
-    }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getSecretKey() { return secretKey; }
+    public void setSecretKey(String secretKey) { this.secretKey = secretKey; }
+    public Duration getTimeout() { return timeout; }
+    public void setTimeout(Duration timeout) { this.timeout = timeout; }
+    public int getPoolSize() { return poolSize; }
+    public void setPoolSize(int poolSize) { this.poolSize = poolSize; }
 }
 ```
 
-### 4. 使用 NacosTemplate 统一门面进行健康发现与运维
-
-注入 `NacosTemplate` 门面即可享受空安全保障（查询绝不返回 `null`，单实例返回 `Optional`）、机房亲和路由与对称运维能力：
+### 4. 业务 Controller 注入与强类型契约 (`NacosConfigDemoController.java`)
 
 ```java
 @RestController
-@RequestMapping("/api/nacos/ops")
-public class NacosOpsDemoController {
+@RequestMapping("/api/nacos/config")
+public class NacosConfigDemoController {
 
+    private final DemoConfigProperties demoConfigProperties;
     private final NacosTemplate nacosTemplate;
 
-    public NacosOpsDemoController(NacosTemplate nacosTemplate) {
+    public NacosConfigDemoController(DemoConfigProperties demoConfigProperties,
+                                     NacosTemplate nacosTemplate) {
+        this.demoConfigProperties = demoConfigProperties;
         this.nacosTemplate = nacosTemplate;
     }
 
     /**
-     * 查询指定服务的健康可用实例列表 (已过滤 weight <= 0.0 与禁用节点)
+     * 读取当前业务配置（展示视图自动执行敏感星号脱敏）
      */
-    @GetMapping("/instances")
-    public Result<List<InstanceVO>> getInstances(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
-        List<InstanceVO> list = nacosTemplate.getInstances(serviceName).stream()
-                .map(InstanceVO::fromInstance)
-                .collect(Collectors.toList());
-        return Result.success(list != null ? list : Collections.emptyList());
+    @GetMapping("/current")
+    public Result<DemoConfigVO> getCurrentConfig() {
+        String maskedKey = ConfigMasker.mask("demo.config.secret-key", demoConfigProperties.getSecretKey());
+        DemoConfigVO vo = new DemoConfigVO(
+                demoConfigProperties.getTitle(),
+                maskedKey,
+                demoConfigProperties.getTimeout(),
+                demoConfigProperties.getPoolSize()
+        );
+        return Result.success(vo);
     }
 
     /**
-     * 查询同机房亲和优先的健康实例列表 (本区全宕自动平滑降级全集群)
+     * 读取内存中的真实解密明文（严格遵循“内存真明文”不变量）
      */
-    @GetMapping("/same-zone")
-    public Result<List<InstanceVO>> getSameZoneInstances(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
-        List<InstanceVO> list = nacosTemplate.getSameZoneInstances(serviceName).stream()
-                .map(InstanceVO::fromInstance)
-                .collect(Collectors.toList());
-        return Result.success(list != null ? list : Collections.emptyList());
+    @GetMapping("/secret")
+    public Result<String> getRawSecret() {
+        return Result.success(demoConfigProperties.getSecretKey());
     }
 
     /**
-     * 获取当前服务节点在 Nacos 注册的自身实例信息
+     * 模拟主动触发配置属性安全增量热更
      */
-    @GetMapping("/me")
-    public Result<InstanceVO> getMyInstance() {
-        return nacosTemplate.getMyInstance()
-                .map(InstanceVO::fromInstance)
-                .map(Result::success)
-                .orElseGet(() -> Result.success(null));
-    }
-
-    /**
-     * 检测目标服务是否触发过载保护阈值
-     */
-    @GetMapping("/protection")
-    public Result<Boolean> isUnderProtection(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
-        return Result.success(nacosTemplate.isUnderProtection(serviceName));
-    }
-
-    /**
-     * 动态设置指定服务实例启用/禁用状态
-     */
-    @PostMapping("/instance/status")
-    public Result<Void> setInstanceEnabled(@RequestParam String serviceName,
-                                          @RequestParam String ip,
-                                          @RequestParam int port,
-                                          @RequestParam boolean enabled) {
-        nacosTemplate.setInstanceEnabled(serviceName, ip, port, enabled);
-        return Result.success();
-    }
-
-    /**
-     * 动态调节指定服务实例权重 (设为 0.0 实现流量隔离)
-     */
-    @PostMapping("/instance/weight")
-    public Result<Void> updateInstanceWeight(@RequestParam String serviceName,
-                                            @RequestParam String ip,
-                                            @RequestParam int port,
-                                            @RequestParam double weight) {
-        nacosTemplate.updateInstanceWeight(serviceName, ip, port, weight);
-        return Result.success();
-    }
-
-    /**
-     * 动态注册当前实例元数据
-     */
-    @PostMapping("/metadata")
-    public Result<Void> registerMetadata(@RequestParam String key, @RequestParam String value) {
-        nacosTemplate.registerMetadata(key, value);
-        return Result.success();
-    }
-
-    /**
-     * 动态移除当前实例元数据
-     */
-    @DeleteMapping("/metadata")
-    public Result<Void> removeMetadata(@RequestParam String key) {
-        nacosTemplate.removeMetadata(key);
-        return Result.success();
-    }
-
-    /**
-     * 主动将当前服务挂牌上线
-     */
-    @PostMapping("/online")
-    public Result<Void> markOnline() {
-        nacosTemplate.markOnline();
-        return Result.success();
-    }
-
-    /**
-     * 主动触发当前服务优雅下线排空
-     */
-    @PostMapping("/offline")
-    public Result<Void> markOffline() {
-        nacosTemplate.markOffline();
-        return Result.success();
+    @PostMapping("/simulate-refresh")
+    public Result<SafeConfigRefreshVO> simulateRefresh(@Valid @RequestBody RefreshRequestDTO request) {
+        SafeConfigRefreshEvent event = nacosTemplate.refreshConfig(request.getKeys());
+        SafeConfigRefreshVO vo = new SafeConfigRefreshVO(
+                event.getTraceId(),
+                event.getChangedKeys(),
+                event.getChangedKeys().size(),
+                true
+        );
+        return Result.success(vo);
     }
 }
 ```
@@ -263,64 +266,97 @@ public class NacosOpsDemoController {
 
 ## 维度二：生产扩展接管
 
-### 1. 外部发布流水线 / K8s PreStop Hook 主动摘牌
+### 1. 实现 `NacosConfigChangeListener` SPI 进行精确前缀过滤
 
-发布平台或 K8s 可以在向 Pod 发送 `SIGTERM` 之前，通过 HTTP 调用主动下线端点，实现提前安全摘牌与在途排空：
-
-```bash
-# 1. 查询当前节点运行状态与元数据
-curl http://localhost:8080/actuator/nacosService
-
-# 2. 主动发起下线与排空（同步阻塞等待 drain-timeout 完成后返回）
-curl -X POST http://localhost:8080/actuator/nacosService \
-     -H "Content-Type: application/json" \
-     -d '{"action": "offline"}'
-
-# 3. 重新挂牌上线恢复接收流量
-curl -X POST http://localhost:8080/actuator/nacosService \
-     -H "Content-Type: application/json" \
-     -d '{"action": "online"}'
-```
-
-### 2. 实现 `NacosMetadataCustomizer` SPI 增量定制元数据
-
-当下游微服务需要动态追加业务标签（如业务线、运维联系人、自定义特征码）时，声明 Spring Bean 实现 `NacosMetadataCustomizer` 接口即可：
+当特定业务模块仅关注自身配置域（如数据源、限流规则）的变更时，声明 Spring Bean 实现 `NacosConfigChangeListener` 接口：
 
 ```java
 @Component
-public class SampleMetadataCustomizer implements NacosMetadataCustomizer {
+public class DemoNacosConfigChangeListener implements NacosConfigChangeListener {
+
+    private static final Logger log = LoggerFactory.getLogger(DemoNacosConfigChangeListener.class);
 
     @Override
-    public void customize(Map<String, String> metadata) {
-        metadata.put("demo-module", "sample-cloud-nacos");
-        metadata.put("maintainer", "Ateng");
+    public void onConfigChange(SafeConfigRefreshEvent event) {
+        log.info("[DemoNacosConfigChangeListener] 收到前缀 'demo.config' 变更通知，traceId: {}, changedKeys: {}",
+                event.getTraceId(), event.getChangedKeys());
+        // 增量处理自身业务逻辑，单个监听器异常会被框架自动隔离，绝不阻断全局广播
+    }
+
+    @Override
+    public String getPrefix() {
+        return "demo.config"; // 仅当变更集包含以 demo.config 开头的属性时触发
     }
 
     @Override
     public int getOrder() {
-        return 100;
+        return 10; // 执行优先级，数值越小越优先执行
     }
 }
 ```
 
-### 3. 自定义机房亲和过滤器与扩展接管
+### 2. 使用 Spring 原生 `@EventListener` 监听 `SafeConfigRefreshEvent`
 
-`ZoneAffinityInstanceFilter` 与 `NacosTemplate` 均标配 `@ConditionalOnMissingBean`。若需定制多级机房亲和策略（如跨同城双活 AZ 加权或多地域就近），直接声明同类型 Bean 即可无缝接管：
+微服务其他组件可以通过标准事件机制解耦感知全局配置刷新：
 
 ```java
-@Configuration(proxyBeanMethods = false)
-public class CustomNacosConfiguration {
+@Component
+public class DemoSafeRefreshEventListener {
 
-    @Bean
-    public ZoneAffinityInstanceFilter customZoneAffinityInstanceFilter() {
-        return new ZoneAffinityInstanceFilter() {
-            @Override
-            public List<Instance> filter(List<Instance> instances, String targetZone) {
-                // 自定义机房亲和与权重算法，无缝接管框架默认行为
-                return super.filter(instances, targetZone);
-            }
-        };
+    private static final Logger log = LoggerFactory.getLogger(DemoSafeRefreshEventListener.class);
+
+    @EventListener
+    public void onSafeRefresh(SafeConfigRefreshEvent event) {
+        log.info("[DemoSafeRefreshEventListener] @EventListener 收到热更事件，traceId: {}, changedCount: {}",
+                event.getTraceId(), event.getChangedKeys().size());
+        // event.getMaskedChangeDetails() 自动返回脱敏后的安全明细字典
     }
+}
+```
+
+### 3. Actuator 端点读取受管监听器与最近热更状态
+
+框架扩展了 `/actuator/nacosService` 端点，直观输出受管监听器拓扑与最近一次热更状态：
+
+```bash
+curl http://localhost:8080/actuator/nacosService
+```
+
+响应 JSON 示例：
+
+```json
+{
+  "status": "UP",
+  "serviceName": "sample-cloud-nacos",
+  "drainTimeout": "10s",
+  "zone": "beijing-az1",
+  "cluster": "default-cluster",
+  "metadata": {
+    "version": "1.0.0",
+    "warmup-duration": "60s",
+    "team": "core-platform",
+    "framework": "ateng-cloud"
+  },
+  "config": {
+    "enforceBeanImmutability": true,
+    "listeners": [
+      {
+        "class": "io.github.atengk.cloud.sample.nacos.config.DemoNacosConfigChangeListener",
+        "prefix": "demo.config",
+        "order": 10
+      }
+    ],
+    "lastRefresh": {
+      "traceId": "ee02496e9149d0f0d281b8bf07f5e876",
+      "timestamp": 1793115496654,
+      "changedKeys": [
+        "demo.config.title",
+        "demo.config.secret-key"
+      ],
+      "success": true,
+      "durationMs": 12
+    }
+  }
 }
 ```
 
@@ -328,7 +364,35 @@ public class CustomNacosConfiguration {
 
 ## 维度三：核心生产边界与非功能语义
 
-### 1. 零 502 无损下线双阶段状态机时序
+### 1. 单例 Bean 绝对不可变性铁律 (`@RefreshScope` 绝对禁令)
+
+- **为什么严禁在 `@Service` / `@Repository` 标注 `@RefreshScope`？**
+  `@RefreshScope` 的底层机制是在配置发生变更时，**从容器中强行物理销毁旧 Bean 实例并重新实例化**。在大流量生产环境下：
+  1. 正在执行在途事务的线程其 Bean 被物理销毁，直接引发不可逆的事务断裂与连接池泄漏；
+  2. 正在持有单机锁（`ReentrantLock`）或分布式锁的 Bean 被销毁，引发锁状态悬挂与并发脏写；
+  3. 瞬时突发流量遭遇 Bean 重建，导致请求排队雪崩与 CPU 瞬时击穿。
+- **框架架构级防御 (`SingletonImmutabilityGuard`)**：
+  框架内置 `SingletonImmutabilityGuard`，在 Spring 容器启动阶段全量扫描所有 Bean 定义。凡发现任何标注了 `@Service` 或 `@Repository` 的业务单例同时标注了 `@RefreshScope`，**立即抛出 `IllegalStateException` 强行阻断应用启动**，彻底将隐患扼杀于发版部署前。
+- **正规热更姿势**：配置动态热更必须严格收敛于 `@ConfigurationProperties` 纯属性 POJO 的增量重绑（通过受管 `ConfigurationPropertiesRebinder`），业务单例永不销毁。
+
+### 2. 敏感脱敏防泄露与“内存真明文”不变量
+
+- **敏感特征自动匹配**：
+  `ConfigMasker` 自动对包含 `password`、`passwd`、`pwd`、`secret`、`token`、`credential`、`passphrase`、`private-key`、`privatekey` 或以 `key`、`auth` 结尾的配置键执行拦截。
+- **内存真明文原则**：
+  `ConfigChangeItem.getOldValue()` 与 `getNewValue()` 在内存中始终保留 100% 原始真实明文，确保下游业务逻辑消费真实凭据；仅在 `toString()`、日志审计、监控指标及 `getMaskedOldValue()`、`getMaskedNewValue()` 输出边界实施 `******` 掩码脱敏，杜绝明文凭据打印至控制台或外泄。
+
+### 3. 全链路 MDC `traceId` 穿透与确定性清理
+
+- 在配置热更广播流程启动时，`NacosConfigRefreshEngine` 自动检测 MDC 上下文。若当前线程无 `traceId`，自动生成 32 位唯一链路追踪标识并写入 MDC；
+- 无论业务监听器执行成功或抛错，均在 `finally` 块中严格执行清理（若原线程已存在 `traceId` 则安全恢复），彻底杜绝跨线程池 ThreadLocal 脏读与内存污染。
+
+### 4. 监听器强隔离异常捕获屏障
+
+- 遍历执行 `NacosConfigChangeListener` SPI 列表时，每个监听器均被独立的 `try-catch (Throwable)` 屏障包裹；
+- 单个监听器发生空指针、死锁或未受检异常时，框架捕获并记录错误日志，将热更记录标记为部分失败（上报 `nacos.config.refresh.failure` 指标），但**绝不阻断后续其他监听器的执行与 Spring 全局事件的发布**。
+
+### 5. 零 502 无损下线双阶段状态机时序
 
 ```mermaid
 sequenceDiagram
@@ -356,31 +420,6 @@ sequenceDiagram
     Hook->>DevOps: 容器正常平稳退出 (Exit 0)
 ```
 
-### 2. 生产关键边界与治理不变量
-
-1. **同机房就近亲和与跨区容灾降级 (Zone Affinity & Fallback)**：
-   - 筛选处于相同机房区域（`zone`）的可用实例；
-   - 严格响应 Nacos 动态权重治理，权重 `<= 0.0` 或已禁用的节点自动被剔除；
-   - 当本机房无任何可用健康实例时，平滑降级（Cross-Zone Fallback）至全集群健康实例，防御机房级雪崩。
-2. **动态权重响应与集群过载保护阈值 (Dynamic Weight & Overload Defense)**：
-   - 当通过控制台或运维 API 将某节点权重调整为 `0.0` 时，调用端门面自动将其排除于路由列表外，实现安全灰度与流量隔离；
-   - 当检测到集群健康比跌破 Nacos 保护阈值（`isReachProtectionThreshold` 或 healthy ratio `<= protectThreshold`），自动输出 WARN 级告警并透传状态。
-3. **底层驱动异常因果转译体系 (Causal Exception Translation)**：
-   - 所有调用 Nacos 底层驱动可能抛出的 `NacosException`，100% 被捕获并转译为框架受管的 `BusinessException`；
-   - 错误码规划遵循 `ateng-boot-core` `ResultCodeSegment.NETWORK_RPC` 规范（`NacosResultCode.NACOS_CLIENT_ERROR` 等，4101~4104），且 100% 保留原始 `cause` 异常链，严禁异常吞咽与信息丢失。
-4. **容器多网卡智能清洗防漂移**：
-   - 框架默认自动清洗常见容器网络虚拟网卡（`docker0`、`flannel.*`、`cni.*`、`veth.*`、`vmnet.*`、`virbr.*`、`br-.*`）；
-   - 优先绑定可路由的内网网段（`10.*`、`172.16~31.*`、`192.168.*`），从源头杜绝容器注册为宿主机虚拟网卡或 `127.0.0.1` 导致集群不可达。
-5. **Kebab-Case 标准化元数据与平滑预热**：
-   - 元数据键名严格遵循小写中划线格式：`startup-time`、`warmup-duration`、`version`、`env`、`zone`、`cluster`、`traffic-tag`；
-   - 启动时自动注入 `startup-time` 启动时间戳与 `warmup-duration: 60s`，供调用端负载均衡器执行动态平滑爬升，彻底消除冷启动雪崩。
-6. **K8s 停机协同与防强杀约束**：
-   - 排空时间 `drain-timeout`（生产默认 10s）必须严格小于 Kubernetes Pod 配置的 `terminationGracePeriodSeconds`（建议设为 30s），预留充足缓冲防止被 K8s `SIGKILL` 强杀。
-7. **100% 离线自洽单测铁律与平滑空转**：
-   - 在单测环境（`spring.cloud.nacos.discovery.enabled: false`）下，`NacosTemplate` 安全空转（查询返回空集合或 `Optional.empty()`），优雅下线、探针联动与端点平滑降级（No-Op），保障 CI 流水线零外部物理依赖秒级全绿。
-8. **双模自适应集成与本地真实连接规范 (Dual-Mode Integration)**：
-   - 基准样例工程通过 `optional:classpath:application-local.yml` 弹性探测本地真实配置；本地联调时复制 `application-local.example.yml` 为 `application-local.yml` 并激活 `local` Profile 即可直连真实 Nacos 实例，测试套件依托 `@Profile("!local")` 自动让位原生自动装配，并在 `@AfterEach` 中执行确定性状态清理与元数据排空；未激活 `local` 时默认走 100% 离线自洽构建，保障 CI 零外部依赖秒级全绿。
-
 ---
 
 ## 维度四：物理排版与代码全真验证
@@ -388,6 +427,9 @@ sequenceDiagram
 - **样例沙箱锚定**：上述代码与配置片段 100% 逆向提取自 [`sample-cloud-nacos`](../ateng-cloud-samples/sample-cloud-nacos) 真实运行工程。
 - **自动化测试保证**：端到端覆盖于 `SampleCloudNacosApplicationTest`：
   - `testGetMetadataEndpoint`：断言校验 `startup-time`、`warmup-duration`、`zone` 及 SPI 定制标签均端到端正确生效；
-  - `testGetActuatorNacosServiceEndpoint`：验证 `/actuator/nacosService` 状态与元数据正确读取；
+  - `testGetActuatorNacosServiceEndpoint`：验证 `/actuator/nacosService` 状态、元数据、单例不可变性守卫及受管监听器列表正确读取；
   - `testActuatorNacosServiceOfflineAndOnlineActions`：验证执行 offline 摘牌排空时，就绪探针立即切换为 `OUT_OF_SERVICE`，执行 online 时平稳恢复 `UP`；
-  - `testNacosTemplateOpsEndpoints`：验证 `NacosTemplate` 健康实例查询、同机房亲和筛选、自身实例感知、保护阈值探测、实例启用/禁用状态与权重调节、动态元数据维护及主动上下线全链路离线平滑通过。
+  - `testNacosTemplateOpsEndpoints`：验证 `NacosTemplate` 健康实例查询、同机房亲和筛选、自身实例感知、保护阈值探测、实例启用/禁用状态与权重调节、动态元数据维护及主动上下线全链路离线平滑通过；
+  - `testConfigTransparentDecryptionAndInMemoryPlaintext`：验证 `ateng-boot-encrypt` 远程密文配置 `ENC(...)` 透明解密，断言业务层获取到原始真实明文，而对外展示视图自动执行 `******` 掩码脱敏；
+  - `testSimulateRefreshAndSpiAndEventListenerPropagation`：验证主动触发配置增量热更时，MDC `traceId` 成功穿透，`NacosConfigChangeListener` SPI 与 Spring `@EventListener` 双模成功接收事件；
+  - `testSimulateRefreshValidationError`：验证 JSR-303 参数格式校验防卫（变更键名列表为空时 Fail-Fast 阻断并返回标准 `Result(code=400)`）。

@@ -29,6 +29,12 @@
             <artifactId>ateng-boot-web</artifactId>
         </dependency>
 
+        <!-- 配置密文解密组件 (基于 ateng-boot-encrypt) -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-boot-encrypt</artifactId>
+        </dependency>
+
         <!-- Spring Boot Actuator 监控与端点支持 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
