@@ -1,14 +1,30 @@
 package io.github.atengk.cloud.nacos.config;
 
+import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
+import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
+import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
+import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
+import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.spi.NacosMetadataCustomizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
- * Nacos 服务注册与配置中心自动装配入口
+ * Nacos 服务注册与配置中心基础设施自动装配入口
+ *
+ * <p>负责装配智能网卡侦测器、多维实例元数据提供者、注册元数据定制器及属性后置处理器。</p>
  *
  * @author Ateng
  * @since 2026-10-27
@@ -21,6 +37,53 @@ public class AtengNacosAutoConfiguration {
     private static final Logger log = LoggerFactory.getLogger(AtengNacosAutoConfiguration.class);
 
     public AtengNacosAutoConfiguration() {
-        log.info("ateng-cloud Nacos infrastructure autoconfiguration initialized.");
+        log.info("ateng-cloud Nacos infrastructure autoconfiguration activated.");
+    }
+
+    /**
+     * 网卡智能侦测与精准 IP 选择器
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosNetworkAddressDetector nacosNetworkAddressDetector() {
+        return new NacosNetworkAddressDetector();
+    }
+
+    /**
+     * 多维实例元数据提供者
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosMetadataProvider nacosMetadataProvider(AtengNacosProperties properties,
+                                                       Environment environment,
+                                                       ObjectProvider<List<NacosMetadataCustomizer>> customizersProvider) {
+        List<NacosMetadataCustomizer> customizers = customizersProvider.getIfAvailable();
+        return new DefaultNacosMetadataProvider(properties, environment, customizers != null ? customizers : Collections.emptyList());
+    }
+
+    /**
+     * NacosDiscoveryProperties 属性后置处理器，负责在实例注册前注入 IP 与基础元数据
+     */
+    @Bean
+    @ConditionalOnClass(NacosDiscoveryProperties.class)
+    @ConditionalOnMissingBean
+    public static NacosDiscoveryPropertiesPostProcessor nacosDiscoveryPropertiesPostProcessor(
+            AtengNacosProperties properties,
+            NacosNetworkAddressDetector networkAddressDetector,
+            NacosMetadataProvider metadataProvider) {
+        return new NacosDiscoveryPropertiesPostProcessor(properties, networkAddressDetector, metadataProvider);
+    }
+
+    /**
+     * 实例注册定制器，在 NacosRegistration 初始化时填充元数据
+     */
+    @Bean
+    @ConditionalOnClass(NacosRegistrationCustomizer.class)
+    @ConditionalOnMissingBean
+    public NacosRegistrationCustomizer atengNacosRegistrationCustomizer(NacosMetadataProvider metadataProvider) {
+        return registration -> {
+            log.debug("Injecting ateng-cloud instance metadata into NacosRegistration for service '{}'", registration.getServiceId());
+            metadataProvider.populateMetadata(registration.getMetadata());
+        };
     }
 }

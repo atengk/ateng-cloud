@@ -1,0 +1,13 @@
+# 100% 离线自洽单测环境（零物理外部网络依赖）
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+
+ateng:
+  cloud:
+    nacos:
+      drain-timeout: 100ms

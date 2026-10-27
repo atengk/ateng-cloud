@@ -36,3 +36,9 @@ Thumbs.db
 *.bak
 *.swp
 *~
+
+# Local Secret Profiles (Zero-Secret Invariant)
+application-local.yml
+application-local.yaml
+*-local.yml
+*-local.yaml

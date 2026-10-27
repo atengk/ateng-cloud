@@ -22,5 +22,17 @@
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-nacos</artifactId>
         </dependency>
+
+        <!-- Web 运行时环境 (基于 ateng-boot-web) -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-boot-web</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Actuator 监控与端点支持 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
     </dependencies>
 </project>

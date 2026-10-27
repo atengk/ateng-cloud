@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: sample-cloud-nacos
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:test}
+
+ateng:
+  cloud:
+    nacos:
+      enabled: true
+      zone: beijing-az1
+      cluster: default-cluster
+      metadata:
+        startup-time: true
+        warmup-duration: 60s
+        version: 1.0.0
+        custom:
+          team: core-platform
