@@ -1,12 +1,16 @@
 package io.github.atengk.cloud.nacos.event;
 
+import io.github.atengk.cloud.nacos.mask.ConfigMasker;
+
 import java.io.Serializable;
 import java.util.Objects;
 
 /**
  * 单个配置属性变更明细项
  *
- * <p>封装属性键、变更前旧值、变更后新值及变更类型。</p>
+ * <p>封装属性键、变更前旧值、变更后新值及变更类型。
+ * 遵循“内存真明文”不变量：内存字段始终保留原始值，仅在 {@link #toString()}、日志及 {@link #getMaskedOldValue()}、
+ * {@link #getMaskedNewValue()} 边界对敏感属性实施防御性星号掩码脱敏。</p>
  *
  * @author Ateng
  * @since 2026-10-27
@@ -21,12 +25,12 @@ public class ConfigChangeItem implements Serializable {
     private final String key;
 
     /**
-     * 变更前旧值（新增时为 null）
+     * 变更前旧值（新增时为 null，内存保留原始明文）
      */
     private final Object oldValue;
 
     /**
-     * 变更后新值（删除时为 null）
+     * 变更后新值（删除时为 null，内存保留原始明文）
      */
     private final Object newValue;
 
@@ -58,6 +62,40 @@ public class ConfigChangeItem implements Serializable {
         return changeType;
     }
 
+    /**
+     * 判断当前配置项键名是否命中敏感特征（如 password, secret, token, key, credential 等）
+     */
+    public boolean isSensitive() {
+        return ConfigMasker.isSensitive(this.key);
+    }
+
+    /**
+     * 获取脱敏后的旧值（若为敏感属性且非空则返回星号掩码 {@code ****** }，否则返回原始值）
+     */
+    public Object getMaskedOldValue() {
+        if (oldValue instanceof String str) {
+            return ConfigMasker.mask(key, str);
+        }
+        return oldValue != null && isSensitive() ? "******" : oldValue;
+    }
+
+    /**
+     * 获取脱敏后的新值（若为敏感属性且非空则返回星号掩码 {@code ****** }，否则返回原始值）
+     */
+    public Object getMaskedNewValue() {
+        if (newValue instanceof String str) {
+            return ConfigMasker.mask(key, str);
+        }
+        return newValue != null && isSensitive() ? "******" : newValue;
+    }
+
+    /**
+     * 转换为值已脱敏的明细项副本
+     */
+    public ConfigChangeItem toMaskedItem() {
+        return new ConfigChangeItem(key, getMaskedOldValue(), getMaskedNewValue(), changeType);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -78,8 +116,8 @@ public class ConfigChangeItem implements Serializable {
     public String toString() {
         return "ConfigChangeItem{" +
                 "key='" + key + '\'' +
-                ", oldValue=" + oldValue +
-                ", newValue=" + newValue +
+                ", oldValue=" + getMaskedOldValue() +
+                ", newValue=" + getMaskedNewValue() +
                 ", changeType=" + changeType +
                 '}';
     }

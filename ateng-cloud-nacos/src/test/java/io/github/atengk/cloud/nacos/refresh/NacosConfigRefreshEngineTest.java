@@ -280,4 +280,73 @@ class NacosConfigRefreshEngineTest {
         verify(rebinder, times(1)).rebind();
         verify(publisher, times(1)).publishEvent(any(SafeConfigRefreshEvent.class));
     }
+
+    @Test
+    @DisplayName("Micrometer 指标上报与执行记录：热更成功时记录 RefreshRecord 并上报 success 标尺")
+    void testRefreshRecordAndMetricsReporting() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        io.github.atengk.cloud.nacos.metrics.NacosMetricsManager metricsManager = mock(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                environment,
+                publisher,
+                Collections.emptyList(),
+                null,
+                properties,
+                metricsManager
+        );
+
+        assertThat(engine.getLastRefreshRecord()).isNull();
+
+        engine.refreshConfig(Set.of("app.name", "app.version"), "demo.yml", "DEFAULT_GROUP");
+
+        NacosConfigRefreshEngine.RefreshRecord record = engine.getLastRefreshRecord();
+        assertThat(record).isNotNull();
+        assertThat(record.getTraceId()).isNotBlank();
+        assertThat(record.getChangedKeysCount()).isEqualTo(2);
+        assertThat(record.getChangedKeys()).containsExactlyInAnyOrder("app.name", "app.version");
+        assertThat(record.isSuccess()).isTrue();
+        assertThat(record.getError()).isNull();
+        assertThat(record.getDurationMs()).isGreaterThanOrEqualTo(0);
+
+        verify(metricsManager, times(1)).recordRefreshSuccess(anyLong(), eq(2));
+        verify(metricsManager, never()).recordRefreshFailure(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("监听器失败时：上报 failure 标尺并标记 record.isSuccess 为 false")
+    void testListenerFailureReporting() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        io.github.atengk.cloud.nacos.metrics.NacosMetricsManager metricsManager = mock(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        NacosConfigChangeListener faultyListener = new NacosConfigChangeListener() {
+            @Override
+            public void onConfigChange(SafeConfigRefreshEvent event) {
+                throw new RuntimeException("Simulated error in listener");
+            }
+        };
+
+        NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                environment,
+                publisher,
+                List.of(faultyListener),
+                null,
+                properties,
+                metricsManager
+        );
+
+        engine.refreshConfig(Set.of("app.name"), "demo.yml", "DEFAULT_GROUP");
+
+        NacosConfigRefreshEngine.RefreshRecord record = engine.getLastRefreshRecord();
+        assertThat(record).isNotNull();
+        assertThat(record.isSuccess()).isFalse();
+        assertThat(record.getError()).contains("One or more NacosConfigChangeListener failed");
+
+        verify(metricsManager, times(1)).recordRefreshFailure(anyLong(), contains("One or more NacosConfigChangeListener failed"));
+        verify(metricsManager, never()).recordRefreshSuccess(anyLong(), anyInt());
+    }
 }

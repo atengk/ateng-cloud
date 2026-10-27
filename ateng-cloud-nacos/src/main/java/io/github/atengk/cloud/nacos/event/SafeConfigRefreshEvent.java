@@ -4,6 +4,7 @@ import org.springframework.context.ApplicationEvent;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -11,7 +12,8 @@ import java.util.Set;
  * Nacos 安全配置热更强类型事件
  *
  * <p>在配置热更新且 {@code @ConfigurationProperties} 增量重绑完成后由受管热更引擎发布，
- * 携带属性键变更集、旧值新值对比明细及 MDC 链路追踪上下文，支持通过 Spring {@code @EventListener} 响应。</p>
+ * 携带属性键变更集、旧值新值对比明细及 MDC 链路追踪上下文，支持通过 Spring {@code @EventListener} 响应。
+ * 遵循“内存真明文”不变量，在 {@link #toString()} 打印与 {@link #getMaskedChangeDetails()} 导出中自动实施星号掩码脱敏。</p>
  *
  * @author Ateng
  * @since 2026-10-27
@@ -36,7 +38,7 @@ public class SafeConfigRefreshEvent extends ApplicationEvent {
     private final Set<String> changedKeys;
 
     /**
-     * 配置属性详细变更明细（键 -> 变更明细项）
+     * 配置属性详细变更明细（键 -> 变更明细项，内存保留原始明文）
      */
     private final Map<String, ConfigChangeItem> changeDetails;
 
@@ -46,11 +48,11 @@ public class SafeConfigRefreshEvent extends ApplicationEvent {
     private final String traceId;
 
     public SafeConfigRefreshEvent(Object source,
-                                 String dataId,
-                                 String group,
-                                 Set<String> changedKeys,
-                                 Map<String, ConfigChangeItem> changeDetails,
-                                 String traceId) {
+                                  String dataId,
+                                  String group,
+                                  Set<String> changedKeys,
+                                  Map<String, ConfigChangeItem> changeDetails,
+                                  String traceId) {
         super(source);
         this.dataId = dataId;
         this.group = group;
@@ -73,6 +75,22 @@ public class SafeConfigRefreshEvent extends ApplicationEvent {
 
     public Map<String, ConfigChangeItem> getChangeDetails() {
         return changeDetails;
+    }
+
+    /**
+     * 获取脱敏后的配置属性变更明细字典（供外部审计展示、监控与日志导出边界消费）
+     *
+     * @return 键 -> 已脱敏变更明细项字典
+     */
+    public Map<String, ConfigChangeItem> getMaskedChangeDetails() {
+        if (changeDetails.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, ConfigChangeItem> masked = new LinkedHashMap<>();
+        for (Map.Entry<String, ConfigChangeItem> entry : changeDetails.entrySet()) {
+            masked.put(entry.getKey(), entry.getValue().toMaskedItem());
+        }
+        return Collections.unmodifiableMap(masked);
     }
 
     public String getTraceId() {

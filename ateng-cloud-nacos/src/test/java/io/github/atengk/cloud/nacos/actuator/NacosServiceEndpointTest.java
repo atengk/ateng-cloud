@@ -91,4 +91,64 @@ class NacosServiceEndpointTest {
         Map<String, Object> invalidResp = endpoint.executeAction("restart");
         assertThat(invalidResp).containsEntry("success", false);
     }
+
+    @Test
+    @DisplayName("测试运维端点读取受管配置监听器与最近热更状态")
+    void testGetStatusWithRefreshEngine() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        NacosLifecycleStateMachine stateMachine = new NacosLifecycleStateMachine(
+                properties, event -> {}, beanFactory.getBeanProvider(AbstractAutoServiceRegistration.class)
+        );
+
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("spring.application.name", "demo-service");
+
+        io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener listener = new io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener() {
+            @Override
+            public void onConfigChange(io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent event) {}
+
+            @Override
+            public String getPrefix() {
+                return "demo.prefix";
+            }
+
+            @Override
+            public int getOrder() {
+                return 10;
+            }
+        };
+
+        io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine refreshEngine =
+                new io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine(
+                        env,
+                        event -> {},
+                        java.util.List.of(listener),
+                        null,
+                        properties
+                );
+
+        // 触发一次模拟热更以生成 lastRefreshRecord
+        refreshEngine.refreshConfig(java.util.Set.of("demo.prefix.key"), "demo.yml", "DEFAULT_GROUP");
+
+        NacosServiceEndpoint endpoint = new NacosServiceEndpoint(stateMachine, null, properties, env, refreshEngine);
+        Map<String, Object> status = endpoint.getStatus();
+
+        assertThat(status).containsKey("config");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> configInfo = (Map<String, Object>) status.get("config");
+        assertThat(configInfo).containsEntry("enforceBeanImmutability", true);
+
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> listeners = (java.util.List<Map<String, Object>>) configInfo.get("listeners");
+        assertThat(listeners).hasSize(1);
+        assertThat(listeners.get(0)).containsEntry("prefix", "demo.prefix");
+        assertThat(listeners.get(0)).containsEntry("order", 10);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> lastRefresh = (Map<String, Object>) configInfo.get("lastRefresh");
+        assertThat(lastRefresh).isNotNull();
+        assertThat(lastRefresh).containsEntry("success", true);
+        assertThat(lastRefresh.get("traceId")).isNotNull();
+    }
 }

@@ -61,6 +61,12 @@ public class AtengNacosProperties {
     @NestedConfigurationProperty
     private ConfigProperties config = new ConfigProperties();
 
+    /**
+     * Micrometer 监控指标导出配置
+     */
+    @NestedConfigurationProperty
+    private MetricsProperties metrics = new MetricsProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -123,6 +129,14 @@ public class AtengNacosProperties {
 
     public void setConfig(ConfigProperties config) {
         this.config = config;
+    }
+
+    public MetricsProperties getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(MetricsProperties metrics) {
+        this.metrics = metrics;
     }
 
     /**
@@ -383,6 +397,25 @@ public class AtengNacosProperties {
 
         public void setEnforceBeanImmutability(boolean enforceBeanImmutability) {
             this.enforceBeanImmutability = enforceBeanImmutability;
+        }
+    }
+
+    /**
+     * Nacos 监控指标配置
+     */
+    public static class MetricsProperties {
+
+        /**
+         * 是否启用 Nacos 治理与热更 Micrometer 监控指标导出
+         */
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

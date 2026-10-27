@@ -11,6 +11,7 @@ import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
+import io.github.atengk.cloud.nacos.metrics.NacosMetricsManager;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine;
@@ -18,6 +19,7 @@ import io.github.atengk.cloud.nacos.spi.DefaultNacosMetadataCustomizer;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
 import io.github.atengk.cloud.nacos.spi.NacosMetadataCustomizer;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -146,8 +148,9 @@ public class AtengNacosAutoConfiguration {
     public NacosServiceEndpoint nacosServiceEndpoint(NacosLifecycleStateMachine stateMachine,
                                                      NacosMetadataProvider metadataProvider,
                                                      AtengNacosProperties properties,
-                                                     Environment environment) {
-        return new NacosServiceEndpoint(stateMachine, metadataProvider, properties, environment);
+                                                     Environment environment,
+                                                     ObjectProvider<NacosConfigRefreshEngine> refreshEngineProvider) {
+        return new NacosServiceEndpoint(stateMachine, metadataProvider, properties, environment, refreshEngineProvider.getIfAvailable());
     }
 
     /**
@@ -189,6 +192,21 @@ public class AtengNacosAutoConfiguration {
     }
 
     /**
+     * Nacos Micrometer 全维监控标尺管理器
+     */
+    @Bean
+    @ConditionalOnClass(MeterRegistry.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.nacos.metrics", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnMissingBean
+    public NacosMetricsManager nacosMetricsManager(
+            ObjectProvider<MeterRegistry> meterRegistryProvider,
+            ObjectProvider<NacosTemplate> nacosTemplateProvider,
+            ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
+            Environment environment) {
+        return new NacosMetricsManager(meterRegistryProvider.getIfAvailable(), nacosTemplateProvider, stateMachineProvider, environment);
+    }
+
+    /**
      * Nacos 安全配置热更核心引擎
      */
     @Bean
@@ -198,8 +216,9 @@ public class AtengNacosAutoConfiguration {
             ApplicationEventPublisher eventPublisher,
             ObjectProvider<List<NacosConfigChangeListener>> listenersProvider,
             ObjectProvider<ConfigurationPropertiesRebinder> rebinderProvider,
-            AtengNacosProperties properties) {
-        return new NacosConfigRefreshEngine(environment, eventPublisher, listenersProvider, rebinderProvider, properties);
+            AtengNacosProperties properties,
+            ObjectProvider<NacosMetricsManager> metricsManagerProvider) {
+        return new NacosConfigRefreshEngine(environment, eventPublisher, listenersProvider, rebinderProvider, properties, metricsManagerProvider);
     }
 
     /**

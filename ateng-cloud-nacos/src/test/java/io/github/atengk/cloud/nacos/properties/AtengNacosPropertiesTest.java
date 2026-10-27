@@ -57,6 +57,10 @@ class AtengNacosPropertiesTest {
         assertThat(cfg.getDefaultGroup()).isEqualTo("DEFAULT_GROUP");
         assertThat(cfg.isCheckOnStartup()).isTrue();
         assertThat(cfg.isEnforceBeanImmutability()).isTrue();
+
+        // 默认监控指标配置
+        AtengNacosProperties.MetricsProperties metrics = props.getMetrics();
+        assertThat(metrics.isEnabled()).isTrue();
     }
 
     @Test

@@ -86,4 +86,48 @@ class SafeConfigRefreshEventTest {
         assertThat(item1).isNotEqualTo(item3);
         assertThat(item1.toString()).contains("key1", "old", "new", "MODIFIED");
     }
+
+    @Test
+    @DisplayName("脱敏屏障：敏感属性在 toString 与 getMaskedChangeDetails 中掩码，内存真明文保持不变")
+    void testSensitiveDesensitizationAndInMemoryPlaintextInvariant() {
+        ConfigChangeItem pwdItem = new ConfigChangeItem("spring.datasource.password", "OldSecret@123", "NewSecret@456", ConfigChangeType.MODIFIED);
+        ConfigChangeItem portItem = new ConfigChangeItem("server.port", "8080", "8081", ConfigChangeType.MODIFIED);
+
+        // 1. 验证内存真明文不变量
+        assertThat(pwdItem.isSensitive()).isTrue();
+        assertThat(pwdItem.getOldValue()).isEqualTo("OldSecret@123");
+        assertThat(pwdItem.getNewValue()).isEqualTo("NewSecret@456");
+
+        // 2. 验证脱敏获取方法返回星号掩码
+        assertThat(pwdItem.getMaskedOldValue()).isEqualTo("******");
+        assertThat(pwdItem.getMaskedNewValue()).isEqualTo("******");
+
+        // 3. 验证 ConfigChangeItem.toString() 自动脱敏
+        assertThat(pwdItem.toString()).doesNotContain("OldSecret@123");
+        assertThat(pwdItem.toString()).doesNotContain("NewSecret@456");
+        assertThat(pwdItem.toString()).contains("******");
+
+        // 4. 验证非敏感项在 toString 中维持正常明文
+        assertThat(portItem.isSensitive()).isFalse();
+        assertThat(portItem.toString()).contains("8080", "8081");
+
+        // 5. 验证 SafeConfigRefreshEvent.toString() 与 getMaskedChangeDetails()
+        Map<String, ConfigChangeItem> details = Map.of(
+                pwdItem.getKey(), pwdItem,
+                portItem.getKey(), portItem
+        );
+        SafeConfigRefreshEvent event = new SafeConfigRefreshEvent(
+                this, "sample.yml", "DEFAULT_GROUP", details.keySet(), details, "trace-test-mask");
+
+        String eventStr = event.toString();
+        assertThat(eventStr).doesNotContain("OldSecret@123");
+        assertThat(eventStr).doesNotContain("NewSecret@456");
+        assertThat(eventStr).contains("******");
+
+        Map<String, ConfigChangeItem> maskedDetails = event.getMaskedChangeDetails();
+        assertThat(maskedDetails.get("spring.datasource.password").getOldValue()).isEqualTo("******");
+        assertThat(maskedDetails.get("spring.datasource.password").getNewValue()).isEqualTo("******");
+        assertThat(maskedDetails.get("server.port").getOldValue()).isEqualTo("8080");
+        assertThat(maskedDetails.get("server.port").getNewValue()).isEqualTo("8081");
+    }
 }

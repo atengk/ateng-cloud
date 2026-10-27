@@ -4,6 +4,7 @@ import com.alibaba.cloud.nacos.refresh.NacosConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.event.ConfigChangeItem;
 import io.github.atengk.cloud.nacos.event.ConfigChangeType;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
+import io.github.atengk.cloud.nacos.metrics.NacosMetricsManager;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
 import org.slf4j.Logger;
@@ -16,27 +17,30 @@ import org.springframework.cloud.context.properties.ConfigurationPropertiesRebin
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ApplicationListener;
-import org.springframework.core.annotation.AnnotationAwareOrderComparator;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
+import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Nacos 安全配置热更核心引擎
+ * Nacos 现代配置中心安全动态热更核心引擎
  *
- * <p>核心契约与职责：
- * 1. <b>单例状态不可变铁律</b>：热更时严格收敛于 {@code @ConfigurationProperties} 纯属性 POJO 增量重绑，
- *    坚决杜绝通过 {@code @RefreshScope} 对业务 Bean 触发物理销毁与重建；
- * 2. <b>精准变更对比</b>：维护配置属性内存快照，精确计算变更属性项的新旧值对比与变更类型（新增/修改/删除）；
- * 3. <b>MDC 链路穿透</b>：自动在热更回调线程注入标准 {@code traceId}，并在 {@code finally} 中安全清理，消除线程池污染；
- * 4. <b>强隔离异常捕获屏障</b>：逐个调用 {@link NacosConfigChangeListener} SPI，单个监听器异常被严格隔离捕获并记录日志，
- *    绝不阻断后续监听器与事件广播；
- * 5. <b>双模通知机制</b>：同时支持前缀过滤受管 SPI 与 Spring 原生强类型事件（{@link SafeConfigRefreshEvent}）。</p>
+ * <p>微服务专属架构铁律落地：
+ * <ul>
+ *     <li><b>单例 Bean 状态绝对不可变</b>：严禁在 {@code @Service}/{@code @Repository} 等业务单例上标注 {@code @RefreshScope}，
+ *     热更新仅增量重绑 {@code @ConfigurationProperties} 纯属性 POJO；</li>
+ *     <li><b>受管监听 SPI 过滤匹配</b>：支持注册 {@link NacosConfigChangeListener}，按配置前缀精准过滤与顺序执行；</li>
+ *     <li><b>强类型安全事件通知</b>：发布 {@link SafeConfigRefreshEvent} 强类型事件，携带脱敏变更明细；</li>
+ *     <li><b>MDC 链路追踪穿透</b>：自动在热更全链路注入并传递 {@code traceId}，并在 {@code finally} 块安全恢复或清除；</li>
+ *     <li><b>异常捕获隔离屏障</b>：单个监听器抛出异常仅记录错误日志，绝不阻断后续监听器与事件广播；</li>
+ *     <li><b>Micrometer 全维监控与脱敏防泄露</b>：向监控指标上报热更频次与成功/失败指标，并在审计日志中星号脱敏敏感属性。</li>
+ * </ul>
+ * </p>
  *
  * @author Ateng
  * @since 2026-10-27
@@ -52,6 +56,7 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
     private final ObjectProvider<List<NacosConfigChangeListener>> listenersProvider;
     private final ObjectProvider<ConfigurationPropertiesRebinder> rebinderProvider;
     private final AtengNacosProperties properties;
+    private final ObjectProvider<NacosMetricsManager> metricsManagerProvider;
 
     /**
      * 属性快照缓存（配置属性键 -> 当前环境值），用于增量热更时精确对比 oldValue 与 newValue
@@ -64,16 +69,31 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
     private volatile String lastDataId = "";
     private volatile String lastGroup = "";
 
+    /**
+     * 最近一次热更执行状态记录（供 Actuator 运维端点读取展示）
+     */
+    private volatile RefreshRecord lastRefreshRecord;
+
     public NacosConfigRefreshEngine(Environment environment,
                                     ApplicationEventPublisher eventPublisher,
                                     ObjectProvider<List<NacosConfigChangeListener>> listenersProvider,
                                     ObjectProvider<ConfigurationPropertiesRebinder> rebinderProvider,
                                     AtengNacosProperties properties) {
+        this(environment, eventPublisher, listenersProvider, rebinderProvider, properties, ofNullable(null));
+    }
+
+    public NacosConfigRefreshEngine(Environment environment,
+                                    ApplicationEventPublisher eventPublisher,
+                                    ObjectProvider<List<NacosConfigChangeListener>> listenersProvider,
+                                    ObjectProvider<ConfigurationPropertiesRebinder> rebinderProvider,
+                                    AtengNacosProperties properties,
+                                    ObjectProvider<NacosMetricsManager> metricsManagerProvider) {
         this.environment = environment;
         this.eventPublisher = eventPublisher;
         this.listenersProvider = listenersProvider;
         this.rebinderProvider = rebinderProvider;
         this.properties = properties;
+        this.metricsManagerProvider = metricsManagerProvider;
     }
 
     public NacosConfigRefreshEngine(Environment environment,
@@ -81,7 +101,16 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                                     List<NacosConfigChangeListener> listeners,
                                     ConfigurationPropertiesRebinder rebinder,
                                     AtengNacosProperties properties) {
-        this(environment, eventPublisher, ofNullable(listeners), ofNullable(rebinder), properties);
+        this(environment, eventPublisher, ofNullable(listeners), ofNullable(rebinder), properties, ofNullable(null));
+    }
+
+    public NacosConfigRefreshEngine(Environment environment,
+                                    ApplicationEventPublisher eventPublisher,
+                                    List<NacosConfigChangeListener> listeners,
+                                    ConfigurationPropertiesRebinder rebinder,
+                                    AtengNacosProperties properties,
+                                    NacosMetricsManager metricsManager) {
+        this(environment, eventPublisher, ofNullable(listeners), ofNullable(rebinder), properties, ofNullable(metricsManager));
     }
 
     private static <T> ObjectProvider<T> ofNullable(T value) {
@@ -110,28 +139,30 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
 
     @Override
     public void afterSingletonsInstantiated() {
-        // 初始化环境属性内存快照基线
+        // 捕获初始配置基线快照
         capturePropertySnapshot();
-        log.debug("[ateng-cloud-nacos] 配置热更引擎基线属性快照初始化完成，已缓存 {} 个配置键", propertySnapshot.size());
+        log.info("[ateng-cloud-nacos] 初始配置属性快照采集完成，共纳管 {} 个配置项", propertySnapshot.size());
     }
 
     @Override
     public void onApplicationEvent(ApplicationEvent event) {
-        if (properties == null || !properties.isEnabled()
-                || properties.getConfig() == null || !properties.getConfig().isEnabled()) {
-            return;
-        }
-
+        // 1. 捕获 Nacos 原生刷新事件以提取 dataId 与 group 上下文
         if (event instanceof NacosConfigRefreshEvent nacosEvent) {
             this.lastDataId = nacosEvent.getDataId();
             this.lastGroup = nacosEvent.getGroup();
-            log.debug("[ateng-cloud-nacos] 捕获 NacosConfigRefreshEvent [DataId: {}, Group: {}]",
+            log.debug("[ateng-cloud-nacos] 侦测到 NacosConfigRefreshEvent [DataId: '{}', Group: '{}']",
                     this.lastDataId, this.lastGroup);
-        } else if (event instanceof EnvironmentChangeEvent envChangeEvent) {
-            Set<String> changedKeys = envChangeEvent.getKeys();
-            if (changedKeys != null && !changedKeys.isEmpty()) {
-                refreshConfig(changedKeys, this.lastDataId, this.lastGroup);
+            return;
+        }
+
+        // 2. 捕获 Spring Cloud 标准 EnvironmentChangeEvent 并驱动安全热更流程
+        if (event instanceof EnvironmentChangeEvent envEvent) {
+            Set<String> keys = envEvent.getKeys();
+            if (keys == null || keys.isEmpty()) {
+                return;
             }
+            log.info("[ateng-cloud-nacos] 捕获配置变更事件 EnvironmentChangeEvent，受影响键集: {}", keys);
+            refreshConfig(keys, this.lastDataId, this.lastGroup);
         }
     }
 
@@ -158,6 +189,10 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             return new SafeConfigRefreshEvent(this, dataId, group, Collections.emptySet(), Collections.emptyMap(), "");
         }
 
+        long startTime = System.currentTimeMillis();
+        boolean anyError = false;
+        String errorMessage = null;
+
         // 1. 确保 @ConfigurationProperties 纯属性 POJO 增量热绑
         rebindConfigurationProperties();
 
@@ -182,15 +217,45 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             log.info("[ateng-cloud-nacos] 开始广播配置安全热更 [DataId: '{}', Group: '{}', TraceId: '{}', ChangedCount: {}]",
                     dataId != null ? dataId : "-", group != null ? group : "-", traceId, changedKeys.size());
 
+            // 审计日志打印（对敏感属性严格执行星号脱敏）
+            for (ConfigChangeItem item : changeDetails.values()) {
+                log.debug("[ateng-cloud-nacos] 配置变更明细 [TraceId: '{}']: key={}, oldValue={}, newValue={}, type={}",
+                        traceId, item.getKey(), item.getMaskedOldValue(), item.getMaskedNewValue(), item.getChangeType());
+            }
+
             // 5. 调度 NacosConfigChangeListener SPI 监听器（构筑强隔离异常捕获屏障）
-            dispatchToListeners(event);
+            boolean listenerErrors = dispatchToListeners(event);
+            if (listenerErrors) {
+                anyError = true;
+                errorMessage = "One or more NacosConfigChangeListener failed";
+            }
 
             // 6. 发布 Spring 原生强类型事件，支持 @EventListener 响应
             publishSafeEvent(event);
 
             log.info("[ateng-cloud-nacos] 配置安全热更新执行完成 [TraceId: '{}', ChangedKeys: {}]", traceId, changedKeys);
             return event;
+        } catch (Throwable t) {
+            anyError = true;
+            errorMessage = t.getMessage();
+            throw t;
         } finally {
+            long durationMs = System.currentTimeMillis() - startTime;
+            this.lastRefreshRecord = new RefreshRecord(traceId, System.currentTimeMillis(), changedKeys.size(), changedKeys, !anyError, errorMessage, durationMs);
+
+            // 7. 向 Micrometer 上报监控标尺
+            if (metricsManagerProvider != null) {
+                NacosMetricsManager metrics = metricsManagerProvider.getIfAvailable();
+                if (metrics != null) {
+                    if (anyError) {
+                        metrics.recordRefreshFailure(durationMs, errorMessage);
+                    } else {
+                        metrics.recordRefreshSuccess(durationMs, changedKeys.size());
+                    }
+                }
+            }
+
+            // 8. 闭环清理 MDC
             if (traceIdInjected) {
                 MDC.remove(MDC_TRACE_ID_KEY);
             } else if (existingTraceId != null) {
@@ -252,23 +317,17 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
 
     /**
      * 调度 SPI 监听器并构筑异常隔离屏障
+     *
+     * @param event 刷新事件
+     * @return 若存在任何监听器执行抛错返回 true，全部成功返回 false
      */
-    private void dispatchToListeners(SafeConfigRefreshEvent event) {
-        if (listenersProvider == null) {
-            return;
-        }
-        List<NacosConfigChangeListener> listeners = listenersProvider.getIfAvailable();
-        if (listeners == null || listeners.isEmpty()) {
-            return;
+    private boolean dispatchToListeners(SafeConfigRefreshEvent event) {
+        List<NacosConfigChangeListener> sortedListeners = getListeners();
+        if (sortedListeners.isEmpty()) {
+            return false;
         }
 
-        List<NacosConfigChangeListener> sortedListeners = new ArrayList<>(listeners);
-        sortedListeners.sort((l1, l2) -> {
-            int o1 = l1 != null ? l1.getOrder() : 0;
-            int o2 = l2 != null ? l2.getOrder() : 0;
-            return Integer.compare(o1, o2);
-        });
-
+        boolean hasError = false;
         for (NacosConfigChangeListener listener : sortedListeners) {
             if (listener == null) {
                 continue;
@@ -278,6 +337,7 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 try {
                     listener.onConfigChange(event);
                 } catch (Throwable t) {
+                    hasError = true;
                     log.error("[ateng-cloud-nacos] 配置热更监听器执行异常 [Listener: {}, Prefix: '{}'], 已隔离拦截: {}",
                             listener.getClass().getName(), prefix, t.getMessage(), t);
                 }
@@ -286,6 +346,28 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                         listener.getClass().getSimpleName(), prefix);
             }
         }
+        return hasError;
+    }
+
+    /**
+     * 获取按优先级排序的受管监听器列表
+     */
+    public List<NacosConfigChangeListener> getListeners() {
+        if (listenersProvider == null) {
+            return Collections.emptyList();
+        }
+        List<NacosConfigChangeListener> listeners = listenersProvider.getIfAvailable();
+        if (listeners == null || listeners.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<NacosConfigChangeListener> sortedListeners = new ArrayList<>(listeners);
+        sortedListeners.sort((l1, l2) -> {
+            int o1 = l1 != null ? l1.getOrder() : 0;
+            int o2 = l2 != null ? l2.getOrder() : 0;
+            return Integer.compare(o1, o2);
+        });
+        return Collections.unmodifiableList(sortedListeners);
     }
 
     /**
@@ -330,7 +412,74 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
         return Collections.unmodifiableMap(propertySnapshot);
     }
 
+    /**
+     * 获取最近一次热更执行记录
+     */
+    @Nullable
+    public RefreshRecord getLastRefreshRecord() {
+        return lastRefreshRecord;
+    }
+
     private String generateTraceId() {
         return UUID.randomUUID().toString().replace("-", "");
+    }
+
+    /**
+     * 最近一次配置热更执行明细记录
+     */
+    public static class RefreshRecord {
+
+        private final String traceId;
+        private final long timestamp;
+        private final int changedKeysCount;
+        private final Set<String> changedKeys;
+        private final boolean success;
+        private final String error;
+        private final long durationMs;
+
+        public RefreshRecord(String traceId,
+                             long timestamp,
+                             int changedKeysCount,
+                             Set<String> changedKeys,
+                             boolean success,
+                             @Nullable String error,
+                             long durationMs) {
+            this.traceId = traceId;
+            this.timestamp = timestamp;
+            this.changedKeysCount = changedKeysCount;
+            this.changedKeys = changedKeys != null ? Collections.unmodifiableSet(changedKeys) : Collections.emptySet();
+            this.success = success;
+            this.error = error;
+            this.durationMs = durationMs;
+        }
+
+        public String getTraceId() {
+            return traceId;
+        }
+
+        public long getTimestamp() {
+            return timestamp;
+        }
+
+        public int getChangedKeysCount() {
+            return changedKeysCount;
+        }
+
+        public Set<String> getChangedKeys() {
+            return changedKeys;
+        }
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        @Nullable
+        public String getError() {
+            return error;
+        }
+
+        public long getDurationMs() {
+            return durationMs;
+        }
     }
 }

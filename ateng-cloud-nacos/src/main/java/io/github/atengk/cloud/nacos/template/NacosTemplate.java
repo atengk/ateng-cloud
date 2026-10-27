@@ -1153,7 +1153,12 @@ public class NacosTemplate {
                 });
     }
 
-    private boolean isDiscoveryAvailable() {
+    /**
+     * 判断当前 Nacos 服务发现客户端是否就绪可用
+     *
+     * @return 若服务发现已就绪返回 true，否则返回 false
+     */
+    public boolean isDiscoveryAvailable() {
         NacosServiceManager serviceManager = serviceManagerProvider.getIfAvailable();
         if (serviceManager == null) {
             return false;
