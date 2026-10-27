@@ -7,6 +7,7 @@ import com.alibaba.cloud.nacos.NacosServiceManager;
 import com.alibaba.cloud.nacos.discovery.NacosDiscoveryAutoConfiguration;
 import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
 import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
+import io.github.atengk.cloud.nacos.event.NacosConnectionManager;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.guard.SingletonImmutabilityGuard;
 import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
@@ -230,5 +231,16 @@ public class AtengNacosAutoConfiguration {
     @ConditionalOnMissingBean
     public static SingletonImmutabilityGuard singletonImmutabilityGuard(Environment environment) {
         return new SingletonImmutabilityGuard(environment);
+    }
+
+    /**
+     * Nacos gRPC 长连接通信韧性事件总线与生命周期管理器
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosConnectionManager nacosConnectionManager(
+            ApplicationEventPublisher eventPublisher,
+            ObjectProvider<NacosMetricsManager> metricsManagerProvider) {
+        return new NacosConnectionManager(eventPublisher, metricsManagerProvider);
     }
 }

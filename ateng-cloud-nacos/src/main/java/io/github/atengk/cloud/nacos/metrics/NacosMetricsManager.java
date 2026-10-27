@@ -14,6 +14,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Nacos 基础设施与配置治理 Micrometer 全维监控标尺
@@ -36,6 +37,7 @@ public class NacosMetricsManager {
     private static final Logger log = LoggerFactory.getLogger(NacosMetricsManager.class);
 
     public static final String METRIC_GRPC_CONNECTION_STATUS = "nacos.grpc.connection.status";
+    public static final String METRIC_GRPC_DISCONNECT_TOTAL = "nacos.grpc.disconnect.total";
     public static final String METRIC_CONFIG_REFRESH_TOTAL = "nacos.config.refresh.total";
     public static final String METRIC_CONFIG_REFRESH_FAILURE = "nacos.config.refresh.failure";
     public static final String METRIC_INSTANCES_HEALTHY = "nacos.instances.healthy";
@@ -45,7 +47,9 @@ public class NacosMetricsManager {
     private final ObjectProvider<NacosTemplate> nacosTemplateProvider;
     private final ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider;
     private final String serviceName;
+    private final AtomicBoolean grpcConnected = new AtomicBoolean(true);
 
+    private Counter grpcDisconnectCounter;
     private Counter refreshTotalCounter;
     private Counter refreshFailureCounter;
 
@@ -80,6 +84,12 @@ public class NacosMetricsManager {
                 .tag("service", serviceName)
                 .register(meterRegistry);
 
+        // 1.1 nacos.grpc.disconnect.total (Counter)
+        this.grpcDisconnectCounter = Counter.builder(METRIC_GRPC_DISCONNECT_TOTAL)
+                .description("Total count of Nacos gRPC connection disconnections (network flappings)")
+                .tag("service", serviceName)
+                .register(meterRegistry);
+
         // 2. nacos.config.refresh.total (Counter)
         this.refreshTotalCounter = Counter.builder(METRIC_CONFIG_REFRESH_TOTAL)
                 .description("Total count of Nacos dynamic config refresh triggers")
@@ -111,6 +121,9 @@ public class NacosMetricsManager {
      * 读取 Nacos gRPC 与配置服务连接状态标尺
      */
     public double getGrpcConnectionStatus() {
+        if (!grpcConnected.get()) {
+            return 0.0;
+        }
         try {
             NacosTemplate template = nacosTemplateProvider.getIfAvailable();
             if (template != null) {
@@ -124,6 +137,40 @@ public class NacosMetricsManager {
             log.debug("Error probing Nacos gRPC connection status: {}", ex.getMessage());
         }
         return 0.0;
+    }
+
+    /**
+     * 记录一次 gRPC 长连接断开事件
+     *
+     * @param moduleType    模块类型 (NAMING / CONFIG)
+     * @param serverAddress 远端服务地址
+     */
+    public void recordGrpcDisconnect(String moduleType, @Nullable String serverAddress) {
+        grpcConnected.set(false);
+        if (grpcDisconnectCounter != null) {
+            grpcDisconnectCounter.increment();
+        }
+        log.warn("[ateng-cloud-nacos] Recorded Nacos gRPC connection disconnect [module: {}, server: {}]",
+                moduleType, serverAddress);
+    }
+
+    /**
+     * 记录一次 gRPC 长连接重连恢复事件
+     *
+     * @param moduleType    模块类型 (NAMING / CONFIG)
+     * @param serverAddress 远端服务地址
+     */
+    public void recordGrpcConnect(String moduleType, @Nullable String serverAddress) {
+        grpcConnected.set(true);
+        log.info("[ateng-cloud-nacos] Recorded Nacos gRPC connection restored [module: {}, server: {}]",
+                moduleType, serverAddress);
+    }
+
+    /**
+     * 获取断连抖动总计数
+     */
+    public double getGrpcDisconnectCount() {
+        return grpcDisconnectCounter != null ? grpcDisconnectCounter.count() : 0.0;
     }
 
     /**
