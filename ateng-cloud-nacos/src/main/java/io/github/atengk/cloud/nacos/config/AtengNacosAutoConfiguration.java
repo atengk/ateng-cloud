@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.nacos.config;
 
+import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.cloud.nacos.NacosServiceManager;
 import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
@@ -161,11 +162,24 @@ public class AtengNacosAutoConfiguration {
     @ConditionalOnMissingBean
     public NacosTemplate nacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
                                        ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider,
+                                       ObjectProvider<NacosConfigManager> configManagerProvider,
                                        AtengNacosProperties properties,
                                        NacosMetadataProvider metadataProvider,
                                        ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
                                        ZoneAffinityInstanceFilter zoneAffinityFilter) {
-        return new NacosTemplate(serviceManagerProvider, discoveryPropertiesProvider, properties,
-                metadataProvider, stateMachineProvider, zoneAffinityFilter);
+        return new NacosTemplate(serviceManagerProvider, discoveryPropertiesProvider, configManagerProvider,
+                properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
+    }
+
+    /**
+     * Nacos 现代配置中心启动健康自检与诊断器
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosConfigHealthChecker nacosConfigHealthChecker(
+            AtengNacosProperties properties,
+            Environment environment,
+            ObjectProvider<NacosConfigManager> configManagerProvider) {
+        return new NacosConfigHealthChecker(properties, environment, configManagerProvider);
     }
 }

@@ -55,6 +55,12 @@ public class AtengNacosProperties {
     @NestedConfigurationProperty
     private EndpointProperties endpoint = new EndpointProperties();
 
+    /**
+     * 动态配置中心治理增强配置
+     */
+    @NestedConfigurationProperty
+    private ConfigProperties config = new ConfigProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -109,6 +115,14 @@ public class AtengNacosProperties {
 
     public void setEndpoint(EndpointProperties endpoint) {
         this.endpoint = endpoint;
+    }
+
+    public ConfigProperties getConfig() {
+        return config;
+    }
+
+    public void setConfig(ConfigProperties config) {
+        this.config = config;
     }
 
     /**
@@ -298,6 +312,64 @@ public class AtengNacosProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    /**
+     * Nacos 动态配置中心治理配置
+     */
+    public static class ConfigProperties {
+
+        /**
+         * 是否启用 Nacos 配置中心治理增强
+         */
+        private boolean enabled = true;
+
+        /**
+         * 客户端配置运维操作默认超时时限（强类型 Duration 规范）
+         */
+        private Duration timeout = Duration.ofSeconds(3);
+
+        /**
+         * 默认配置分组名
+         */
+        private String defaultGroup = "DEFAULT_GROUP";
+
+        /**
+         * 启动阶段是否执行配置中心连接与导入自检诊断
+         */
+        private boolean checkOnStartup = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public Duration getTimeout() {
+            return timeout;
+        }
+
+        public void setTimeout(Duration timeout) {
+            this.timeout = timeout;
+        }
+
+        public String getDefaultGroup() {
+            return defaultGroup;
+        }
+
+        public void setDefaultGroup(String defaultGroup) {
+            this.defaultGroup = defaultGroup;
+        }
+
+        public boolean isCheckOnStartup() {
+            return checkOnStartup;
+        }
+
+        public void setCheckOnStartup(boolean checkOnStartup) {
+            this.checkOnStartup = checkOnStartup;
         }
     }
 }

@@ -1,8 +1,11 @@
 package io.github.atengk.cloud.nacos.template;
 
+import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.cloud.nacos.NacosServiceManager;
 import com.alibaba.nacos.api.common.Constants;
+import com.alibaba.nacos.api.config.ConfigService;
+import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.api.naming.NamingMaintainService;
 import com.alibaba.nacos.api.naming.NamingService;
@@ -19,8 +22,10 @@ import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -32,13 +37,13 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
- * Nacos 服务注册与发现统一运维抽象门面
+ * Nacos 服务注册与配置中心统一运维抽象门面
  *
  * <p>核心契约与设计规范：
  * 1. <b>对称运维操作</b>：提供对等完备的 {@code markOnline}/{@code markOffline}、
- *    {@code registerMetadata}/{@code removeMetadata} 等对称 API；
+ *    {@code registerMetadata}/{@code removeMetadata} 以及配置中心 {@code getConfig}/{@code publishConfig}/{@code removeConfig} 等对称 API；
  * 2. <b>空安全契约</b>：列表查询无匹配时保底返回空集合（绝不返回 {@code null}），
- *    单实例查询返回 {@link Optional}，彻底杜绝 NPE；
+ *    单实例与单配置查询支持 {@link Optional}，彻底杜绝 NPE；
  * 3. <b>机房亲和路由</b>：集成 {@link ZoneAffinityInstanceFilter}，支持同机房优先与跨区平滑容灾降级；
  * 4. <b>动态权重响应与过载保护</b>：严格过滤权重 {@code <= 0.0} 节点，探测并透传集群过载保护阈值状态；
  * 5. <b>异常因果转译</b>：100% 拦截底层 {@link NacosException} 并转译为包含原始因果链的 {@link BusinessException}；
@@ -53,6 +58,7 @@ public class NacosTemplate {
 
     private final ObjectProvider<NacosServiceManager> serviceManagerProvider;
     private final ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider;
+    private final ObjectProvider<NacosConfigManager> configManagerProvider;
     private final AtengNacosProperties properties;
     private final NacosMetadataProvider metadataProvider;
     private final ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider;
@@ -64,8 +70,19 @@ public class NacosTemplate {
                          NacosMetadataProvider metadataProvider,
                          ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
                          ZoneAffinityInstanceFilter zoneAffinityFilter) {
+        this(serviceManagerProvider, discoveryPropertiesProvider, null, properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
+    }
+
+    public NacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
+                         ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider,
+                         ObjectProvider<NacosConfigManager> configManagerProvider,
+                         AtengNacosProperties properties,
+                         NacosMetadataProvider metadataProvider,
+                         ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
+                         ZoneAffinityInstanceFilter zoneAffinityFilter) {
         this.serviceManagerProvider = serviceManagerProvider;
         this.discoveryPropertiesProvider = discoveryPropertiesProvider;
+        this.configManagerProvider = configManagerProvider;
         this.properties = properties;
         this.metadataProvider = metadataProvider;
         this.stateMachineProvider = stateMachineProvider;
@@ -660,7 +677,379 @@ public class NacosTemplate {
     }
 
     // ==========================================
-    // 3. 内部辅助与异常因果转译机制
+    // 3. 动态配置中心运维与管理 API (Symmetric & Null-Safe)
+    // ==========================================
+
+    /**
+     * 判断 Nacos 配置中心是否就绪可用
+     *
+     * @return 若配置中心功能开启且 ConfigService 可用则返回 true
+     */
+    public boolean isConfigAvailable() {
+        if (properties == null || !properties.isEnabled()
+                || properties.getConfig() == null || !properties.getConfig().isEnabled()) {
+            return false;
+        }
+        return getConfigService() != null;
+    }
+
+    /**
+     * 获取 Nacos ConfigService 实例
+     *
+     * @return ConfigService 实例，不可用时返回 null
+     */
+    public ConfigService getConfigService() {
+        if (configManagerProvider == null) {
+            return null;
+        }
+        NacosConfigManager configManager = configManagerProvider.getIfAvailable();
+        if (configManager == null) {
+            return null;
+        }
+        try {
+            return configManager.getConfigService();
+        } catch (Exception ex) {
+            log.debug("Failed to acquire Nacos ConfigService: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 探测 Nacos 配置中心服务端当前连接状态
+     *
+     * @return 连接状态（如 UP, DISCONNECTED, UNAVAILABLE 等）
+     */
+    public String getConfigServerStatus() {
+        ConfigService configService = getConfigService();
+        if (configService == null) {
+            return "UNAVAILABLE";
+        }
+        try {
+            String status = configService.getServerStatus();
+            return StringUtils.hasText(status) ? status : "UNKNOWN";
+        } catch (Exception ex) {
+            return "DISCONNECTED";
+        }
+    }
+
+    /**
+     * 解析配置分组名（未显式指定时依序兜底至配置中心属性与 DEFAULT_GROUP）
+     *
+     * @param groupName 传入的分组名
+     * @return 最终生效的分组名
+     */
+    public String resolveConfigGroup(String groupName) {
+        if (StringUtils.hasText(groupName)) {
+            return groupName;
+        }
+        if (properties != null && properties.getConfig() != null && StringUtils.hasText(properties.getConfig().getDefaultGroup())) {
+            return properties.getConfig().getDefaultGroup();
+        }
+        if (configManagerProvider != null) {
+            NacosConfigManager configManager = configManagerProvider.getIfAvailable();
+            if (configManager != null && configManager.getNacosConfigProperties() != null
+                    && StringUtils.hasText(configManager.getNacosConfigProperties().getGroup())) {
+                return configManager.getNacosConfigProperties().getGroup();
+            }
+        }
+        return Constants.DEFAULT_GROUP;
+    }
+
+    private long resolveConfigTimeout(Duration timeout) {
+        if (timeout != null && !timeout.isNegative() && !timeout.isZero()) {
+            return timeout.toMillis();
+        }
+        if (properties != null && properties.getConfig() != null && properties.getConfig().getTimeout() != null) {
+            return properties.getConfig().getTimeout().toMillis();
+        }
+        if (configManagerProvider != null) {
+            NacosConfigManager configManager = configManagerProvider.getIfAvailable();
+            if (configManager != null && configManager.getNacosConfigProperties() != null) {
+                return configManager.getNacosConfigProperties().getTimeout();
+            }
+        }
+        return 3000L;
+    }
+
+    /**
+     * 从默认分组查询指定 Data ID 的配置内容
+     *
+     * @param dataId 配置集唯一标识
+     * @return 配置内容字符串（未找到或离线时返回 null）
+     */
+    public String getConfig(String dataId) {
+        return getConfig(dataId, null, null);
+    }
+
+    /**
+     * 查询指定分组与 Data ID 的配置内容
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @return 配置内容字符串（未找到或离线时返回 null）
+     */
+    public String getConfig(String dataId, String groupName) {
+        return getConfig(dataId, groupName, null);
+    }
+
+    /**
+     * 查询指定分组、Data ID 与超时时限的配置内容
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param timeout   超时时限（强类型 Duration 规范）
+     * @return 配置内容字符串（未找到或离线时返回 null）
+     */
+    public String getConfig(String dataId, String groupName, Duration timeout) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        if (!isConfigAvailable()) {
+            log.debug("Nacos config is not available. Skipping getConfig for dataId '{}'", dataId);
+            return null;
+        }
+        String targetGroup = resolveConfigGroup(groupName);
+        long timeoutMs = resolveConfigTimeout(timeout);
+        return executeWithExceptionTranslation("getConfig", () -> {
+            ConfigService configService = getConfigService();
+            if (configService == null) {
+                return null;
+            }
+            return configService.getConfig(dataId, targetGroup, timeoutMs);
+        });
+    }
+
+    /**
+     * 空安全查询默认分组下的配置内容
+     *
+     * @param dataId 配置集唯一标识
+     * @return 包含配置内容的 Optional（若配置不存在或离线则返回 Optional.empty()）
+     */
+    public Optional<String> findConfig(String dataId) {
+        return findConfig(dataId, null, null);
+    }
+
+    /**
+     * 空安全查询指定分组下的配置内容
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @return 包含配置内容的 Optional（若配置不存在或离线则返回 Optional.empty()）
+     */
+    public Optional<String> findConfig(String dataId, String groupName) {
+        return findConfig(dataId, groupName, null);
+    }
+
+    /**
+     * 空安全查询指定分组、Data ID 与超时时限的配置内容
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param timeout   超时时限（强类型 Duration 规范）
+     * @return 包含配置内容的 Optional（若配置不存在或离线则返回 Optional.empty()）
+     */
+    public Optional<String> findConfig(String dataId, String groupName, Duration timeout) {
+        String content = getConfig(dataId, groupName, timeout);
+        return Optional.ofNullable(content);
+    }
+
+    /**
+     * 向默认分组发布配置
+     *
+     * @param dataId  配置集唯一标识
+     * @param content 配置文本内容
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, String content) {
+        return publishConfig(dataId, null, content, null);
+    }
+
+    /**
+     * 向指定分组发布配置
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param content   配置文本内容
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, String groupName, String content) {
+        return publishConfig(dataId, groupName, content, null);
+    }
+
+    /**
+     * 向指定分组发布带有类型标记的配置
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param content   配置文本内容
+     * @param type      配置格式类型（如 yaml, properties, json, text）
+     * @return 是否发布成功
+     */
+    public boolean publishConfig(String dataId, String groupName, String content, String type) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        if (!isConfigAvailable()) {
+            log.warn("Nacos config is not available. Skipping publishConfig for dataId '{}'", dataId);
+            return false;
+        }
+        String targetGroup = resolveConfigGroup(groupName);
+        return executeWithExceptionTranslation("publishConfig", () -> {
+            ConfigService configService = getConfigService();
+            if (configService == null) {
+                return false;
+            }
+            if (StringUtils.hasText(type)) {
+                return configService.publishConfig(dataId, targetGroup, content, type);
+            } else {
+                return configService.publishConfig(dataId, targetGroup, content);
+            }
+        });
+    }
+
+    /**
+     * 基于 CAS 乐观锁并发安全发布配置
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param content   待发布内容
+     * @param casMd5    期望的原配置 MD5 摘要
+     * @return 是否发布成功
+     */
+    public boolean publishConfigCas(String dataId, String groupName, String content, String casMd5) {
+        return publishConfigCas(dataId, groupName, content, casMd5, null);
+    }
+
+    /**
+     * 基于 CAS 乐观锁并发安全发布带有类型标记的配置
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param content   待发布内容
+     * @param casMd5    期望的原配置 MD5 摘要
+     * @param type      配置格式类型（如 yaml, properties, json, text）
+     * @return 是否发布成功
+     */
+    public boolean publishConfigCas(String dataId, String groupName, String content, String casMd5, String type) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        if (!isConfigAvailable()) {
+            log.warn("Nacos config is not available. Skipping publishConfigCas for dataId '{}'", dataId);
+            return false;
+        }
+        String targetGroup = resolveConfigGroup(groupName);
+        return executeWithExceptionTranslation("publishConfigCas", () -> {
+            ConfigService configService = getConfigService();
+            if (configService == null) {
+                return false;
+            }
+            if (StringUtils.hasText(type)) {
+                return configService.publishConfigCas(dataId, targetGroup, content, casMd5, type);
+            } else {
+                return configService.publishConfigCas(dataId, targetGroup, content, casMd5);
+            }
+        });
+    }
+
+    /**
+     * 删除默认分组下的指定配置
+     *
+     * @param dataId 配置集唯一标识
+     * @return 是否删除成功
+     */
+    public boolean removeConfig(String dataId) {
+        return removeConfig(dataId, null);
+    }
+
+    /**
+     * 删除指定分组下的配置
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @return 是否删除成功
+     */
+    public boolean removeConfig(String dataId, String groupName) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        if (!isConfigAvailable()) {
+            log.warn("Nacos config is not available. Skipping removeConfig for dataId '{}'", dataId);
+            return false;
+        }
+        String targetGroup = resolveConfigGroup(groupName);
+        return executeWithExceptionTranslation("removeConfig", () -> {
+            ConfigService configService = getConfigService();
+            if (configService == null) {
+                return false;
+            }
+            return configService.removeConfig(dataId, targetGroup);
+        });
+    }
+
+    /**
+     * 为默认分组下的配置注册监听器
+     *
+     * @param dataId   配置集唯一标识
+     * @param listener 监听器回调接口
+     */
+    public void addConfigListener(String dataId, Listener listener) {
+        addConfigListener(dataId, null, listener);
+    }
+
+    /**
+     * 为指定分组下的配置注册监听器
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param listener  监听器回调接口
+     */
+    public void addConfigListener(String dataId, String groupName, Listener listener) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(listener, "listener must not be null");
+        if (!isConfigAvailable()) {
+            log.debug("Nacos config is not available. Skipping addConfigListener for dataId '{}'", dataId);
+            return;
+        }
+        String targetGroup = resolveConfigGroup(groupName);
+        executeWithExceptionTranslation("addConfigListener", () -> {
+            ConfigService configService = getConfigService();
+            if (configService != null) {
+                configService.addListener(dataId, targetGroup, listener);
+            }
+            return null;
+        });
+    }
+
+    /**
+     * 移除默认分组下配置的指定监听器
+     *
+     * @param dataId   配置集唯一标识
+     * @param listener 待移除的监听器
+     */
+    public void removeConfigListener(String dataId, Listener listener) {
+        removeConfigListener(dataId, null, listener);
+    }
+
+    /**
+     * 移除指定分组下配置的指定监听器
+     *
+     * @param dataId    配置集唯一标识
+     * @param groupName 分组名（为 null 时使用默认组）
+     * @param listener  待移除的监听器
+     */
+    public void removeConfigListener(String dataId, String groupName, Listener listener) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(listener, "listener must not be null");
+        if (!isConfigAvailable()) {
+            log.debug("Nacos config is not available. Skipping removeConfigListener for dataId '{}'", dataId);
+            return;
+        }
+        String targetGroup = resolveConfigGroup(groupName);
+        try {
+            ConfigService configService = getConfigService();
+            if (configService != null) {
+                configService.removeListener(dataId, targetGroup, listener);
+            }
+        } catch (Exception ex) {
+            log.debug("Failed to remove config listener for dataId '{}': {}", dataId, ex.getMessage());
+        }
+    }
+
+    // ==========================================
+    // 4. 内部辅助与异常因果转译机制
     // ==========================================
 
     @FunctionalInterface

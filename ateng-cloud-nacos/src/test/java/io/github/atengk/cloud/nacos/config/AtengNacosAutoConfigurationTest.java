@@ -42,6 +42,7 @@ class AtengNacosAutoConfigurationTest {
             assertThat(context).hasSingleBean(NacosServiceEndpoint.class);
             assertThat(context).hasSingleBean(ZoneAffinityInstanceFilter.class);
             assertThat(context).hasSingleBean(NacosTemplate.class);
+            assertThat(context).hasSingleBean(NacosConfigHealthChecker.class);
         });
     }
 
@@ -59,6 +60,7 @@ class AtengNacosAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(NacosServiceEndpoint.class);
                     assertThat(context).doesNotHaveBean(ZoneAffinityInstanceFilter.class);
                     assertThat(context).doesNotHaveBean(NacosTemplate.class);
+                    assertThat(context).doesNotHaveBean(NacosConfigHealthChecker.class);
                 });
     }
 }

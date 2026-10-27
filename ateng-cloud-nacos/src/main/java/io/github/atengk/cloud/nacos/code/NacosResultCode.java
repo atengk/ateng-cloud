@@ -30,7 +30,17 @@ public enum NacosResultCode implements IResultCode {
     /**
      * Nacos 服务注册与发现未启用
      */
-    NACOS_DISCOVERY_DISABLED(4104, "Nacos 服务注册与发现未启用");
+    NACOS_DISCOVERY_DISABLED(4104, "Nacos 服务注册与发现未启用"),
+
+    /**
+     * Nacos 配置中心运维操作执行失败
+     */
+    NACOS_CONFIG_OPERATION_FAILED(4105, "Nacos 配置中心运维操作执行失败"),
+
+    /**
+     * Nacos 动态配置中心未启用
+     */
+    NACOS_CONFIG_DISABLED(4106, "Nacos 动态配置中心未启用");
 
     private final Integer code;
     private final String msg;

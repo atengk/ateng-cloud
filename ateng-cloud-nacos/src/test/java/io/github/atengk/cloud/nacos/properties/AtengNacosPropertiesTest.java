@@ -49,6 +49,13 @@ class AtengNacosPropertiesTest {
         // 默认端点配置
         AtengNacosProperties.EndpointProperties ep = props.getEndpoint();
         assertThat(ep.isEnabled()).isTrue();
+
+        // 默认配置中心治理配置
+        AtengNacosProperties.ConfigProperties cfg = props.getConfig();
+        assertThat(cfg.isEnabled()).isTrue();
+        assertThat(cfg.getTimeout()).isEqualTo(Duration.ofSeconds(3));
+        assertThat(cfg.getDefaultGroup()).isEqualTo("DEFAULT_GROUP");
+        assertThat(cfg.isCheckOnStartup()).isTrue();
     }
 
     @Test
@@ -64,6 +71,10 @@ class AtengNacosPropertiesTest {
         map.put("ateng.cloud.nacos.metadata.custom.region", "cn-north-1");
         map.put("ateng.cloud.nacos.network.fail-on-loopback", "true");
         map.put("ateng.cloud.nacos.network.preferred-networks[0]", "10.0.");
+        map.put("ateng.cloud.nacos.config.enabled", "true");
+        map.put("ateng.cloud.nacos.config.timeout", "5s");
+        map.put("ateng.cloud.nacos.config.default-group", "MY_GROUP");
+        map.put("ateng.cloud.nacos.config.check-on-startup", "false");
 
         ConfigurationPropertySource source = new MapConfigurationPropertySource(map);
         Binder binder = new Binder(source);
@@ -77,5 +88,9 @@ class AtengNacosPropertiesTest {
         assertThat(props.getMetadata().getCustom()).containsEntry("region", "cn-north-1");
         assertThat(props.getNetwork().isFailOnLoopback()).isTrue();
         assertThat(props.getNetwork().getPreferredNetworks()).containsExactly("10.0.");
+        assertThat(props.getConfig().isEnabled()).isTrue();
+        assertThat(props.getConfig().getTimeout()).isEqualTo(Duration.ofSeconds(5));
+        assertThat(props.getConfig().getDefaultGroup()).isEqualTo("MY_GROUP");
+        assertThat(props.getConfig().isCheckOnStartup()).isFalse();
     }
 }
