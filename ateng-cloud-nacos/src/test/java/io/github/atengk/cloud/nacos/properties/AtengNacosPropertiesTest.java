@@ -56,6 +56,7 @@ class AtengNacosPropertiesTest {
         assertThat(cfg.getTimeout()).isEqualTo(Duration.ofSeconds(3));
         assertThat(cfg.getDefaultGroup()).isEqualTo("DEFAULT_GROUP");
         assertThat(cfg.isCheckOnStartup()).isTrue();
+        assertThat(cfg.isEnforceBeanImmutability()).isTrue();
     }
 
     @Test

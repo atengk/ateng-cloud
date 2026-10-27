@@ -340,6 +340,11 @@ public class AtengNacosProperties {
          */
         private boolean checkOnStartup = true;
 
+        /**
+         * 是否强制开启业务单例不可变性守卫（严禁在 @Service/@Repository 上挂载 @RefreshScope）
+         */
+        private boolean enforceBeanImmutability = true;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -370,6 +375,14 @@ public class AtengNacosProperties {
 
         public void setCheckOnStartup(boolean checkOnStartup) {
             this.checkOnStartup = checkOnStartup;
+        }
+
+        public boolean isEnforceBeanImmutability() {
+            return enforceBeanImmutability;
+        }
+
+        public void setEnforceBeanImmutability(boolean enforceBeanImmutability) {
+            this.enforceBeanImmutability = enforceBeanImmutability;
         }
     }
 }

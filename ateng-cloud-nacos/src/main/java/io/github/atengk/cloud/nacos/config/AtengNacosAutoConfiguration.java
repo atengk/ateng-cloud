@@ -6,13 +6,16 @@ import com.alibaba.cloud.nacos.NacosServiceManager;
 import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
 import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
+import io.github.atengk.cloud.nacos.guard.SingletonImmutabilityGuard;
 import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine;
 import io.github.atengk.cloud.nacos.spi.DefaultNacosMetadataCustomizer;
+import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
 import io.github.atengk.cloud.nacos.spi.NacosMetadataCustomizer;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.slf4j.Logger;
@@ -25,6 +28,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.client.serviceregistry.AbstractAutoServiceRegistration;
+import org.springframework.cloud.context.properties.ConfigurationPropertiesRebinder;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
@@ -163,12 +167,13 @@ public class AtengNacosAutoConfiguration {
     public NacosTemplate nacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
                                        ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider,
                                        ObjectProvider<NacosConfigManager> configManagerProvider,
+                                       ObjectProvider<NacosConfigRefreshEngine> refreshEngineProvider,
                                        AtengNacosProperties properties,
                                        NacosMetadataProvider metadataProvider,
                                        ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
                                        ZoneAffinityInstanceFilter zoneAffinityFilter) {
         return new NacosTemplate(serviceManagerProvider, discoveryPropertiesProvider, configManagerProvider,
-                properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
+                refreshEngineProvider, properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
     }
 
     /**
@@ -181,5 +186,28 @@ public class AtengNacosAutoConfiguration {
             Environment environment,
             ObjectProvider<NacosConfigManager> configManagerProvider) {
         return new NacosConfigHealthChecker(properties, environment, configManagerProvider);
+    }
+
+    /**
+     * Nacos 安全配置热更核心引擎
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosConfigRefreshEngine nacosConfigRefreshEngine(
+            Environment environment,
+            ApplicationEventPublisher eventPublisher,
+            ObjectProvider<List<NacosConfigChangeListener>> listenersProvider,
+            ObjectProvider<ConfigurationPropertiesRebinder> rebinderProvider,
+            AtengNacosProperties properties) {
+        return new NacosConfigRefreshEngine(environment, eventPublisher, listenersProvider, rebinderProvider, properties);
+    }
+
+    /**
+     * 业务单例不可变性架构守卫 (Bean Immutability Guard)
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public static SingletonImmutabilityGuard singletonImmutabilityGuard(Environment environment) {
+        return new SingletonImmutabilityGuard(environment);
     }
 }

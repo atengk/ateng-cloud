@@ -15,10 +15,12 @@ import com.alibaba.nacos.api.naming.pojo.Service;
 import com.alibaba.nacos.api.naming.pojo.ServiceInfo;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
+import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -33,6 +35,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
@@ -59,6 +62,7 @@ public class NacosTemplate {
     private final ObjectProvider<NacosServiceManager> serviceManagerProvider;
     private final ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider;
     private final ObjectProvider<NacosConfigManager> configManagerProvider;
+    private final ObjectProvider<NacosConfigRefreshEngine> refreshEngineProvider;
     private final AtengNacosProperties properties;
     private final NacosMetadataProvider metadataProvider;
     private final ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider;
@@ -70,7 +74,7 @@ public class NacosTemplate {
                          NacosMetadataProvider metadataProvider,
                          ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
                          ZoneAffinityInstanceFilter zoneAffinityFilter) {
-        this(serviceManagerProvider, discoveryPropertiesProvider, null, properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
+        this(serviceManagerProvider, discoveryPropertiesProvider, null, null, properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
     }
 
     public NacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
@@ -80,9 +84,21 @@ public class NacosTemplate {
                          NacosMetadataProvider metadataProvider,
                          ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
                          ZoneAffinityInstanceFilter zoneAffinityFilter) {
+        this(serviceManagerProvider, discoveryPropertiesProvider, configManagerProvider, null, properties, metadataProvider, stateMachineProvider, zoneAffinityFilter);
+    }
+
+    public NacosTemplate(ObjectProvider<NacosServiceManager> serviceManagerProvider,
+                         ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider,
+                         ObjectProvider<NacosConfigManager> configManagerProvider,
+                         ObjectProvider<NacosConfigRefreshEngine> refreshEngineProvider,
+                         AtengNacosProperties properties,
+                         NacosMetadataProvider metadataProvider,
+                         ObjectProvider<NacosLifecycleStateMachine> stateMachineProvider,
+                         ZoneAffinityInstanceFilter zoneAffinityFilter) {
         this.serviceManagerProvider = serviceManagerProvider;
         this.discoveryPropertiesProvider = discoveryPropertiesProvider;
         this.configManagerProvider = configManagerProvider;
+        this.refreshEngineProvider = refreshEngineProvider;
         this.properties = properties;
         this.metadataProvider = metadataProvider;
         this.stateMachineProvider = stateMachineProvider;
@@ -1046,6 +1062,35 @@ public class NacosTemplate {
         } catch (Exception ex) {
             log.debug("Failed to remove config listener for dataId '{}': {}", dataId, ex.getMessage());
         }
+    }
+
+    /**
+     * 编程式触发针对指定属性键集合的安全配置热更新
+     *
+     * @param changedKeys 发生变更的属性键名集合
+     * @return 发布的强类型安全配置刷新事件，未装配引擎时返回 null
+     */
+    public SafeConfigRefreshEvent refreshConfig(Set<String> changedKeys) {
+        return refreshConfig(changedKeys, null, null);
+    }
+
+    /**
+     * 编程式触发针对指定属性键集合的安全配置热更新，并附带 Nacos 配置源信息
+     *
+     * @param changedKeys 发生变更的属性键名集合
+     * @param dataId      Nacos 配置集唯一标识
+     * @param group       Nacos 配置分组名
+     * @return 发布的强类型安全配置刷新事件，未装配引擎时返回 null
+     */
+    public SafeConfigRefreshEvent refreshConfig(Set<String> changedKeys, String dataId, String group) {
+        if (refreshEngineProvider == null) {
+            return null;
+        }
+        NacosConfigRefreshEngine engine = refreshEngineProvider.getIfAvailable();
+        if (engine != null) {
+            return engine.refreshConfig(changedKeys, dataId, group);
+        }
+        return null;
     }
 
     // ==========================================
