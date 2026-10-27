@@ -1,5 +1,8 @@
 package io.github.atengk.cloud.nacos.config;
 
+import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
+import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
+import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
@@ -24,11 +27,16 @@ class AtengNacosAutoConfigurationTest {
     @Test
     @DisplayName("测试默认配置下核心 Bean 成功按需装配")
     void testDefaultAutoconfiguration() {
-        contextRunner.run(context -> {
+        contextRunner
+                .withPropertyValues("ateng.cloud.nacos.drain-timeout=10ms")
+                .run(context -> {
             assertThat(context).hasSingleBean(AtengNacosProperties.class);
             assertThat(context).hasSingleBean(NacosNetworkAddressDetector.class);
             assertThat(context).hasSingleBean(NacosMetadataProvider.class);
             assertThat(context).hasSingleBean(NacosDiscoveryPropertiesPostProcessor.class);
+            assertThat(context).hasSingleBean(NacosLifecycleStateMachine.class);
+            assertThat(context).hasSingleBean(NacosGracefulShutdownLifecycle.class);
+            assertThat(context).hasSingleBean(NacosServiceEndpoint.class);
         });
     }
 
@@ -41,6 +49,9 @@ class AtengNacosAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(AtengNacosProperties.class);
                     assertThat(context).doesNotHaveBean(NacosNetworkAddressDetector.class);
                     assertThat(context).doesNotHaveBean(NacosMetadataProvider.class);
+                    assertThat(context).doesNotHaveBean(NacosLifecycleStateMachine.class);
+                    assertThat(context).doesNotHaveBean(NacosGracefulShutdownLifecycle.class);
+                    assertThat(context).doesNotHaveBean(NacosServiceEndpoint.class);
                 });
     }
 }

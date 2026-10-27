@@ -7,7 +7,18 @@ spring:
       config:
         enabled: false
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,nacos-service
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
 ateng:
   cloud:
     nacos:
-      drain-timeout: 100ms
+      drain-timeout: 20ms

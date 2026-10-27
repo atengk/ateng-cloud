@@ -7,6 +7,17 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:test}
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,nacos-service
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
 ateng:
   cloud:
     nacos:

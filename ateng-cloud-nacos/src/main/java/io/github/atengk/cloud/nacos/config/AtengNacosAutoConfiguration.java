@@ -2,6 +2,9 @@ package io.github.atengk.cloud.nacos.config;
 
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.cloud.nacos.registry.NacosRegistrationCustomizer;
+import io.github.atengk.cloud.nacos.actuator.NacosServiceEndpoint;
+import io.github.atengk.cloud.nacos.lifecycle.NacosGracefulShutdownLifecycle;
+import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
@@ -10,11 +13,14 @@ import io.github.atengk.cloud.nacos.spi.NacosMetadataCustomizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cloud.client.serviceregistry.AbstractAutoServiceRegistration;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
 
@@ -24,7 +30,8 @@ import java.util.List;
 /**
  * Nacos 服务注册与配置中心基础设施自动装配入口
  *
- * <p>负责装配智能网卡侦测器、多维实例元数据提供者、注册元数据定制器及属性后置处理器。</p>
+ * <p>负责装配智能网卡侦测器、多维实例元数据提供者、注册元数据定制器、
+ * 属性后置处理器、双阶段优雅下线生命周期及 Actuator 专属运维端点。</p>
  *
  * @author Ateng
  * @since 2026-10-27
@@ -85,5 +92,41 @@ public class AtengNacosAutoConfiguration {
             log.debug("Injecting ateng-cloud instance metadata into NacosRegistration for service '{}'", registration.getServiceId());
             metadataProvider.populateMetadata(registration.getMetadata());
         };
+    }
+
+    /**
+     * Nacos 实例生命周期状态机
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @SuppressWarnings("rawtypes")
+    public NacosLifecycleStateMachine nacosLifecycleStateMachine(
+            AtengNacosProperties properties,
+            ApplicationEventPublisher eventPublisher,
+            ObjectProvider<AbstractAutoServiceRegistration> autoRegistrationProvider) {
+        return new NacosLifecycleStateMachine(properties, eventPublisher, autoRegistrationProvider);
+    }
+
+    /**
+     * Nacos 优雅下线最高优先级生命周期钩子
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NacosGracefulShutdownLifecycle nacosGracefulShutdownLifecycle(NacosLifecycleStateMachine stateMachine) {
+        return new NacosGracefulShutdownLifecycle(stateMachine);
+    }
+
+    /**
+     * Actuator 专属运维与生命周期端点 (/actuator/nacos-service)
+     */
+    @Bean
+    @ConditionalOnClass(Endpoint.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.nacos.endpoint", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnMissingBean
+    public NacosServiceEndpoint nacosServiceEndpoint(NacosLifecycleStateMachine stateMachine,
+                                                     NacosMetadataProvider metadataProvider,
+                                                     AtengNacosProperties properties,
+                                                     Environment environment) {
+        return new NacosServiceEndpoint(stateMachine, metadataProvider, properties, environment);
     }
 }
