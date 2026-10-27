@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # 工作流：Java 持续集成流水线 (Java CI - Maven)
 # 适用场景：ateng-cloud 基础框架与中间件 Starter 套件的 PR 门禁与质量保障
 # 触发条件：
@@ -79,12 +79,15 @@ jobs:
             code:
               - '!(*.md|docs/**|.gitignore|.editorconfig|LICENSE)'
 
-      - name: 综合决策是否需要执行耗时测试 (发版提交智能短路直通)
+      - name: 综合决策是否需要执行耗时测试 (发版提交智能短路直通与未初始化工程保护)
         id: decide
         env:
           COMMIT_MSG: ${{ github.event.head_commit.message || github.event.pull_request.title || '' }}
         run: |
-          if [[ "$COMMIT_MSG" =~ ^chore\(release\): ]]; then
+          if [ ! -f "pom.xml" ]; then
+            echo "未检测到根 pom.xml，自动跳过 Java 测试阶段。"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$COMMIT_MSG" =~ ^chore\(release\): ]]; then
             echo "检测到当前提交为发版提交 (chore(release):)，自动短路跳过常规测试，由 Release 工作流全权闭环。"
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
