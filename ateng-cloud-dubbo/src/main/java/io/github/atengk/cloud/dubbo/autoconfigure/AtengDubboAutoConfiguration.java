@@ -36,6 +36,7 @@ public class AtengDubboAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(name = "atengDubboConfigBeanCustomizer")
     public DubboConfigBeanCustomizer atengDubboConfigBeanCustomizer(AtengDubboProperties properties) {
+        io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder.set(properties);
         return new DubboConfigBeanCustomizer() {
             @Override
             public void customize(String beanName, AbstractConfig dubboConfig) {

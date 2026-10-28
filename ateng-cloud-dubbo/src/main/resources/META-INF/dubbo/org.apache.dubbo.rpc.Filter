@@ -1,0 +1,2 @@
+exception=io.github.atengk.cloud.dubbo.filter.AtengDubboExceptionFilter
+resultUnwrap=io.github.atengk.cloud.dubbo.filter.DubboResultUnwrapFilter

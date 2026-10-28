@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.dubbo.api;
 
+import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
 
 /**
@@ -25,4 +26,31 @@ public interface UserRpcService {
      * @return 用户详情对象
      */
     UserVO getUserById(Long id);
+
+    /**
+     * 依据 ID 查询用户信息（显式包装 Result 强契约返回）
+     *
+     * @param id 用户主键
+     * @return 封装的 Result 统一契约
+     */
+    Result<UserVO> getUserResult(Long id);
+
+    /**
+     * 返回业务失败状态的 Result（验证消费端 DubboResultUnwrapFilter 自动拦截并抛出 BusinessException）
+     *
+     * @param id 用户主键
+     * @return 失败的业务结果
+     */
+    Result<UserVO> getFailedResult(Long id);
+
+    /**
+     * 服务端直接抛出受管 BusinessException 异常（验证因果保真白名单放行）
+     */
+    void throwBusinessException();
+
+    /**
+     * 服务端抛出未受检非 JDK 自定义底层异常（验证异常转译为标准 BusinessException 并防御反序列化崩溃）
+     */
+    void throwCustomException();
 }
+
