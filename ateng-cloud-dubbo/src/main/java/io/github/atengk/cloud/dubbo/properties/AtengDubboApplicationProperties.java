@@ -1,5 +1,7 @@
 package io.github.atengk.cloud.dubbo.properties;
 
+import java.time.Duration;
+
 /**
  * Dubbo 应用层服务发现模式配置属性
  *
@@ -13,11 +15,24 @@ public class AtengDubboApplicationProperties {
      */
     private String registerMode = "instance";
 
+    /**
+     * 优雅停机等待超时时间，默认 15000ms (15秒超时硬兜底，排空在途请求再平稳下线)
+     */
+    private Duration shutWait = Duration.ofMillis(15000);
+
     public String getRegisterMode() {
         return registerMode;
     }
 
     public void setRegisterMode(String registerMode) {
         this.registerMode = registerMode;
+    }
+
+    public Duration getShutWait() {
+        return shutWait;
+    }
+
+    public void setShutWait(Duration shutWait) {
+        this.shutWait = shutWait;
     }
 }

@@ -9,6 +9,8 @@ import org.apache.dubbo.config.ConsumerConfig;
 import org.apache.dubbo.config.ProtocolConfig;
 import org.apache.dubbo.config.ProviderConfig;
 import org.apache.dubbo.config.spring.context.config.DubboConfigBeanCustomizer;
+import org.apache.dubbo.rpc.model.ApplicationModel;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -78,8 +80,13 @@ public class AtengDubboAutoConfiguration {
                     }
                 } else if (dubboConfig instanceof ApplicationConfig applicationConfig) {
                     var appProps = properties.getApplication();
-                    if (applicationConfig.getRegisterMode() == null && appProps != null) {
-                        applicationConfig.setRegisterMode(appProps.getRegisterMode());
+                    if (appProps != null) {
+                        if (applicationConfig.getRegisterMode() == null) {
+                            applicationConfig.setRegisterMode(appProps.getRegisterMode());
+                        }
+                        if (applicationConfig.getShutwait() == null && appProps.getShutWait() != null) {
+                            applicationConfig.setShutwait(String.valueOf(appProps.getShutWait().toMillis()));
+                        }
                     }
                 }
             }
@@ -103,5 +110,52 @@ public class AtengDubboAutoConfiguration {
     @ConditionalOnProperty(prefix = "ateng.cloud.dubbo.overload", name = "metrics-enabled", havingValue = "true", matchIfMissing = true)
     public DubboOverloadMetrics dubboOverloadMetrics() {
         return new DubboOverloadMetrics();
+    }
+
+    /**
+     * 在容器单例装配完成后，确保 Dubbo 核心应用与通信层配置对齐生产级基线
+     *
+     * @param properties Dubbo 配置属性
+     * @return SmartInitializingSingleton 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "atengDubboApplicationConfigCustomizer")
+    public SmartInitializingSingleton atengDubboApplicationConfigCustomizer(AtengDubboProperties properties) {
+        return () -> {
+            try {
+                var appProps = properties.getApplication();
+                if (appProps != null && appProps.getShutWait() != null) {
+                    ApplicationModel.defaultModel()
+                            .getApplicationConfigManager()
+                            .getApplication()
+                            .ifPresent(appConfig -> {
+                                if (appConfig.getShutwait() == null) {
+                                    appConfig.setShutwait(String.valueOf(appProps.getShutWait().toMillis()));
+                                }
+                            });
+                }
+                if (properties.getPayload() != null) {
+                    int payloadBytes = (int) properties.getPayload().toBytes();
+                    ApplicationModel.defaultModel()
+                            .getApplicationConfigManager()
+                            .getDefaultProtocols()
+                            .forEach(protocolConfig -> {
+                                if (protocolConfig.getPayload() == null) {
+                                    protocolConfig.setPayload(payloadBytes);
+                                }
+                            });
+                    ApplicationModel.defaultModel()
+                            .getDefaultModule()
+                            .getConfigManager()
+                            .getProviders()
+                            .forEach(providerConfig -> {
+                                if (providerConfig.getPayload() == null) {
+                                    providerConfig.setPayload(payloadBytes);
+                                }
+                            });
+                }
+            } catch (Throwable ignored) {
+            }
+        };
     }
 }

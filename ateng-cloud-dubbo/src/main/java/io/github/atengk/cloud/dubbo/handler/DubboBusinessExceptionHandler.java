@@ -27,6 +27,10 @@ public class DubboBusinessExceptionHandler implements ExceptionHandler<BusinessE
     @Override
     public boolean resolveGrpcStatus(
             BusinessException throwable, HttpHeaders headers, RequestMetadata metadata, MethodDescriptor descriptor) {
+        // 豁免流式调用 (非 UNARY 请求交由 Triple 原生流式异常通道处理，确保客户端正常触发 onError)
+        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
+            return false;
+        }
         if (log.isDebugEnabled()) {
             log.debug("[DUBBO] DubboBusinessExceptionHandler resolveGrpcStatus: code={}, msg={}", throwable.getCode(), throwable.getMessage());
         }
@@ -36,6 +40,9 @@ public class DubboBusinessExceptionHandler implements ExceptionHandler<BusinessE
 
     @Override
     public Object handleGrpc(BusinessException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
+        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
+            return null;
+        }
         if (log.isDebugEnabled()) {
             log.debug("[DUBBO] DubboBusinessExceptionHandler handleGrpc: code={}, msg={}", throwable.getCode(), throwable.getMessage());
         }

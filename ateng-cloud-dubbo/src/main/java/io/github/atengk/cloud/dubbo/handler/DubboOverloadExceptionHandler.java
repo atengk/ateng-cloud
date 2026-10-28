@@ -34,6 +34,10 @@ public class DubboOverloadExceptionHandler implements ExceptionHandler<RejectedE
     @Override
     public boolean resolveGrpcStatus(
             RejectedExecutionException throwable, HttpHeaders headers, RequestMetadata metadata, MethodDescriptor descriptor) {
+        // 豁免流式调用 (非 UNARY 请求交由 Triple 原生流式异常通道处理)
+        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
+            return false;
+        }
         if (log.isDebugEnabled()) {
             log.debug("[DUBBO] DubboOverloadExceptionHandler resolveGrpcStatus: msg={}", throwable.getMessage());
         }
@@ -43,6 +47,9 @@ public class DubboOverloadExceptionHandler implements ExceptionHandler<RejectedE
 
     @Override
     public Object handleGrpc(RejectedExecutionException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
+        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
+            return null;
+        }
         DubboOverloadListener.incrementRejectCount();
         log.warn("[DUBBO] Triple 传输层捕获线程池过载拒绝异常，安全转译为 TOO_MANY_REQUESTS: {}", throwable.getMessage());
         BusinessException businessException = new BusinessException(

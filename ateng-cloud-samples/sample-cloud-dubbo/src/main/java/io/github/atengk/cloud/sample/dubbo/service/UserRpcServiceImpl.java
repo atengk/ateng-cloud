@@ -1,12 +1,23 @@
 package io.github.atengk.cloud.sample.dubbo.service;
 
 import io.github.atengk.boot.core.code.CommonResultCode;
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.dubbo.filter.DubboContextPropagationFilter;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.exception.CustomDatabaseException;
+import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
+import io.github.atengk.cloud.sample.dubbo.model.UserLogStreamRequest;
+import io.github.atengk.cloud.sample.dubbo.model.UserLogVO;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
+import org.apache.dubbo.common.stream.StreamObserver;
 import org.apache.dubbo.config.annotation.DubboService;
+import org.slf4j.MDC;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 用户 RPC 服务实现
@@ -70,5 +81,39 @@ public class UserRpcServiceImpl implements UserRpcService {
                 CommonResultCode.TOO_MANY_REQUESTS.getCode(),
                 "服务端并发线程池已耗尽，触发过载保护限流"
         );
+    }
+
+    @Override
+    public void streamUserLogs(UserLogStreamRequest request, StreamObserver<UserLogVO> responseObserver) {
+        String currentUserId = UserContextHolder.getUserId();
+        String currentTenantId = TenantContextHolder.getTenantId();
+        String currentTraceId = MDC.get("traceId");
+        String currentTrafficTag = MDC.get(DubboContextPropagationFilter.TRAFFIC_TAG);
+
+        int count = request.getLimit() != null && request.getLimit() > 0 ? request.getLimit() : 3;
+        for (int i = 1; i <= count; i++) {
+            UserLogVO log = new UserLogVO(
+                    (long) i,
+                    currentUserId,
+                    currentTenantId,
+                    currentTraceId,
+                    currentTrafficTag,
+                    "Log event #" + i + " for action: " + request.getAction()
+            );
+            responseObserver.onNext(log);
+        }
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void streamErrorLogs(UserLogStreamRequest request, StreamObserver<UserLogVO> responseObserver) {
+        String currentUserId = UserContextHolder.getUserId();
+        responseObserver.onNext(new UserLogVO(1L, currentUserId, null, null, null, "Initial event before error"));
+        responseObserver.onError(new BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, "流式处理中断异常"));
+    }
+
+    @Override
+    public int echoPayload(String data) {
+        return data != null ? data.length() : 0;
     }
 }

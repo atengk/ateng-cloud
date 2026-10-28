@@ -2,8 +2,11 @@ package io.github.atengk.cloud.sample.dubbo.api;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
+import io.github.atengk.cloud.sample.dubbo.model.UserLogStreamRequest;
+import io.github.atengk.cloud.sample.dubbo.model.UserLogVO;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
 import jakarta.validation.Valid;
+import org.apache.dubbo.common.stream.StreamObserver;
 
 /**
  * 用户 RPC 服务契约接口
@@ -74,5 +77,29 @@ public interface UserRpcService {
      * 模拟服务端线程池过载拒绝异常抛出（验证过载保护过滤器转译）
      */
     void simulateOverload();
+
+    /**
+     * Triple Server Stream 服务端流式推送用户审计日志
+     *
+     * @param request 查询请求
+     * @param responseObserver 响应流观察者
+     */
+    void streamUserLogs(UserLogStreamRequest request, StreamObserver<UserLogVO> responseObserver);
+
+    /**
+     * 模拟 Server Stream 异常中断流式推送
+     *
+     * @param request 查询请求
+     * @param responseObserver 响应流观察者
+     */
+    void streamErrorLogs(UserLogStreamRequest request, StreamObserver<UserLogVO> responseObserver);
+
+    /**
+     * 发送大载荷数据（验证报文载荷硬防爆上限）
+     *
+     * @param data 报文内容
+     * @return 接收到的报文长度
+     */
+    int echoPayload(String data);
 }
 

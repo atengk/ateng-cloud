@@ -93,7 +93,11 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
     }
 
     private boolean isPrimitiveOrWrapper(Class<?> clazz) {
-        return clazz.isPrimitive() || clazz.getName().startsWith("java.lang.") || clazz.getName().startsWith("java.util.");
+        return clazz.isPrimitive()
+                || clazz.getName().startsWith("java.lang.")
+                || clazz.getName().startsWith("java.util.")
+                || org.apache.dubbo.common.stream.StreamObserver.class.isAssignableFrom(clazz)
+                || clazz.getName().contains("StreamObserver");
     }
 
     private String formatViolations(Set<? extends ConstraintViolation<?>> violations) {

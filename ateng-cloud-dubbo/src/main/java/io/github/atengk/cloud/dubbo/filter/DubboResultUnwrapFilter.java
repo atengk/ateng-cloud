@@ -42,6 +42,11 @@ public class DubboResultUnwrapFilter implements Filter, BaseFilter.Listener {
             return;
         }
 
+        // 豁免流式调用 (含有 StreamObserver 参数或返回流式对象)
+        if (isStreamInvocation(invocation)) {
+            return;
+        }
+
         if (appResponse.hasException()) {
             return;
         }
@@ -63,5 +68,25 @@ public class DubboResultUnwrapFilter implements Filter, BaseFilter.Listener {
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         // 异常链路由异常过滤器与底层 RPC 驱动处理
+    }
+
+    private boolean isStreamInvocation(Invocation invocation) {
+        if (invocation == null) {
+            return false;
+        }
+        Class<?>[] parameterTypes = invocation.getParameterTypes();
+        if (parameterTypes != null) {
+            for (Class<?> paramType : parameterTypes) {
+                if (paramType != null && ("org.apache.dubbo.common.stream.StreamObserver".equals(paramType.getName())
+                        || "org.apache.dubbo.rpc.protocol.tri.observer.CallStreamObserver".equals(paramType.getName())
+                        || paramType.getName().contains("StreamObserver"))) {
+                    return true;
+                }
+            }
+        }
+        Class<?> returnType = org.apache.dubbo.rpc.support.RpcUtils.getReturnType(invocation);
+        return returnType != null && ("org.apache.dubbo.common.stream.StreamObserver".equals(returnType.getName())
+                || "org.apache.dubbo.rpc.protocol.tri.observer.CallStreamObserver".equals(returnType.getName())
+                || returnType.getName().contains("StreamObserver"));
     }
 }

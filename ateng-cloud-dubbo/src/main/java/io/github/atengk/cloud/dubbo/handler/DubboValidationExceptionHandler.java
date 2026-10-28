@@ -36,6 +36,10 @@ public class DubboValidationExceptionHandler implements ExceptionHandler<Constra
     @Override
     public boolean resolveGrpcStatus(
             ConstraintViolationException throwable, HttpHeaders headers, RequestMetadata metadata, MethodDescriptor descriptor) {
+        // 豁免流式调用 (非 UNARY 请求交由 Triple 原生流式异常通道处理)
+        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
+            return false;
+        }
         if (log.isDebugEnabled()) {
             log.debug("[DUBBO] DubboValidationExceptionHandler resolveGrpcStatus: msg={}", throwable.getMessage());
         }
@@ -45,6 +49,9 @@ public class DubboValidationExceptionHandler implements ExceptionHandler<Constra
 
     @Override
     public Object handleGrpc(ConstraintViolationException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
+        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
+            return null;
+        }
         Set<ConstraintViolation<?>> violations = throwable.getConstraintViolations();
         String errorMsg;
         if (violations == null || violations.isEmpty()) {
