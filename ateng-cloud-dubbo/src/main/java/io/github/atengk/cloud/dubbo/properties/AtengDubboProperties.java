@@ -71,6 +71,24 @@ public class AtengDubboProperties {
     @NestedConfigurationProperty
     private AtengDubboResultUnwrapProperties resultUnwrap = new AtengDubboResultUnwrapProperties();
 
+    /**
+     * 金丝雀灰度流量染色与标签路由配置
+     */
+    @NestedConfigurationProperty
+    private AtengDubboTrafficProperties traffic = new AtengDubboTrafficProperties();
+
+    /**
+     * 服务端线程池过载保护与指标监控配置
+     */
+    @NestedConfigurationProperty
+    private AtengDubboOverloadProperties overload = new AtengDubboOverloadProperties();
+
+    /**
+     * JSR-303 参数格式校验防卫与结构化转译配置
+     */
+    @NestedConfigurationProperty
+    private AtengDubboValidationProperties validation = new AtengDubboValidationProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -149,5 +167,29 @@ public class AtengDubboProperties {
 
     public void setResultUnwrap(AtengDubboResultUnwrapProperties resultUnwrap) {
         this.resultUnwrap = resultUnwrap;
+    }
+
+    public AtengDubboTrafficProperties getTraffic() {
+        return traffic;
+    }
+
+    public void setTraffic(AtengDubboTrafficProperties traffic) {
+        this.traffic = traffic;
+    }
+
+    public AtengDubboOverloadProperties getOverload() {
+        return overload;
+    }
+
+    public void setOverload(AtengDubboOverloadProperties overload) {
+        this.overload = overload;
+    }
+
+    public AtengDubboValidationProperties getValidation() {
+        return validation;
+    }
+
+    public void setValidation(AtengDubboValidationProperties validation) {
+        this.validation = validation;
     }
 }

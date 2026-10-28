@@ -2,7 +2,10 @@ package io.github.atengk.cloud.dubbo.filter;
 
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.dubbo.overload.DubboOverloadListener;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
 import org.apache.dubbo.rpc.BaseFilter;
@@ -17,6 +20,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Method;
+import java.util.Set;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.stream.Collectors;
 
 /**
  * Dubbo 服务端因果异常保真与反序列化防御过滤器
@@ -57,18 +63,37 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
             return;
         }
 
-        // 2. JSR-303 参数校验异常：直接放行供上层校验器转译
-        if ("jakarta.validation.ConstraintViolationException".equals(exception.getClass().getName())
-                || "javax.validation.ConstraintViolationException".equals(exception.getClass().getName())) {
+        // 2. JSR-303 参数校验异常：结构化转译为标准受管 BusinessException(BAD_REQUEST)
+        ConstraintViolationException cve = findConstraintViolationException(exception);
+        if (cve != null) {
+            String errorMsg = formatConstraintViolations(cve.getConstraintViolations());
+            log.warn("[DUBBO] Provider 拦截 JSR-303 参数校验失败: service={}, method={}, error={}",
+                    invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), errorMsg);
+            BusinessException be = new BusinessException(CommonResultCode.BAD_REQUEST.getCode(), errorMsg, cve);
+            appResponse.setException(be);
             return;
         }
 
-        // 3. 受检异常 (Checked Exception，非 RuntimeException 且属于 Exception)：直接放行
+        // 3. 服务端线程池过载拒绝异常：转译为受管 BusinessException(TOO_MANY_REQUESTS) 并记录过载诊断
+        if (isOverloadException(exception)) {
+            DubboOverloadListener.incrementRejectCount();
+            log.warn("[DUBBO-OVERLOAD] Provider 拦截线程池耗尽过载异常: service={}, method={}, error={}",
+                    invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), exception.getMessage());
+            BusinessException be = new BusinessException(
+                    CommonResultCode.TOO_MANY_REQUESTS.getCode(),
+                    "服务端并发线程池已耗尽，触发过载保护限流",
+                    exception
+            );
+            appResponse.setException(be);
+            return;
+        }
+
+        // 4. 受检异常 (Checked Exception，非 RuntimeException 且属于 Exception)：直接放行
         if (!(exception instanceof RuntimeException) && (exception instanceof Exception)) {
             return;
         }
 
-        // 4. 方法签名 throws 中已显式声明的异常类型：直接放行
+        // 5. 方法签名 throws 中已显式声明的异常类型：直接放行
         try {
             Method method = invoker.getInterface().getMethod(RpcUtils.getMethodName(invocation), invocation.getParameterTypes());
             Class<?>[] exceptionClasses = method.getExceptionTypes();
@@ -81,18 +106,18 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
             // 方法不存在时继续按规则研判
         }
 
-        // 5. JDK 标准核心异常 (java.*, javax.*, jakarta.*)：直接放行
+        // 6. JDK 标准核心异常 (java.*, javax.*, jakarta.*)：直接放行
         String className = exception.getClass().getName();
         if (className.startsWith("java.") || className.startsWith("javax.") || className.startsWith("jakarta.")) {
             return;
         }
 
-        // 6. Dubbo 原生受管 RpcException：直接放行
+        // 7. Dubbo 原生受管 RpcException：直接放行
         if (exception instanceof RpcException) {
             return;
         }
 
-        // 7. 未受检的第三方底层私有异常：安全转译为框架标准受管 BusinessException，保留原始因果链与错误消息
+        // 8. 未受检的第三方底层私有异常：安全转译为框架标准受管 BusinessException，保留原始因果链与错误消息
         log.warn("[DUBBO] Provider 未声明未受检异常转译: service={}, method={}, errorClass={}, errorMsg={}",
                 invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), className, exception.getMessage());
         String errorMsg = exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
@@ -108,5 +133,59 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         log.error("[DUBBO] Provider 执行发生系统调用错误: service={}, method={}, error={}",
                 invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), t.getMessage(), t);
+    }
+
+    private ConstraintViolationException findConstraintViolationException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ConstraintViolationException cve) {
+                return cve;
+            }
+            if ("jakarta.validation.ConstraintViolationException".equals(current.getClass().getName())
+                    || "javax.validation.ConstraintViolationException".equals(current.getClass().getName())) {
+                try {
+                    if (current instanceof ConstraintViolationException cve) {
+                        return cve;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private String formatConstraintViolations(Set<? extends ConstraintViolation<?>> violations) {
+        if (violations == null || violations.isEmpty()) {
+            return "参数校验失败";
+        }
+        return violations.stream()
+                .map(v -> {
+                    String path = v.getPropertyPath() != null ? v.getPropertyPath().toString() : "";
+                    int dotIdx = path.lastIndexOf('.');
+                    String field = dotIdx >= 0 ? path.substring(dotIdx + 1) : path;
+                    return field + " " + v.getMessage();
+                })
+                .collect(Collectors.joining("; ", "参数校验失败: ", ""));
+    }
+
+    private boolean isOverloadException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof RejectedExecutionException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase();
+                if (lower.contains("thread pool is exhausted")
+                        || lower.contains("threadpool is exhausted")
+                        || lower.contains("threads can not be used anymore")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

@@ -1,1 +1,3 @@
 businessException=io.github.atengk.cloud.dubbo.handler.DubboBusinessExceptionHandler
+overloadException=io.github.atengk.cloud.dubbo.handler.DubboOverloadExceptionHandler
+validationException=io.github.atengk.cloud.dubbo.handler.DubboValidationExceptionHandler

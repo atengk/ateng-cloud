@@ -1,6 +1,8 @@
 package io.github.atengk.cloud.dubbo.autoconfigure;
 
+import io.github.atengk.cloud.dubbo.overload.DubboOverloadMetrics;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.dubbo.config.AbstractConfig;
 import org.apache.dubbo.config.ApplicationConfig;
 import org.apache.dubbo.config.ConsumerConfig;
@@ -57,6 +59,9 @@ public class AtengDubboAutoConfiguration {
                     if (providerConfig.getPayload() == null && properties.getPayload() != null) {
                         providerConfig.setPayload((int) properties.getPayload().toBytes());
                     }
+                    if (providerConfig.getValidation() == null && properties.getValidation() != null && properties.getValidation().isEnabled()) {
+                        providerConfig.setValidation("true");
+                    }
                 } else if (dubboConfig instanceof ProtocolConfig protocolConfig) {
                     var protocolProps = properties.getProtocol();
                     if (protocolConfig.getName() == null && protocolProps != null) {
@@ -85,5 +90,18 @@ public class AtengDubboAutoConfiguration {
                 return Ordered.LOWEST_PRECEDENCE;
             }
         };
+    }
+
+    /**
+     * 注册 Dubbo 服务端线程池指标采集器，自动将 Dubbo 线程池状态与过载拒绝指标绑定至 Micrometer
+     *
+     * @return DubboOverloadMetrics 实例
+     */
+    @Bean
+    @ConditionalOnClass(MeterRegistry.class)
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.dubbo.overload", name = "metrics-enabled", havingValue = "true", matchIfMissing = true)
+    public DubboOverloadMetrics dubboOverloadMetrics() {
+        return new DubboOverloadMetrics();
     }
 }

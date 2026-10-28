@@ -2,3 +2,6 @@ exception=io.github.atengk.cloud.dubbo.filter.AtengDubboExceptionFilter
 resultUnwrap=io.github.atengk.cloud.dubbo.filter.DubboResultUnwrapFilter
 contextPropagation=io.github.atengk.cloud.dubbo.filter.DubboContextPropagationFilter
 sameToken=io.github.atengk.cloud.dubbo.filter.DubboSameTokenFilter
+trafficTag=io.github.atengk.cloud.dubbo.filter.DubboTrafficTagFilter
+dubboValidation=io.github.atengk.cloud.dubbo.filter.DubboValidationFilter
+overload=io.github.atengk.cloud.dubbo.overload.DubboOverloadFilter

@@ -45,6 +45,13 @@
             <artifactId>fastjson2</artifactId>
         </dependency>
 
+        <!-- Micrometer 核心指标采集与观测 (可选) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Sa-Token 内部受信凭据可选适配 (编译期可选，未引入时安全静默降级) -->
         <dependency>
             <groupId>cn.dev33</groupId>

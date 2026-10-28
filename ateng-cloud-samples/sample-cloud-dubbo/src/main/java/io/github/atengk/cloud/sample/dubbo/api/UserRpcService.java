@@ -1,7 +1,9 @@
 package io.github.atengk.cloud.sample.dubbo.api;
 
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
+import jakarta.validation.Valid;
 
 /**
  * 用户 RPC 服务契约接口
@@ -59,5 +61,18 @@ public interface UserRpcService {
      * @return 服务端线程上下文快照
      */
     java.util.Map<String, String> getProviderContext();
+
+    /**
+     * 创建用户（验证 JSR-303 参数校验拦截与结构化转译为标准 BusinessException）
+     *
+     * @param request 创建用户入参
+     * @return 用户详情
+     */
+    UserVO createUser(@Valid UserCreateRequest request);
+
+    /**
+     * 模拟服务端线程池过载拒绝异常抛出（验证过载保护过滤器转译）
+     */
+    void simulateOverload();
 }
 

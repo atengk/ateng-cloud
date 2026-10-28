@@ -57,4 +57,18 @@ public class UserRpcServiceImpl implements UserRpcService {
         map.put("trafficTag", org.slf4j.MDC.get("X-Traffic-Tag"));
         return map;
     }
+
+    @Override
+    public io.github.atengk.cloud.sample.dubbo.model.UserVO createUser(io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest request) {
+        return new io.github.atengk.cloud.sample.dubbo.model.UserVO(100L, request.getUsername(), "ateng@example.com");
+    }
+
+    @Override
+    public void simulateOverload() {
+        io.github.atengk.cloud.dubbo.overload.DubboOverloadListener.incrementRejectCount();
+        throw new BusinessException(
+                CommonResultCode.TOO_MANY_REQUESTS.getCode(),
+                "服务端并发线程池已耗尽，触发过载保护限流"
+        );
+    }
 }
