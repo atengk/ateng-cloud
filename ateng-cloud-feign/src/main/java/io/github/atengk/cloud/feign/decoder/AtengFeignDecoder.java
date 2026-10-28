@@ -6,12 +6,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.Response;
 import feign.Util;
 import feign.codec.Decoder;
+import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.feign.annotation.AdaptiveUnwrap;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpEntity;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -63,13 +66,30 @@ public class AtengFeignDecoder implements Decoder {
             return delegate.decode(response, type);
         }
 
-        // 4. 读取 response body 字节流并保留副本，防流关闭
-        byte[] bodyBytes = Util.toByteArray(response.body().asInputStream());
+        // 4. 硬防爆安全前置防御：校验 Content-Length 标头
+        long maxBytes = properties.getPayload() != null && properties.getPayload().getMaxResponseSize() != null
+                ? properties.getPayload().getMaxResponseSize().toBytes() : 10 * 1024 * 1024L;
+
+        if (response.headers().containsKey("content-length")) {
+            for (String lenStr : response.headers().get("content-length")) {
+                try {
+                    long len = Long.parseLong(lenStr);
+                    if (len > maxBytes) {
+                        throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
+                                String.format("Feign 响应标头 Content-Length [%d 字节] 超出硬防爆限制 [%d 字节]", len, maxBytes));
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+
+        // 5. 按照硬防爆上限流式读取 body 字节流并保留副本，防流关闭
+        byte[] bodyBytes = readBoundedBody(response.body().asInputStream(), maxBytes);
         if (bodyBytes.length == 0) {
             return null;
         }
 
-        // 5. 尝试将 body 解析为 JsonNode
+        // 6. 尝试将 body 解析为 JsonNode
         JsonNode jsonNode;
         try {
             jsonNode = objectMapper.readTree(bodyBytes);
@@ -79,23 +99,23 @@ public class AtengFeignDecoder implements Decoder {
             return delegate.decode(copy, type);
         }
 
-        // 6. 判断是否符合 Result 结构 (具备数字类型的 code 字段)
+        // 7. 判断是否符合 Result 结构 (具备数字类型的 code 字段)
         if (jsonNode != null && jsonNode.isObject() && jsonNode.has("code") && jsonNode.get("code").isNumber()) {
             int code = jsonNode.get("code").asInt();
             String msg = jsonNode.has("msg") && !jsonNode.get("msg").isNull() ? jsonNode.get("msg").asText()
                     : (jsonNode.has("message") && !jsonNode.get("message").isNull() ? jsonNode.get("message").asText() : "");
 
-            // 6.1 业务失败 (code != 200)，直接抛出受管 BusinessException
+            // 7.1 业务失败 (code != 200)，直接抛出受管 BusinessException
             if (code != 200) {
                 throw new BusinessException(code, msg);
             }
 
-            // 6.2 业务成功，处理 void 返回
+            // 7.2 业务成功，处理 void 返回
             if (type == void.class || type == Void.class) {
                 return null;
             }
 
-            // 6.3 业务成功，反序列化 data 字段为业务类型 T
+            // 7.3 业务成功，反序列化 data 字段为业务类型 T
             if (!jsonNode.has("data") || jsonNode.get("data").isNull()) {
                 return null;
             }
@@ -104,9 +124,25 @@ public class AtengFeignDecoder implements Decoder {
             return objectMapper.readValue(jsonNode.get("data").traverse(objectMapper), javaType);
         }
 
-        // 7. 若返回 JSON 不包含 code 字段（如第三方 API），平滑降级反序列化为声明的 type
+        // 8. 若返回 JSON 不包含 code 字段（如第三方 API），平滑降级反序列化为声明的 type
         JavaType javaType = objectMapper.getTypeFactory().constructType(type);
         return objectMapper.readValue(bodyBytes, javaType);
+    }
+
+    private byte[] readBoundedBody(InputStream is, long maxBytes) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int len;
+        while ((len = is.read(buffer)) != -1) {
+            total += len;
+            if (total > maxBytes) {
+                throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
+                        String.format("Feign 响应体大小超出硬防爆限制 [%d 字节]，已熔断防御客户端内存溢出", maxBytes));
+            }
+            baos.write(buffer, 0, len);
+        }
+        return baos.toByteArray();
     }
 
     private boolean isResultType(Type type) {
@@ -130,6 +166,20 @@ public class AtengFeignDecoder implements Decoder {
                     || File.class.isAssignableFrom(clazz)
                     || Resource.class.isAssignableFrom(clazz);
         }
+        if (type instanceof ParameterizedType pType) {
+            Type rawType = pType.getRawType();
+            if (rawType instanceof Class<?> clazz) {
+                if (Response.class.isAssignableFrom(clazz)
+                        || Resource.class.isAssignableFrom(clazz)
+                        || HttpEntity.class.isAssignableFrom(clazz)) {
+                    Type[] args = pType.getActualTypeArguments();
+                    if (args.length > 0) {
+                        return isStreamOrBinaryType(args[0]);
+                    }
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
@@ -138,6 +188,12 @@ public class AtengFeignDecoder implements Decoder {
             return false;
         }
         String clientName = extractClientName(response);
+        if (clientName != null && properties.getClients() != null) {
+            var clientProps = properties.getClients().get(clientName);
+            if (clientProps != null && clientProps.getAdaptiveUnwrap() != null) {
+                return clientProps.getAdaptiveUnwrap();
+            }
+        }
         if (clientName != null && properties.getAdaptiveUnwrap().getExcludeClients().contains(clientName)) {
             return false;
         }

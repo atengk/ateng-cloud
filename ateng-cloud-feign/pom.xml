@@ -41,6 +41,12 @@
             <artifactId>feign-hc5</artifactId>
         </dependency>
 
+        <!-- Feign Micrometer 链路监控与指标度量适配 -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-micrometer</artifactId>
+        </dependency>
+
         <!-- Sa-Token 内部受信凭据可选适配 (编译期可选，未引入时安全静默降级) -->
         <dependency>
             <groupId>cn.dev33</groupId>

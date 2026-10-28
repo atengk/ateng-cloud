@@ -1,28 +1,35 @@
 package io.github.atengk.cloud.feign.autoconfigure;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import feign.Capability;
 import feign.Feign;
 import feign.InvocationHandlerFactory;
+import feign.QueryMapEncoder;
 import feign.Retryer;
 import feign.codec.DecodeException;
 import feign.codec.Decoder;
 import feign.codec.ErrorDecoder;
+import feign.micrometer.MicrometerObservationCapability;
 import feign.optionals.OptionalDecoder;
+import feign.querymap.BeanQueryMapEncoder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.feign.decoder.AtengFeignDecoder;
 import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
 import io.github.atengk.cloud.feign.interceptor.FeignContextPropagationInterceptor;
 import io.github.atengk.cloud.feign.logger.AtengFeignLoggerFactory;
+import io.github.atengk.cloud.feign.preheat.AtengFeignPreheatListener;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.retry.AtengFeignRetryer;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
 import io.github.atengk.cloud.feign.support.SaTokenSameTokenProvider;
+import io.micrometer.observation.ObservationRegistry;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,6 +42,7 @@ import org.springframework.cloud.openfeign.clientconfig.HttpClient5FeignConfigur
 import org.springframework.cloud.openfeign.support.HttpMessageConverterCustomizer;
 import org.springframework.cloud.openfeign.support.ResponseEntityDecoder;
 import org.springframework.cloud.openfeign.support.SpringDecoder;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 
 import java.lang.reflect.InvocationHandler;
@@ -95,8 +103,31 @@ public class AtengFeignAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(QueryMapEncoder.class)
+    public QueryMapEncoder feignQueryMapEncoder() {
+        return new BeanQueryMapEncoder();
+    }
+
+    @Bean
+    @ConditionalOnClass(name = "feign.micrometer.MicrometerObservationCapability")
+    @ConditionalOnBean(ObservationRegistry.class)
+    @ConditionalOnMissingBean(MicrometerObservationCapability.class)
+    public MicrometerObservationCapability feignMicrometerObservationCapability(ObservationRegistry registry) {
+        return new MicrometerObservationCapability(registry);
+    }
+
+    @Bean
     @ConditionalOnMissingBean
-    public FeignBuilderCustomizer atengFeignBuilderCustomizer(ObjectProvider<Retryer> retryerProvider) {
+    @ConditionalOnProperty(prefix = "ateng.cloud.feign.preheat", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public AtengFeignPreheatListener atengFeignPreheatListener(ApplicationContext applicationContext, AtengFeignProperties properties) {
+        return new AtengFeignPreheatListener(applicationContext, properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public FeignBuilderCustomizer atengFeignBuilderCustomizer(ObjectProvider<Retryer> retryerProvider,
+                                                             ObjectProvider<QueryMapEncoder> queryMapEncoderProvider,
+                                                             ObjectProvider<Capability> capabilitiesProvider) {
         return builder -> {
             // 开启 void 方法返回体的响应解码 (使 void 接口也能解析校验 Result<Void> 的 code 业务状态)
             builder.decodeVoid();
@@ -106,6 +137,13 @@ public class AtengFeignAutoConfiguration {
             if (retryer != null) {
                 builder.retryer(retryer);
             }
+
+            // 挂载 SpringQueryMap / BeanQueryMapEncoder 参数平铺适配器
+            QueryMapEncoder queryMapEncoder = queryMapEncoderProvider.getIfAvailable(BeanQueryMapEncoder::new);
+            builder.queryMapEncoder(queryMapEncoder);
+
+            // 挂载度量监控等扩展能力 (如 MicrometerObservationCapability)
+            capabilitiesProvider.orderedStream().forEach(builder::addCapability);
 
             // 挂载动态代理调用拦截，将 DecodeException 内部的 BusinessException 剥壳向外抛出
             builder.invocationHandlerFactory((target, dispatch) -> {

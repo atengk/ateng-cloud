@@ -45,6 +45,18 @@ public class AtengFeignProperties {
     private AtengFeignRetryProperties retry = new AtengFeignRetryProperties();
 
     /**
+     * 客户端启动期饥饿预热配置
+     */
+    @NestedConfigurationProperty
+    private AtengFeignPreheatProperties preheat = new AtengFeignPreheatProperties();
+
+    /**
+     * 响应载荷硬防爆与内存安全配置
+     */
+    @NestedConfigurationProperty
+    private AtengFeignPayloadProperties payload = new AtengFeignPayloadProperties();
+
+    /**
      * 单 Client 独立隔离配置映射，Key 为 Feign 客户端的 contextId 或 name
      */
     private Map<String, AtengFeignClientProperties> clients = new LinkedHashMap<>();
@@ -92,6 +104,22 @@ public class AtengFeignProperties {
 
     public void setRetry(AtengFeignRetryProperties retry) {
         this.retry = retry;
+    }
+
+    public AtengFeignPreheatProperties getPreheat() {
+        return preheat;
+    }
+
+    public void setPreheat(AtengFeignPreheatProperties preheat) {
+        this.preheat = preheat;
+    }
+
+    public AtengFeignPayloadProperties getPayload() {
+        return payload;
+    }
+
+    public void setPayload(AtengFeignPayloadProperties payload) {
+        this.payload = payload;
     }
 
     public Map<String, AtengFeignClientProperties> getClients() {
