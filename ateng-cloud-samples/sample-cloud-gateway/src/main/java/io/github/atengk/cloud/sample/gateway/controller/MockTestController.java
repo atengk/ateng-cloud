@@ -2,10 +2,14 @@ package io.github.atengk.cloud.sample.gateway.controller;
 
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 响应式 Mock 测试终结点
@@ -20,6 +24,17 @@ public class MockTestController {
     @GetMapping("/hello")
     public Mono<Result<String>> hello() {
         return Mono.just(Result.success("gateway-ok"));
+    }
+
+    @GetMapping("/echo-headers")
+    public Mono<Result<Map<String, String>>> echoHeaders(ServerHttpRequest request) {
+        Map<String, String> headerMap = new HashMap<>();
+        request.getHeaders().forEach((name, values) -> {
+            if (values != null && !values.isEmpty()) {
+                headerMap.put(name.toLowerCase(), values.get(0));
+            }
+        });
+        return Mono.just(Result.success(headerMap));
     }
 
     @GetMapping("/business-error")

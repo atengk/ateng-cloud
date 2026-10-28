@@ -14,18 +14,30 @@ spring:
         enabled: false
     gateway:
       routes:
-        - id: mock-route
-          uri: forward:/
+        - id: mock-hello
+          uri: forward:/mock/hello
+          predicates:
+            - Path=/api/mock/hello
+        - id: mock-echo-headers
+          uri: forward:/mock/echo-headers
+          predicates:
+            - Path=/api/mock/echo-headers
+        - id: mock-fallback
+          uri: forward:/mock/hello
           predicates:
             - Path=/api/**
-          filters:
-            - StripPrefix=1
 
 ateng:
   cloud:
     gateway:
       enabled: true
       max-in-memory-size: 2MB
+      security:
+        enabled: true
+        trusted-proxy-count: 1
+        ip-blacklist:
+          - "192.168.100.1"
+          - "10.99.0.0/16"
 
 management:
   endpoints:

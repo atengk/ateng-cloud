@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.gateway.constant;
 
 import io.github.atengk.boot.core.constant.MessageHeaderConstants;
+import org.springframework.core.Ordered;
 
 /**
  * 网关全局核心常量定义
@@ -109,4 +110,61 @@ public final class GatewayConstants {
      * 挂载在 ServerWebExchange Attributes 中的请求入站开始时间戳 (毫秒)
      */
     public static final String ATTR_START_TIME = "ateng.gateway.startTime";
+
+    // --- 全局过滤器执行顺序基线 ---
+
+    /**
+     * 路径规范化与目录穿越防卫过滤器执行顺序
+     */
+    public static final int ORDER_PATH_VALIDATION = Ordered.HIGHEST_PRECEDENCE;
+
+    /**
+     * 响应式链路追踪 traceId 生成与透传过滤器执行顺序
+     */
+    public static final int ORDER_TRACE = Ordered.HIGHEST_PRECEDENCE + 1;
+
+    /**
+     * 外部入站敏感标头物理剥离清洗过滤器执行顺序
+     */
+    public static final int ORDER_HEADER_SANITIZE = Ordered.HIGHEST_PRECEDENCE + 2;
+
+    /**
+     * 真实公网客户端 IP 解析过滤器执行顺序
+     */
+    public static final int ORDER_CLIENT_IP = Ordered.HIGHEST_PRECEDENCE + 3;
+
+    /**
+     * IP 黑白名单防卫过滤器执行顺序
+     */
+    public static final int ORDER_IP_FILTER = Ordered.HIGHEST_PRECEDENCE + 4;
+
+    /**
+     * 全链路灰度染色标签解析过滤器执行顺序
+     */
+    public static final int ORDER_TRAFFIC_TAG = Ordered.HIGHEST_PRECEDENCE + 5;
+
+    /**
+     * 多租户入站解析过滤器执行顺序
+     */
+    public static final int ORDER_TENANT = Ordered.HIGHEST_PRECEDENCE + 6;
+
+    /**
+     * 开放接口数字签名防篡改与防重放过滤器执行顺序
+     */
+    public static final int ORDER_SIGN_GUARD = Ordered.HIGHEST_PRECEDENCE + 7;
+
+    /**
+     * Sa-Token 反应式集中鉴权过滤器执行顺序
+     */
+    public static final int ORDER_SA_TOKEN = -100;
+
+    /**
+     * OWASP 与等保三级出站安全响应头强化过滤器执行顺序
+     */
+    public static final int ORDER_SECURITY_HEADERS = -1;
+
+    /**
+     * 访问日志轻量审计与慢请求告警过滤器执行顺序
+     */
+    public static final int ORDER_ACCESS_LOG = Ordered.LOWEST_PRECEDENCE;
 }

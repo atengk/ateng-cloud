@@ -1,8 +1,10 @@
 package io.github.atengk.cloud.gateway.properties;
 
+import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -17,6 +19,37 @@ public class AtengGatewaySecurityProperties {
      * 是否启用安全守卫与鉴权过滤器
      */
     private boolean enabled = true;
+
+    /**
+     * 是否启用 URI 规范化与目录穿越防卫过滤器
+     */
+    private boolean pathValidationEnabled = true;
+
+    /**
+     * 是否启用入站敏感标头物理剥离清洗过滤器
+     */
+    private boolean headerSanitizeEnabled = true;
+
+    /**
+     * 入站需强制剥离清洗的内部敏感标头列表
+     */
+    private List<String> sanitizeHeaders = new ArrayList<>(Arrays.asList(
+            GatewayConstants.X_USER_ID,
+            GatewayConstants.X_TENANT_ID,
+            GatewayConstants.X_IGNORE_TENANT,
+            GatewayConstants.SAME_TOKEN,
+            GatewayConstants.SAME_TOKEN_UPPER
+    ));
+
+    /**
+     * 是否启用真实公网客户端 IP 解析过滤器
+     */
+    private boolean clientIpEnabled = true;
+
+    /**
+     * 是否启用 IP 黑白名单过滤守卫
+     */
+    private boolean ipFilterEnabled = true;
 
     /**
      * Sa-Token 鉴权忽略放行的 AntPath 路径列表 (如 /auth/**, /actuator/**)
@@ -50,6 +83,46 @@ public class AtengGatewaySecurityProperties {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public boolean isPathValidationEnabled() {
+        return pathValidationEnabled;
+    }
+
+    public void setPathValidationEnabled(boolean pathValidationEnabled) {
+        this.pathValidationEnabled = pathValidationEnabled;
+    }
+
+    public boolean isHeaderSanitizeEnabled() {
+        return headerSanitizeEnabled;
+    }
+
+    public void setHeaderSanitizeEnabled(boolean headerSanitizeEnabled) {
+        this.headerSanitizeEnabled = headerSanitizeEnabled;
+    }
+
+    public List<String> getSanitizeHeaders() {
+        return sanitizeHeaders;
+    }
+
+    public void setSanitizeHeaders(List<String> sanitizeHeaders) {
+        this.sanitizeHeaders = sanitizeHeaders;
+    }
+
+    public boolean isClientIpEnabled() {
+        return clientIpEnabled;
+    }
+
+    public void setClientIpEnabled(boolean clientIpEnabled) {
+        this.clientIpEnabled = clientIpEnabled;
+    }
+
+    public boolean isIpFilterEnabled() {
+        return ipFilterEnabled;
+    }
+
+    public void setIpFilterEnabled(boolean ipFilterEnabled) {
+        this.ipFilterEnabled = ipFilterEnabled;
     }
 
     public List<String> getExcludePaths() {

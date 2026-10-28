@@ -1,8 +1,14 @@
 package io.github.atengk.cloud.gateway.autoconfigure;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.gateway.filter.GatewayClientIpFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayHeaderSanitizeFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayIpFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayPathValidationFilter;
 import io.github.atengk.cloud.gateway.handler.GatewayGlobalExceptionHandler;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
+import io.github.atengk.cloud.gateway.provider.PropertiesIpFilterProvider;
+import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -10,6 +16,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.codec.CodecCustomizer;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 /**
  * ateng-cloud 响应式网关自动装配核心配置类
@@ -46,5 +53,62 @@ public class AtengGatewayAutoConfiguration {
     public CodecCustomizer atengGatewayCodecCustomizer(AtengGatewayProperties properties) {
         return configurer -> configurer.defaultCodecs()
                 .maxInMemorySize((int) properties.getMaxInMemorySize().toBytes());
+    }
+
+    /**
+     * 网关边缘安全防卫与过滤器自动装配
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public static class SecurityFilterAutoConfiguration {
+
+        /**
+         * 注册 URI 规范化与目录穿越防卫全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "path-validation-enabled", havingValue = "true", matchIfMissing = true)
+        public GatewayPathValidationFilter gatewayPathValidationFilter() {
+            return new GatewayPathValidationFilter();
+        }
+
+        /**
+         * 注册入站敏感标头物理剥离清洗全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "header-sanitize-enabled", havingValue = "true", matchIfMissing = true)
+        public GatewayHeaderSanitizeFilter gatewayHeaderSanitizeFilter(AtengGatewayProperties properties) {
+            return new GatewayHeaderSanitizeFilter(properties.getSecurity());
+        }
+
+        /**
+         * 注册真实公网客户端 IP 解析全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "client-ip-enabled", havingValue = "true", matchIfMissing = true)
+        public GatewayClientIpFilter gatewayClientIpFilter(AtengGatewayProperties properties) {
+            return new GatewayClientIpFilter(properties.getSecurity());
+        }
+
+        /**
+         * 注册默认 IP 黑白名单规则提供者 (读取配置属性)
+         */
+        @Bean
+        @ConditionalOnMissingBean(IpFilterProvider.class)
+        public IpFilterProvider ipFilterProvider(AtengGatewayProperties properties) {
+            return new PropertiesIpFilterProvider(properties.getSecurity());
+        }
+
+        /**
+         * 注册 IP 黑白名单防卫全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "ip-filter-enabled", havingValue = "true", matchIfMissing = true)
+        public GatewayIpFilter gatewayIpFilter(IpFilterProvider ipFilterProvider) {
+            return new GatewayIpFilter(ipFilterProvider);
+        }
     }
 }
