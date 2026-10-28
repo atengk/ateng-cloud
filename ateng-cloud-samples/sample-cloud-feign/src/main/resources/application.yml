@@ -1,3 +1,9 @@
+test:
+  server:
+    port: 8080
+  unreachable:
+    port: 59999
+
 server:
   port: 0
 
@@ -21,3 +27,15 @@ ateng:
         time-to-live: 900s
         connection-timeout: 2000ms
         socket-timeout: 5000ms
+      retry:
+        enabled: true
+        period: 50ms
+        max-period: 200ms
+        max-attempts: 2
+      clients:
+        retry-client:
+          socket-timeout: 400ms
+          connect-timeout: 300ms
+        isolated-timeout-client:
+          socket-timeout: 300ms
+          connect-timeout: 300ms

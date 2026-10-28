@@ -3,6 +3,9 @@ package io.github.atengk.cloud.feign.properties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * Feign 客户端核心治理与通信配置属性
  *
@@ -34,6 +37,17 @@ public class AtengFeignProperties {
      */
     @NestedConfigurationProperty
     private AtengFeignContextProperties context = new AtengFeignContextProperties();
+
+    /**
+     * 防雪崩弹性重试纪律配置
+     */
+    @NestedConfigurationProperty
+    private AtengFeignRetryProperties retry = new AtengFeignRetryProperties();
+
+    /**
+     * 单 Client 独立隔离配置映射，Key 为 Feign 客户端的 contextId 或 name
+     */
+    private Map<String, AtengFeignClientProperties> clients = new LinkedHashMap<>();
 
     /**
      * 全局 Feign 请求响应日志打印级别，生产默认 BASIC
@@ -70,6 +84,22 @@ public class AtengFeignProperties {
 
     public void setContext(AtengFeignContextProperties context) {
         this.context = context;
+    }
+
+    public AtengFeignRetryProperties getRetry() {
+        return retry;
+    }
+
+    public void setRetry(AtengFeignRetryProperties retry) {
+        this.retry = retry;
+    }
+
+    public Map<String, AtengFeignClientProperties> getClients() {
+        return clients;
+    }
+
+    public void setClients(Map<String, AtengFeignClientProperties> clients) {
+        this.clients = clients;
     }
 
     public feign.Logger.Level getLoggerLevel() {
