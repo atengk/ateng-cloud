@@ -25,7 +25,9 @@ bash scripts/release.sh
 
 ---
 
-## 3. Maven Central 部署解耦 (Publishing Decoupling)
+## 3. Maven Central 部署解耦与反应堆物理隔离 (Publishing Decoupling & Reactor Isolation)
 
-- **非分发模块隔离**：非分发模块（如 `ateng-cloud-samples` 及其场景子模块）自身标配声明 `<maven.deploy.skip>true</maven.deploy.skip>`，且根发布插件协同配置 `<excludeArtifacts>` 排除，杜绝多模块反应堆封包缺 POM 导致 Central 拒收；
-- **极速异步验证**：发布插件使用 `<waitUntil>validated</waitUntil>` 进行异步解耦验证，避免长轮询等待 Central 同步导致的流水线挂起与超时。
+- **反应堆物理切断（第 1 道主防线）**：根 POM 顶层 `<modules>` 剔除 `ateng-cloud-samples`，将其移入 `<profile id="samples">` 并通过属性缺省机制（`<activation><property><name>!skipSamples</name></property></activation>`）激活。发版时统一追加 `-DskipSamples`，Maven 反应堆直接在编译期物理切断样例工程，构件体积与月度发布配额消耗缩减 60% 以上；
+- **插件聚合层保底（第 2 道防线）**：根 POM 的 `release` Profile 中配置 `central-publishing-maven-plugin`，设置 `<excludeArtifact>ateng-cloud-samples</excludeArtifact>`，防呆拦截聚合 POM 自身被发布；
+- **子模块双跳过继承（第 3 道安全底线）**：`ateng-cloud-samples/pom.xml` 内嵌声明 `<maven.deploy.skip>true</maven.deploy.skip>` 与 Central 插件 `<skipPublishing>true</skipPublishing>`，全场景子工程自动继承，杜绝任何非标指令导致 Demo 构件外溢；
+- **极速异步验证**：发布插件配置 `<waitUntil>validated</waitUntil>` 进行异步解耦验证，避免长轮询等待 Central 同步导致的流水线挂起与超时。

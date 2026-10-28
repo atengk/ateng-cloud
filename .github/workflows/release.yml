@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # 工作流：Java 统合发版流水线 (Java Release & Publishing)
 # 适用场景：ateng-cloud 基础框架与中间件 Starter 套件标准化发版
 # 触发条件：
@@ -145,9 +145,9 @@ jobs:
       - name: 更新 pom.xml 版本并构建打包
         run: |
           mvn versions:set -DnewVersion=${{ steps.meta.outputs.raw_version }} -DgenerateBackupPoms=false
-          mvn clean package -DskipTests -B -T 1C -nsu
+          mvn clean package -DskipSamples -DskipTests -B -T 1C -nsu
           mkdir -p dist
-          find . -name "*.jar" -not -path "*/target/*-sources.jar" -not -path "*/target/*-javadoc.jar" -exec cp {} dist/ \; 2>/dev/null || true
+          find . -name "*.jar" -not -path "*/target/*-sources.jar" -not -path "*/target/*-javadoc.jar" -not -path "*/ateng-cloud-samples/*" -exec cp {} dist/ \; 2>/dev/null || true
           cd dist
           for file in *; do
             if [ -f "$file" ] && [ "$file" != "checksums.txt" ]; then
@@ -264,7 +264,7 @@ jobs:
       - name: 发布构件至 Maven Central
         run: |
           mvn versions:set -DnewVersion=${{ needs.build-artifacts.outputs.raw_version }} -DgenerateBackupPoms=false
-          mvn clean deploy -P release -DskipTests -B -T 1 -Dgpg.passphrase="${{ secrets.MAVEN_GPG_PASSPHRASE }}"
+          mvn clean deploy -P release -DskipSamples -DskipTests -B -T 1 -Dgpg.passphrase="${{ secrets.MAVEN_GPG_PASSPHRASE }}"
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
