@@ -63,6 +63,7 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `isConfigAvailable()` | `boolean` | 判断当前 Nacos 配置中心客户端是否就绪可用 | 离线返回 `false` |
 | `isDiscoveryAvailable()` | `boolean` | 判断当前 Nacos 服务发现客户端是否就绪可用 | 离线返回 `false` |
 | `getConfigServerStatus()` | `String` | 获取当前配置中心服务端通信状态（如 `UP`、`DOWN`） | 离线返回 `"DOWN"` |
+| `getNamingServerStatus()` | `String` | 获取当前服务发现注册中心通信状态（如 `UP`、`DOWN`） | 离线返回 `"DOWN"` |
 | `getAllInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务全量实例列表（含未通过健康检查实例） | 保底返回空集合 `[]` |
 | `getHealthyInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务通过健康检查的实例列表 | 保底返回空集合 `[]` |
 | `getInstances(serviceName [, groupName])` | `List<Instance>` | 查询健康且可用实例（自动过滤 `weight <= 0.0` 与禁用节点） | 保底返回空集合 `[]` |
@@ -594,6 +595,16 @@ sequenceDiagram
     Hook->>DevOps: 容器正常平稳退出 (Exit 0)
 ```
 
+### 8. 网络抖动防雪崩与长连接韧性感知
+
+- Nacos 2.x/3.x 全面依托 gRPC 长连接实现双向通信与状态同步。在生产遭遇瞬时网络抖动、跨交换机闪断或集群节点主从倒换时，客户端面临长连接断开瞬态雪崩风险；
+- 框架内置 `NacosConnectionEventListener`，底层自动向 Spring 容器广播强类型 `NacosConnectionEvent` 领域事件，同时在 `NacosMetricsManager` 中原子更新 `nacos.grpc.connection.status`（`1.0` 正常，`0.0` 断开）与累加 `nacos.grpc.disconnect.total` 计数器，驱动业务层无缝接入降级保护与精准告警。
+
+### 9. 本地容灾快照磁盘可写性预检
+
+- 在容器化环境（Docker / Kubernetes）中，当开启安全只读根文件系统（`readOnlyRootFilesystem: true`）且未挂载专用数据卷时，Nacos 客户端无法落盘缓存快照（Failover Snapshot），一旦遭遇网络隔离将导致本地容灾直接失效；
+- `NacosHealthChecker` 在启动诊断阶段主动对本地快照目录执行创建与写入权限探针，若检测到只读不可写状态，立即输出格式化 `WARN` 引导告警，提示运维在 Pod Spec 中挂载 `emptyDir` 或存储卷。
+
 ---
 
 ## 维度四：物理排版与代码全真验证
@@ -607,6 +618,7 @@ sequenceDiagram
   - `testConfigTransparentDecryptionAndInMemoryPlaintext`：验证 `ateng-boot-encrypt` 远程密文配置 `ENC(...)` 透明解密，断言业务层获取到原始真实明文，而对外展示视图自动执行 `******` 掩码脱敏；
   - `testSimulateRefreshAndSpiAndEventListenerPropagation`：验证主动触发配置增量热更时，MDC `traceId` 成功穿透，`NacosConfigChangeListener` SPI 与 Spring `@EventListener` 双模成功接收事件；
   - `testSimulateRefreshValidationError`：验证 JSR-303 参数格式校验防卫（变更键名列表为空时 Fail-Fast 阻断并返回标准 `Result(code=400)`）；
-  - `testTypedConfigSubscriptionAndMdcPropagation`：验证 `subscribeConfig` 强类型泛型订阅自动反序列化与 MDC `traceId` 穿透回显；
-  - `testConnectionEventPublicationAndListener`：验证 `NacosConnectionEvent` gRPC 长连接领域事件发布与受管监听；
-  - `testLoadBalancerZoneAffinity`：验证 Spring Cloud LoadBalancer 集成同机房（Zone Affinity）优先路由调度。
+  - `testTypedConfigSubscriptionAndMdcTracing`：验证 `subscribeConfig` 强类型泛型订阅全真反序列化与 MDC `traceId` 链路追踪穿透；
+  - `testConnectionEventListening`：验证 `NacosConnectionEvent` gRPC 长连接领域事件发布与受管监听；
+  - `testLoadBalancerZoneAffinity`：验证 Spring Cloud LoadBalancer 集成同机房（Zone Affinity）优先路由与平滑加权预热真实调度；
+  - `testNacosMetricsAndHealthDiagnostics`：验证 Micrometer 全维监控度量标尺注册与 `NacosHealthChecker` 深水区安全自检防御。

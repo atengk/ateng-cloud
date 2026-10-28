@@ -1,5 +1,8 @@
 package io.github.atengk.cloud.sample.nacos.model;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
+
 /**
  * 业务风控与交易规则动态强类型配置模型
  *
@@ -8,8 +11,12 @@ package io.github.atengk.cloud.sample.nacos.model;
  */
 public class TradeRuleConfig {
 
+    @NotBlank(message = "规则名称不可为空")
     private String ruleName;
+
+    @PositiveOrZero(message = "最大限额必须大于或等于0")
     private int maxLimit;
+
     private boolean enabled;
 
     public TradeRuleConfig() {

@@ -150,6 +150,76 @@ class NacosWarmupLoadBalancerTest {
         assertThat(response.getServer().getInstanceId()).isEqualTo("inst-1");
     }
 
+    @Test
+    @DisplayName("轮询防溢出：当 position 溢出至 Integer.MIN_VALUE 时不发生越界异常")
+    void testPositionOverflowSafety() throws Exception {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())), properties);
+
+        java.lang.reflect.Field posField = NacosWarmupLoadBalancer.class.getDeclaredField("position");
+        posField.setAccessible(true);
+        java.util.concurrent.atomic.AtomicInteger pos = (java.util.concurrent.atomic.AtomicInteger) posField.get(lb);
+        // 设置为 MAX_VALUE - 1，下一次递增达到 MAX_VALUE，再下一次溢出为 MIN_VALUE
+        pos.set(Integer.MAX_VALUE - 1);
+
+        ServiceInstance inst1 = createInstance("inst-1", "127.0.0.1", 8080, 0, "60s", 1.0);
+        ServiceInstance inst2 = createInstance("inst-2", "127.0.0.1", 8081, 0, "60s", 1.0);
+        List<ServiceInstance> instances = List.of(inst1, inst2);
+
+        for (int i = 0; i < 10; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(instances);
+            assertThat(resp.hasServer()).isTrue();
+            assertThat(resp.getServer()).isNotNull();
+        }
+    }
+
+    @Test
+    @DisplayName("零权重流量隔离：动态权重 0.0 的实例在混合场景下绝对不被分配流量")
+    void testZeroWeightInstanceIsolatedFromTraffic() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())), properties);
+
+        long now = System.currentTimeMillis();
+        // 节点 1：正常提供服务
+        ServiceInstance active = createInstance("inst-active", "192.168.1.10", 8080, now - 100_000L, "60s", 1.0);
+        // 节点 2：已被运维摘流（权重 0.0）
+        ServiceInstance drained = createInstance("inst-drained", "192.168.1.20", 8080, now - 100_000L, "60s", 0.0);
+
+        List<ServiceInstance> instances = List.of(active, drained);
+
+        for (int i = 0; i < 50; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(instances);
+            assertThat(resp.hasServer()).isTrue();
+            // 摘流节点绝对不可被选中
+            assertThat(resp.getServer().getInstanceId()).isEqualTo("inst-active");
+        }
+    }
+
+    @Test
+    @DisplayName("全节点摘流保底：所有节点均为 0.0 时平滑兜底均匀轮询")
+    void testAllZeroWeightFallback() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())), properties);
+
+        long now = System.currentTimeMillis();
+        ServiceInstance drained1 = createInstance("inst-drained-1", "192.168.1.10", 8080, now - 100_000L, "60s", 0.0);
+        ServiceInstance drained2 = createInstance("inst-drained-2", "192.168.1.20", 8080, now - 100_000L, "60s", 0.0);
+
+        List<ServiceInstance> instances = List.of(drained1, drained2);
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (int i = 0; i < 20; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(instances);
+            assertThat(resp.hasServer()).isTrue();
+            counts.put(resp.getServer().getInstanceId(), counts.getOrDefault(resp.getServer().getInstanceId(), 0) + 1);
+        }
+        assertThat(counts.get("inst-drained-1")).isEqualTo(10);
+        assertThat(counts.get("inst-drained-2")).isEqualTo(10);
+    }
+
     private ServiceInstance createInstance(String id, String host, int port, long startupTime, String warmupDuration, double baseWeight) {
         Map<String, String> metadata = new HashMap<>();
         if (startupTime > 0) {

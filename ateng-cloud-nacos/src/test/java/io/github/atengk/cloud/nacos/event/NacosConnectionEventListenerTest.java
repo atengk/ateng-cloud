@@ -110,4 +110,26 @@ class NacosConnectionEventListenerTest {
         listener.onConnected(connection);
         listener.onDisConnect(connection);
     }
+
+    @Test
+    @DisplayName("监听器关闭与生命周期防泄露：close 之后阻断事件广播与指标记录")
+    void testCloseBlocksEventPublishing() {
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        NacosConnectionEventListener listener = new NacosConnectionEventListener(
+                "naming-client-test",
+                eventPublisher,
+                null
+        );
+
+        assertThat(listener.isClosed()).isFalse();
+        listener.close();
+        assertThat(listener.isClosed()).isTrue();
+
+        Connection connection = mock(Connection.class);
+        listener.onConnected(connection);
+        listener.onDisConnect(connection);
+
+        // 已关闭，绝不发布任何事件
+        verify(eventPublisher, never()).publishEvent(any());
+    }
 }

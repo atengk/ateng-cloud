@@ -38,10 +38,10 @@ public final class NacosWarmupHelper {
         if (metadataProvider != null) {
             Map<String, String> meta = metadataProvider.getMetadata();
             if (meta != null) {
-                String st = meta.get(DefaultNacosMetadataProvider.KEY_STARTUP_TIME);
-                if (StringUtils.hasText(st)) {
+                String startupTimeMeta = meta.get(DefaultNacosMetadataProvider.KEY_STARTUP_TIME);
+                if (StringUtils.hasText(startupTimeMeta)) {
                     try {
-                        startupTime = Long.parseLong(st.trim());
+                        startupTime = Long.parseLong(startupTimeMeta.trim());
                     } catch (NumberFormatException ignored) {
                     }
                 }
@@ -90,12 +90,12 @@ public final class NacosWarmupHelper {
         if (!StringUtils.hasText(durationStr)) {
             return defaultSeconds;
         }
-        String s = durationStr.trim().toLowerCase();
-        if (s.endsWith("s")) {
-            s = s.substring(0, s.length() - 1);
+        String cleanDurationStr = durationStr.trim().toLowerCase();
+        if (cleanDurationStr.endsWith("s")) {
+            cleanDurationStr = cleanDurationStr.substring(0, cleanDurationStr.length() - 1);
         }
         try {
-            long sec = Long.parseLong(s);
+            long sec = Long.parseLong(cleanDurationStr);
             return sec >= 0 ? sec : defaultSeconds;
         } catch (NumberFormatException e) {
             return defaultSeconds;

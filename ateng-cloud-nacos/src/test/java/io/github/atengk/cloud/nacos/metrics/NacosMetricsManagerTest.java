@@ -136,6 +136,38 @@ class NacosMetricsManagerTest {
     }
 
     @Test
+    @DisplayName("多模块长连接独立隔离：Config 断连时 Naming 重连不可覆盖异常状态")
+    void testModuleIndependentConnectionStatus() {
+        when(nacosTemplate.isConfigAvailable()).thenReturn(true);
+        when(nacosTemplate.getConfigServerStatus()).thenReturn("UP");
+
+        NacosMetricsManager metricsManager = new NacosMetricsManager(
+                meterRegistry,
+                mockObjectProvider(nacosTemplate),
+                mockObjectProvider(stateMachine),
+                environment
+        );
+
+        Gauge grpcGauge = meterRegistry.find("nacos.grpc.connection.status").gauge();
+        assertThat(grpcGauge.value()).isEqualTo(1.0);
+
+        // 1. Config 模块断连
+        metricsManager.recordGrpcDisconnect("CONFIG", "127.0.0.1:9848");
+        assertThat(metricsManager.isModuleConnected("CONFIG")).isFalse();
+        assertThat(grpcGauge.value()).isEqualTo(0.0);
+
+        // 2. Naming 模块重连，不得覆盖 Config 断连告警
+        metricsManager.recordGrpcConnect("NAMING", "127.0.0.1:9848");
+        assertThat(metricsManager.isModuleConnected("NAMING")).isTrue();
+        assertThat(grpcGauge.value()).isEqualTo(0.0);
+
+        // 3. 只有 Config 也重连后，全局状态才恢复为 1.0
+        metricsManager.recordGrpcConnect("CONFIG", "127.0.0.1:9848");
+        assertThat(metricsManager.isModuleConnected("CONFIG")).isTrue();
+        assertThat(grpcGauge.value()).isEqualTo(1.0);
+    }
+
+    @Test
     @DisplayName("预热剩余秒数标尺：验证启动预热中与预热完成时 Gauge 准确导出")
     void testWarmupRemainingSecondsMetric() {
         long now = System.currentTimeMillis();

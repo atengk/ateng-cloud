@@ -3,8 +3,10 @@ package io.github.atengk.cloud.nacos.loadbalancer;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.ReactiveDiscoveryClient;
 import org.springframework.cloud.loadbalancer.core.ReactorLoadBalancer;
 import org.springframework.cloud.loadbalancer.core.ServiceInstanceListSupplier;
+import org.springframework.cloud.loadbalancer.core.ServiceInstanceListSupplierBuilder;
 import org.springframework.cloud.loadbalancer.support.LoadBalancerClientFactory;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -25,11 +27,24 @@ public class AtengNacosLoadBalancerClientConfiguration {
     public ServiceInstanceListSupplier nacosServiceInstanceListSupplier(
             ConfigurableApplicationContext context,
             AtengNacosProperties properties) {
-        ServiceInstanceListSupplier baseSupplier = ServiceInstanceListSupplier.builder()
-                .withDiscoveryClient()
+        ServiceInstanceListSupplierBuilder builder = ServiceInstanceListSupplier.builder();
+        if (hasReactiveDiscoveryClient(context)) {
+            builder.withDiscoveryClient();
+        } else {
+            builder.withBlockingDiscoveryClient();
+        }
+        ServiceInstanceListSupplier baseSupplier = builder
                 .withCaching()
                 .build(context);
-        return new ZonePreferenceServiceInstanceListSupplier(baseSupplier, properties);
+        return new ZonePreferenceServiceInstanceListSupplier(baseSupplier, properties, context.getEnvironment());
+    }
+
+    private boolean hasReactiveDiscoveryClient(ConfigurableApplicationContext context) {
+        try {
+            return context.getBeanProvider(ReactiveDiscoveryClient.class).getIfAvailable() != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     @Bean

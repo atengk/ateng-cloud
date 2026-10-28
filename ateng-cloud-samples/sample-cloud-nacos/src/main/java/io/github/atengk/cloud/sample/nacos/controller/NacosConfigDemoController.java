@@ -127,8 +127,13 @@ public class NacosConfigDemoController {
      * 模拟推送交易规则并触发强类型泛型回调
      */
     @PostMapping("/trade-rule/simulate")
-    public Result<TradeRuleVO> simulateTradeRuleUpdate(@RequestBody TradeRuleConfig rule) {
-        typedSubscriptionService.onTradeRuleUpdated(rule);
+    public Result<TradeRuleVO> simulateTradeRuleUpdate(@RequestBody @Valid TradeRuleConfig rule) {
+        try {
+            String rawJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(rule);
+            typedSubscriptionService.simulateConfigPush(rawJson);
+        } catch (Exception ex) {
+            typedSubscriptionService.onTradeRuleUpdated(rule);
+        }
         return getTradeRule();
     }
 }

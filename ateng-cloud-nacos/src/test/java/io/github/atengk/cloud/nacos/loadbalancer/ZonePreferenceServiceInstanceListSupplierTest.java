@@ -120,6 +120,23 @@ class ZonePreferenceServiceInstanceListSupplierTest {
         assertThat(result).hasSize(2);
     }
 
+    @Test
+    @DisplayName("环境抽象：优先从 Spring Environment 解析 ZONE 与 REGION")
+    void testResolveZoneFromEnvironment() {
+        org.springframework.mock.env.MockEnvironment env = new org.springframework.mock.env.MockEnvironment();
+        env.setProperty("ZONE", "hangzhou-az1");
+
+        AtengNacosProperties properties = new AtengNacosProperties();
+        // properties 未显式配置 zone 时，回退从 environment 读取
+        ZonePreferenceServiceInstanceListSupplier supplier = new ZonePreferenceServiceInstanceListSupplier(
+                new StubServiceInstanceListSupplier("order-service", Collections.emptyList()),
+                properties,
+                env
+        );
+
+        assertThat(supplier.resolveTargetZone()).isEqualTo("hangzhou-az1");
+    }
+
     private ServiceInstance createInstance(String id, String host, int port, String zone, double weight, boolean healthy) {
         Map<String, String> metadata = new HashMap<>();
         if (zone != null) {

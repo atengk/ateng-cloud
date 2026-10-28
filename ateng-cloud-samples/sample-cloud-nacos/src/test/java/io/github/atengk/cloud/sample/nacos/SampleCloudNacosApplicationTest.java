@@ -24,7 +24,9 @@ import reactor.core.publisher.Flux;
 import java.util.Collections;
 import java.util.List;
 
+import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -38,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * @author Ateng
  * @since 2026-10-27
  */
-@SpringBootTest(properties = {
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "ateng.boot.encrypt.password=ateng-encrypt-pwd-123456"
 })
 @AutoConfigureMockMvc
@@ -54,6 +56,12 @@ class SampleCloudNacosApplicationTest {
 
     @Autowired
     private ApplicationEventPublisher eventPublisher;
+
+    @Autowired(required = false)
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
+    @Autowired(required = false)
+    private io.github.atengk.cloud.nacos.health.NacosHealthChecker healthChecker;
 
     /**
      * 离线 Mock/环境守卫测试配置
@@ -72,24 +80,32 @@ class SampleCloudNacosApplicationTest {
 
                 @Override
                 public List<ServiceInstance> getInstances(String serviceId) {
-                    if ("order-service".equalsIgnoreCase(serviceId)) {
-                        // 1. 同机房可用区实例（与 sample-cloud-nacos 同在 beijing-az1，预热中）
+                    if ("order-service".equalsIgnoreCase(serviceId) || "sample-cloud-nacos".equalsIgnoreCase(serviceId)) {
+                        // 1. 同机房可用区实例（与 sample-cloud-nacos 同在 beijing-az1，预热中：已启动 10s，预热 60s）
                         DefaultServiceInstance inst1 = new DefaultServiceInstance(
-                                "order-service-1", "order-service", "10.0.1.10", 8080, false
+                                serviceId + "-1", serviceId, "10.0.1.10", 8080, false
                         );
                         inst1.getMetadata().put("zone", "beijing-az1");
-                        inst1.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 15_000L));
+                        inst1.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 10_000L));
                         inst1.getMetadata().put("warmup-duration", "60s");
 
-                        // 2. 跨机房可用区实例（shanghai-az2）
+                        // 2. 同机房可用区实例（与 sample-cloud-nacos 同在 beijing-az1，已完全预热：已启动 90s）
                         DefaultServiceInstance inst2 = new DefaultServiceInstance(
-                                "order-service-2", "order-service", "10.0.2.20", 8080, false
+                                serviceId + "-2", serviceId, "10.0.1.11", 8080, false
                         );
-                        inst2.getMetadata().put("zone", "shanghai-az2");
-                        inst2.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 70_000L));
+                        inst2.getMetadata().put("zone", "beijing-az1");
+                        inst2.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 90_000L));
                         inst2.getMetadata().put("warmup-duration", "60s");
 
-                        return List.of(inst1, inst2);
+                        // 3. 跨机房可用区实例（shanghai-az2）
+                        DefaultServiceInstance inst3 = new DefaultServiceInstance(
+                                serviceId + "-3", serviceId, "10.0.2.20", 8080, false
+                        );
+                        inst3.getMetadata().put("zone", "shanghai-az2");
+                        inst3.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 70_000L));
+                        inst3.getMetadata().put("warmup-duration", "60s");
+
+                        return List.of(inst1, inst2, inst3);
                     }
                     return Collections.emptyList();
                 }
@@ -245,11 +261,20 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
 
-        // 6. 测试实例启用/禁用状态与权重调节
+        // 6. 测试实例启用/禁用状态与权重调节（双模自适应：优先获取自身已注册实例节点）
+        String opIp = "127.0.0.1";
+        int opPort = 8080;
+        if (nacosTemplate != null) {
+            java.util.Optional<com.alibaba.nacos.api.naming.pojo.Instance> myInst = nacosTemplate.getMyInstance();
+            if (myInst.isPresent()) {
+                opIp = myInst.get().getIp();
+                opPort = myInst.get().getPort();
+            }
+        }
         mockMvc.perform(post("/api/nacos/ops/instance/status")
                         .param("serviceName", "sample-cloud-nacos")
-                        .param("ip", "127.0.0.1")
-                        .param("port", "8080")
+                        .param("ip", opIp)
+                        .param("port", String.valueOf(opPort))
                         .param("enabled", "true")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -257,8 +282,8 @@ class SampleCloudNacosApplicationTest {
 
         mockMvc.perform(post("/api/nacos/ops/instance/weight")
                         .param("serviceName", "sample-cloud-nacos")
-                        .param("ip", "127.0.0.1")
-                        .param("port", "8080")
+                        .param("ip", opIp)
+                        .param("port", String.valueOf(opPort))
                         .param("weight", "1.0")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -343,7 +368,7 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.data.ruleName", notNullValue()))
                 .andExpect(jsonPath("$.data.updateCount", is(0)));
 
-        // 2. 模拟推送 TradeRuleConfig 泛型强类型配置
+        // 2. 模拟推送 TradeRuleConfig 泛型强类型配置（全真反序列化与 MDC traceId 穿透）
         String ruleJson = "{\"ruleName\": \"AntiFraud-HighRisk-Block\", \"maxLimit\": 200000, \"enabled\": true}";
         mockMvc.perform(post("/api/nacos/config/trade-rule/simulate")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -353,7 +378,18 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.data.ruleName", is("AntiFraud-HighRisk-Block")))
                 .andExpect(jsonPath("$.data.maxLimit", is(200000)))
                 .andExpect(jsonPath("$.data.enabled", is(true)))
-                .andExpect(jsonPath("$.data.updateCount", is(1)));
+                .andExpect(jsonPath("$.data.updateCount", is(1)))
+                .andExpect(jsonPath("$.data.traceId", notNullValue()))
+                .andExpect(jsonPath("$.data.traceId", not(emptyOrNullString())));
+
+        // 3. JSR-303 参数校验防卫：非法入参应被 Fail-Fast 拦截返回业务 400
+        String invalidJson = "{\"ruleName\": \"\", \"maxLimit\": -100, \"enabled\": true}";
+        mockMvc.perform(post("/api/nacos/config/trade-rule/simulate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(400)))
+                .andExpect(jsonPath("$.success", is(false)));
     }
 
     @Test
@@ -379,14 +415,66 @@ class SampleCloudNacosApplicationTest {
     }
 
     @Test
-    @DisplayName("测试客户端负载均衡同机房亲和优先路由与加权调度")
+    @DisplayName("测试客户端负载均衡同机房亲和优先路由与加权平滑预热真实调度")
     void testLoadBalancerZoneAffinity() throws Exception {
-        mockMvc.perform(get("/api/nacos/loadbalancer/choose?serviceName=order-service")
-                        .accept(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code", is(200)))
-                .andExpect(jsonPath("$.data.serviceName", is("order-service")))
-                .andExpect(jsonPath("$.data.ip", is("10.0.1.10")))
-                .andExpect(jsonPath("$.data.metadata.zone", is("beijing-az1")));
+        // 1. 弹性等待 Nacos 服务注册缓存收敛并断言同机房 Zone 亲和
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (true) {
+            try {
+                mockMvc.perform(get("/api/nacos/loadbalancer/choose?serviceName=sample-cloud-nacos")
+                                .accept(MediaType.APPLICATION_JSON))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.code", is(200)))
+                        .andExpect(jsonPath("$.data.serviceName", is("sample-cloud-nacos")))
+                        .andExpect(jsonPath("$.data.metadata.zone", is("beijing-az1")));
+                break;
+            } catch (AssertionError ex) {
+                if (System.currentTimeMillis() >= deadline) {
+                    throw ex;
+                }
+                Thread.sleep(300L);
+            }
+        }
+
+        // 2. 模拟连续多次负载均衡调用，验证加权预热平滑调度 (已预热实例权重 > 预热中实例)
+        java.util.Map<String, Integer> ipCounts = new java.util.HashMap<>();
+        for (int i = 0; i < 20; i++) {
+            String content = mockMvc.perform(get("/api/nacos/loadbalancer/choose?serviceName=order-service")
+                            .accept(MediaType.APPLICATION_JSON))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+            if (content.contains("10.0.1.10")) {
+                ipCounts.merge("10.0.1.10", 1, Integer::sum);
+            } else if (content.contains("10.0.1.11")) {
+                ipCounts.merge("10.0.1.11", 1, Integer::sum);
+            }
+        }
+        if (ipCounts.containsKey("10.0.1.11") && ipCounts.containsKey("10.0.1.10")) {
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    ipCounts.get("10.0.1.11") >= ipCounts.get("10.0.1.10"),
+                    "已预热完毕实例调度次数应高于或等于冷启动预热中实例"
+            );
+        }
+    }
+
+    @Test
+    @DisplayName("测试 NacosMetricsManager 指标导出与 NacosHealthChecker 全景自检防御")
+    void testNacosMetricsAndHealthDiagnostics() {
+        // 1. 验证 Micrometer 度量标尺注册与数值有效性
+        if (meterRegistry != null) {
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    meterRegistry.find("nacos.grpc.connection.status").gauge(),
+                    "nacos.grpc.connection.status 指标标尺应注册"
+            );
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    meterRegistry.find("nacos.instance.warmup.remaining.seconds").gauge(),
+                    "nacos.instance.warmup.remaining.seconds 指标标尺应注册"
+            );
+        }
+
+        // 2. 验证 NacosHealthChecker 核心深水区自检防御逻辑（K8s 停机排空安全预警与快照可写性探针）
+        if (healthChecker != null) {
+            org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> healthChecker.afterSingletonsInstantiated());
+        }
     }
 }

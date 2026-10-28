@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.nacos.metrics;
 
+import io.github.atengk.cloud.nacos.event.NacosConnectionEvent;
 import io.github.atengk.cloud.nacos.lifecycle.NacosInstanceLifecycleState;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
@@ -53,7 +54,7 @@ public class NacosMetricsManager {
     private final ObjectProvider<NacosMetadataProvider> metadataProvider;
     private final AtengNacosProperties properties;
     private final String serviceName;
-    private final AtomicBoolean grpcConnected = new AtomicBoolean(true);
+    private final java.util.concurrent.ConcurrentMap<String, Boolean> moduleConnectionStatus = new java.util.concurrent.ConcurrentHashMap<>();
 
     private Counter grpcDisconnectCounter;
     private Counter refreshTotalCounter;
@@ -144,7 +145,7 @@ public class NacosMetricsManager {
      * 读取 Nacos gRPC 与配置服务连接状态标尺
      */
     public double getGrpcConnectionStatus() {
-        if (!grpcConnected.get()) {
+        if (moduleConnectionStatus.containsValue(Boolean.FALSE)) {
             return 0.0;
         }
         try {
@@ -159,7 +160,17 @@ public class NacosMetricsManager {
         } catch (Exception ex) {
             log.debug("Error probing Nacos gRPC connection status: {}", ex.getMessage());
         }
-        return 0.0;
+        return (!moduleConnectionStatus.isEmpty() && !moduleConnectionStatus.containsValue(Boolean.FALSE)) ? 1.0 : 0.0;
+    }
+
+    /**
+     * 记录一次 gRPC 长连接断开事件（强类型枚举重载）
+     *
+     * @param moduleType    模块类型
+     * @param serverAddress 远端服务地址
+     */
+    public void recordGrpcDisconnect(NacosConnectionEvent.ModuleType moduleType, @Nullable String serverAddress) {
+        recordGrpcDisconnect(moduleType != null ? moduleType.name() : null, serverAddress);
     }
 
     /**
@@ -169,12 +180,23 @@ public class NacosMetricsManager {
      * @param serverAddress 远端服务地址
      */
     public void recordGrpcDisconnect(String moduleType, @Nullable String serverAddress) {
-        grpcConnected.set(false);
+        String key = StringUtils.hasText(moduleType) ? moduleType.trim().toUpperCase() : "DEFAULT";
+        moduleConnectionStatus.put(key, Boolean.FALSE);
         if (grpcDisconnectCounter != null) {
             grpcDisconnectCounter.increment();
         }
         log.warn("[ateng-cloud-nacos] Recorded Nacos gRPC connection disconnect [module: {}, server: {}]",
                 moduleType, serverAddress);
+    }
+
+    /**
+     * 记录一次 gRPC 长连接重连恢复事件（强类型枚举重载）
+     *
+     * @param moduleType    模块类型
+     * @param serverAddress 远端服务地址
+     */
+    public void recordGrpcConnect(NacosConnectionEvent.ModuleType moduleType, @Nullable String serverAddress) {
+        recordGrpcConnect(moduleType != null ? moduleType.name() : null, serverAddress);
     }
 
     /**
@@ -184,9 +206,31 @@ public class NacosMetricsManager {
      * @param serverAddress 远端服务地址
      */
     public void recordGrpcConnect(String moduleType, @Nullable String serverAddress) {
-        grpcConnected.set(true);
+        String key = StringUtils.hasText(moduleType) ? moduleType.trim().toUpperCase() : "DEFAULT";
+        moduleConnectionStatus.put(key, Boolean.TRUE);
         log.info("[ateng-cloud-nacos] Recorded Nacos gRPC connection restored [module: {}, server: {}]",
                 moduleType, serverAddress);
+    }
+
+    /**
+     * 查询指定模块的 gRPC 连接状态（强类型枚举重载）
+     *
+     * @param moduleType 模块类型
+     * @return 该模块是否处于连接状态
+     */
+    public boolean isModuleConnected(NacosConnectionEvent.ModuleType moduleType) {
+        return isModuleConnected(moduleType != null ? moduleType.name() : null);
+    }
+
+    /**
+     * 查询指定模块的 gRPC 连接状态
+     *
+     * @param moduleType 模块标识（如 NAMING / CONFIG）
+     * @return 该模块是否处于连接状态
+     */
+    public boolean isModuleConnected(String moduleType) {
+        String key = StringUtils.hasText(moduleType) ? moduleType.trim().toUpperCase() : "DEFAULT";
+        return moduleConnectionStatus.getOrDefault(key, Boolean.TRUE);
     }
 
     /**

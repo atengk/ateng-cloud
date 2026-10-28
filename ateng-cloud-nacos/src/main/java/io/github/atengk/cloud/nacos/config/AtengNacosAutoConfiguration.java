@@ -193,8 +193,9 @@ public class AtengNacosAutoConfiguration {
             Environment environment,
             ObjectProvider<NacosConfigManager> configManagerProvider,
             ObjectProvider<NacosMetadataProvider> metadataProvider,
-            ObjectProvider<NacosTemplate> nacosTemplateProvider) {
-        return new NacosHealthChecker(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider);
+            ObjectProvider<NacosTemplate> nacosTemplateProvider,
+            ObjectProvider<NacosMetricsManager> metricsManagerProvider) {
+        return new NacosHealthChecker(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider, metricsManagerProvider);
     }
 
     /**

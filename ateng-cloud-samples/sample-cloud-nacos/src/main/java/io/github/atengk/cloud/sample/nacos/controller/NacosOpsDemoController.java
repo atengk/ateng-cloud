@@ -152,7 +152,7 @@ public class NacosOpsDemoController {
                 listener.getEventCount(),
                 lastEvent != null ? lastEvent.getModuleType().name() : "NONE",
                 lastEvent != null ? lastEvent.getStatus().name() : "CONNECTED",
-                lastEvent != null ? String.valueOf(lastEvent.getServerAddress()) : "127.0.0.1:8848"
+                lastEvent != null ? String.valueOf(lastEvent.getServerAddress()) : "N/A"
         );
         return Result.success(vo);
     }

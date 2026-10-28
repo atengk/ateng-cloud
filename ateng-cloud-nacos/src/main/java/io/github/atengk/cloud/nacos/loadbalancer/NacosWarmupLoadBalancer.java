@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.nacos.loadbalancer;
 
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
+import io.github.atengk.cloud.nacos.metadata.NacosWarmupHelper;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -99,7 +100,9 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             ServiceInstance inst = instances.get(i);
             double effectiveWeight = calculateEffectiveWeight(inst, now, floorRatio);
             int scaled = (int) Math.round(effectiveWeight * 100.0);
-            if (scaled < 1) {
+            if (effectiveWeight <= 0.0 || scaled < 0) {
+                scaled = 0;
+            } else if (scaled < 1) {
                 scaled = 1;
             }
             weights[i] = scaled;
@@ -109,20 +112,28 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             }
         }
 
-        // 若所有实例权重均相同（例如均已预热完毕），直接走极速均匀轮询
-        if (allEqual || totalWeight <= 0) {
+        // 若所有有效权重均相同且大于 0（例如均已预热完毕），直接走极速均匀轮询
+        if (allEqual && totalWeight > 0) {
+            return selectRoundRobin(instances);
+        }
+
+        // 若所有节点权重均为 0（全部被运维隔离/摘流），兜底走均匀轮询避免请求无响应
+        if (totalWeight <= 0) {
             return selectRoundRobin(instances);
         }
 
         // 采用 Nginx Smooth Weighted Round-Robin 算法
         int maxCurrentWeight = Integer.MIN_VALUE;
-        ServiceInstance selected = instances.get(0);
+        ServiceInstance selected = null;
         String selectedKey = null;
 
         for (int i = 0; i < instances.size(); i++) {
+            int weight = weights[i];
+            if (weight <= 0) {
+                continue; // 彻底跳过摘流/隔离节点，绝不分配流量
+            }
             ServiceInstance inst = instances.get(i);
             String key = buildInstanceKey(inst);
-            int weight = weights[i];
 
             AtomicInteger cur = currentWeights.computeIfAbsent(key, k -> new AtomicInteger(0));
             int newCurrent = cur.addAndGet(weight);
@@ -133,6 +144,10 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             }
         }
 
+        if (selected == null) {
+            return selectRoundRobin(instances);
+        }
+
         if (selectedKey != null) {
             AtomicInteger selectedCur = currentWeights.get(selectedKey);
             if (selectedCur != null) {
@@ -140,8 +155,8 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             }
         }
 
-        // 定期清理已下线实例的权重状态，防范内存泄露
-        if (currentWeights.size() > 100) {
+        // 定期清理已下线实例的权重状态，自适应防范容器频繁缩容/轮换导致的内存泄露
+        if (currentWeights.size() > Math.max(16, instances.size() * 2)) {
             cleanStaleWeights(instances);
         }
 
@@ -152,7 +167,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
      * 标准均匀轮询
      */
     private Response<ServiceInstance> selectRoundRobin(List<ServiceInstance> instances) {
-        int pos = Math.abs(position.incrementAndGet());
+        int pos = position.incrementAndGet() & Integer.MAX_VALUE;
         ServiceInstance instance = instances.get(pos % instances.size());
         return new DefaultResponse(instance);
     }
@@ -196,7 +211,8 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
         }
 
         long uptime = Math.max(0, now - startupTime);
-        long warmupDurationMs = parseWarmupDuration(meta.get(DefaultNacosMetadataProvider.KEY_WARMUP_DURATION));
+        long warmupDurationMs = NacosWarmupHelper.parseDurationToSeconds(
+                meta.get(DefaultNacosMetadataProvider.KEY_WARMUP_DURATION), 60L) * 1000L;
 
         if (warmupDurationMs <= 0 || uptime >= warmupDurationMs) {
             return baseWeight;
@@ -208,22 +224,6 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
         weightRatio = Math.min(1.0, Math.max(floorRatio, weightRatio));
 
         return baseWeight * weightRatio;
-    }
-
-    private long parseWarmupDuration(String warmupDurationStr) {
-        if (!StringUtils.hasText(warmupDurationStr)) {
-            return 60_000L;
-        }
-        String s = warmupDurationStr.trim().toLowerCase();
-        if (s.endsWith("s")) {
-            s = s.substring(0, s.length() - 1);
-        }
-        try {
-            long seconds = Long.parseLong(s);
-            return seconds > 0 ? seconds * 1000L : 60_000L;
-        } catch (NumberFormatException e) {
-            return 60_000L;
-        }
     }
 
     private String buildInstanceKey(ServiceInstance inst) {

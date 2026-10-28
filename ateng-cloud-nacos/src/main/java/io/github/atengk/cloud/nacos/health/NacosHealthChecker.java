@@ -6,6 +6,7 @@ import io.github.atengk.cloud.nacos.constant.NacosConfigConstants;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosWarmupHelper;
+import io.github.atengk.cloud.nacos.metrics.NacosMetricsManager;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.slf4j.Logger;
@@ -58,11 +59,12 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
     private final ObjectProvider<NacosConfigManager> configManagerProvider;
     private final ObjectProvider<NacosMetadataProvider> metadataProvider;
     private final ObjectProvider<NacosTemplate> nacosTemplateProvider;
+    private final ObjectProvider<NacosMetricsManager> metricsManagerProvider;
 
     public NacosHealthChecker(AtengNacosProperties properties,
                               Environment environment,
                               ObjectProvider<NacosConfigManager> configManagerProvider) {
-        this(properties, environment, configManagerProvider, null, null);
+        this(properties, environment, configManagerProvider, null, null, null);
     }
 
     public NacosHealthChecker(AtengNacosProperties properties,
@@ -70,11 +72,21 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
                               ObjectProvider<NacosConfigManager> configManagerProvider,
                               @Nullable ObjectProvider<NacosMetadataProvider> metadataProvider,
                               @Nullable ObjectProvider<NacosTemplate> nacosTemplateProvider) {
+        this(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider, null);
+    }
+
+    public NacosHealthChecker(AtengNacosProperties properties,
+                              Environment environment,
+                              ObjectProvider<NacosConfigManager> configManagerProvider,
+                              @Nullable ObjectProvider<NacosMetadataProvider> metadataProvider,
+                              @Nullable ObjectProvider<NacosTemplate> nacosTemplateProvider,
+                              @Nullable ObjectProvider<NacosMetricsManager> metricsManagerProvider) {
         this.properties = properties;
         this.environment = environment;
         this.configManagerProvider = configManagerProvider;
         this.metadataProvider = metadataProvider;
         this.nacosTemplateProvider = nacosTemplateProvider;
+        this.metricsManagerProvider = metricsManagerProvider;
     }
 
     @Override
@@ -303,7 +315,15 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
      * @return 服务端状态字符串（如 UP、DISCONNECTED、UNAVAILABLE 等）
      */
     public String detectServerStatus() {
-        // 1. 优先通过 NacosTemplate 探查配置与服务发现综合健康态
+        // 1. 若注入了 MetricsManager 且当前 gRPC 连接处于断开态，直接 Fail-Fast 判定为 DISCONNECTED
+        if (metricsManagerProvider != null) {
+            NacosMetricsManager metricsManager = metricsManagerProvider.getIfAvailable();
+            if (metricsManager != null && metricsManager.getGrpcConnectionStatus() == 0.0) {
+                return "DISCONNECTED";
+            }
+        }
+
+        // 2. 优先通过 NacosTemplate 探查配置与服务发现综合健康态
         try {
             NacosTemplate template = nacosTemplateProvider != null ? nacosTemplateProvider.getIfAvailable() : null;
             if (template != null) {
@@ -314,6 +334,10 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
                     }
                 }
                 if (template.isDiscoveryAvailable()) {
+                    String namingStatus = template.getNamingServerStatus();
+                    if (StringUtils.hasText(namingStatus) && !"UNKNOWN".equalsIgnoreCase(namingStatus)) {
+                        return namingStatus;
+                    }
                     return "UP";
                 }
             }
@@ -321,7 +345,7 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
             log.debug("Failed to detect Nacos server status via NacosTemplate: {}", ex.getMessage());
         }
 
-        // 2. 尝试从 NacosConfigManager 探查配置中心连接状态
+        // 3. 尝试从 NacosConfigManager 探查配置中心连接状态
         NacosConfigManager configManager = configManagerProvider != null
                 ? configManagerProvider.getIfAvailable() : null;
         if (configManager == null) {

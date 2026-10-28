@@ -13,6 +13,7 @@ import com.alibaba.nacos.api.naming.pojo.Instance;
 import com.alibaba.nacos.api.naming.pojo.ListView;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
+import io.github.atengk.cloud.nacos.config.NacosConfigParser;
 import io.github.atengk.cloud.nacos.constant.ConfigFormat;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
@@ -42,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -744,6 +746,119 @@ class NacosTemplateTest {
         assertThat(MDC.get("traceId")).isNull();
 
         sub.close();
+    }
+
+    @Test
+    @DisplayName("CAS 发布语法预检：遇到语法错误直接 Fail-Fast 抛出 BusinessException 阻断推送")
+    void testPublishConfigCasSyntaxValidation() throws Exception {
+        NacosConfigManager configManager = mock(NacosConfigManager.class);
+        ConfigService configService = mock(ConfigService.class);
+        when(configManager.getConfigService()).thenReturn(configService);
+        when(configService.getServerStatus()).thenReturn("UP");
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("configManager", configManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        // 格式错误（非法 YAML）：直接被语法预检拦截阻断
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                template.publishConfigCas("rule.yaml", "DEFAULT_GROUP", "invalid: yaml: [", "md5-1", "yaml")
+        ).isInstanceOf(io.github.atengk.boot.core.exception.BusinessException.class);
+
+        // 绝不穿透调用底层 configService
+        verify(configService, never()).publishConfigCas(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("编程式订阅空安全：远端配置被清空或解析为 null 时跳过回调，杜绝 NPE")
+    void testSubscribeConfigNullOrEmptyContentSafety() throws Exception {
+        NacosConfigManager configManager = mock(NacosConfigManager.class);
+        ConfigService configService = mock(ConfigService.class);
+        NacosConfigProperties configProperties = new NacosConfigProperties();
+        configProperties.setGroup("DEFAULT_GROUP");
+        when(configManager.getConfigService()).thenReturn(configService);
+        when(configManager.getNacosConfigProperties()).thenReturn(configProperties);
+        when(configService.getServerStatus()).thenReturn("UP");
+        when(configService.getConfig(anyString(), anyString(), any(Long.class))).thenReturn(null);
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("configManager", configManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        AutoCloseable sub = template.subscribeConfig("empty-safe.yml", AppTestConfig.class, cfg -> {
+            callCount.incrementAndGet();
+        });
+
+        ArgumentCaptor<Listener> listenerCaptor = ArgumentCaptor.forClass(Listener.class);
+        verify(configService).addListener(eq("empty-safe.yml"), eq("DEFAULT_GROUP"), listenerCaptor.capture());
+        Listener listener = listenerCaptor.getValue();
+
+        // 1. 推送 null 配置内容
+        listener.receiveConfigInfo(null);
+        assertThat(callCount.get()).isEqualTo(0);
+
+        // 2. 推送纯空白配置内容
+        listener.receiveConfigInfo("   ");
+        assertThat(callCount.get()).isEqualTo(0);
+
+        // 3. 推送有效配置内容，成功触发回调
+        listener.receiveConfigInfo("name: valid\nport: 8080");
+        assertThat(callCount.get()).isEqualTo(1);
+
+        sub.close();
+    }
+
+    @Test
+    @DisplayName("注册发现服务端连接探测：正常 UP 与异常 DISCONNECTED 对称探查")
+    void testNamingServerStatus() throws Exception {
+        com.alibaba.cloud.nacos.NacosDiscoveryProperties discoveryProperties =
+                mock(com.alibaba.cloud.nacos.NacosDiscoveryProperties.class);
+        com.alibaba.nacos.api.naming.NamingService namingService =
+                mock(com.alibaba.nacos.api.naming.NamingService.class);
+        when(discoveryProperties.namingServiceInstance()).thenReturn(namingService);
+        when(namingService.getServerStatus()).thenReturn("UP");
+
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+        beanFactory.addBean("serviceManager", serviceManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        assertThat(template.getNamingServerStatus()).isEqualTo("UP");
+
+        // 异常捕获转译
+        when(namingService.getServerStatus()).thenThrow(new RuntimeException("Connection refused"));
+        assertThat(template.getNamingServerStatus()).isEqualTo("DISCONNECTED");
     }
 
     private Instance createInstance(String ip, int port, String zone, double weight, boolean healthy, boolean enabled) {

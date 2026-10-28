@@ -17,7 +17,7 @@ import org.springframework.lang.Nullable;
  * @author Ateng
  * @since 2026-10-28
  */
-public class NacosConnectionEventListener implements ConnectionEventListener {
+public class NacosConnectionEventListener implements ConnectionEventListener, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(NacosConnectionEventListener.class);
 
@@ -25,6 +25,7 @@ public class NacosConnectionEventListener implements ConnectionEventListener {
     private final NacosConnectionEvent.ModuleType moduleType;
     private final ApplicationEventPublisher eventPublisher;
     private final NacosMetricsManager metricsManager;
+    private volatile boolean closed = false;
 
     public NacosConnectionEventListener(String clientName,
                                         ApplicationEventPublisher eventPublisher,
@@ -35,14 +36,29 @@ public class NacosConnectionEventListener implements ConnectionEventListener {
         this.metricsManager = metricsManager;
     }
 
+    /**
+     * 关闭并注销当前监听器，阻断后续事件传播
+     */
+    @Override
+    public void close() {
+        this.closed = true;
+    }
+
+    public boolean isClosed() {
+        return closed;
+    }
+
     @Override
     public void onConnected(Connection connection) {
+        if (closed) {
+            return;
+        }
         String serverAddress = resolveServerAddress(connection);
         log.info("[ateng-cloud-nacos] Nacos gRPC connection CONNECTED for module '{}' (client: '{}', server: '{}')",
                 moduleType, clientName, serverAddress);
 
         if (metricsManager != null) {
-            metricsManager.recordGrpcConnect(moduleType.name(), serverAddress);
+            metricsManager.recordGrpcConnect(moduleType, serverAddress);
         }
 
         publishEvent(NacosConnectionEvent.ConnectionStatus.CONNECTED, serverAddress);
@@ -50,12 +66,15 @@ public class NacosConnectionEventListener implements ConnectionEventListener {
 
     @Override
     public void onDisConnect(Connection connection) {
+        if (closed) {
+            return;
+        }
         String serverAddress = resolveServerAddress(connection);
         log.warn("[ateng-cloud-nacos] Nacos gRPC connection DISCONNECTED for module '{}' (client: '{}', server: '{}'). Network flapping or server unavailable.",
                 moduleType, clientName, serverAddress);
 
         if (metricsManager != null) {
-            metricsManager.recordGrpcDisconnect(moduleType.name(), serverAddress);
+            metricsManager.recordGrpcDisconnect(moduleType, serverAddress);
         }
 
         publishEvent(NacosConnectionEvent.ConnectionStatus.DISCONNECTED, serverAddress);

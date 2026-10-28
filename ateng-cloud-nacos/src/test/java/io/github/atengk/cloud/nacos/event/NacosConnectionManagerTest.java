@@ -63,4 +63,37 @@ class NacosConnectionManagerTest {
         manager.afterSingletonsInstantiated();
         assertThat(manager.getRegisteredClients()).isNotNull();
     }
+
+    @Test
+    @DisplayName("对称注销与销毁清理：注销与 destroy 时关闭监听器并清空集合")
+    void testDeregisterAndDestroy() {
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+
+        NacosConnectionManager manager = new NacosConnectionManager(
+                publisher,
+                beanFactory.getBeanProvider(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class)
+        );
+
+        RpcClient client1 = mock(RpcClient.class);
+        when(client1.getName()).thenReturn("client-1");
+        RpcClient client2 = mock(RpcClient.class);
+        when(client2.getName()).thenReturn("client-2");
+
+        manager.registerToClient(client1);
+        manager.registerToClient(client2);
+        assertThat(manager.getRegisteredClients()).containsExactlyInAnyOrder("client-1", "client-2");
+
+        // 1. 注销单客户端
+        boolean dereg = manager.deregisterClient("client-1");
+        assertThat(dereg).isTrue();
+        assertThat(manager.getRegisteredClients()).containsExactly("client-2");
+        // 重复注销返回 false
+        assertThat(manager.deregisterClient("client-1")).isFalse();
+        assertThat(manager.deregisterClient(null)).isFalse();
+
+        // 2. 容器关闭 destroy 清理
+        manager.destroy();
+        assertThat(manager.getRegisteredClients()).isEmpty();
+    }
 }

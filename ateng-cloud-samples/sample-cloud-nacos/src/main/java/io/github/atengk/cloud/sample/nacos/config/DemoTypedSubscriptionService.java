@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.nacos.config;
 
+import io.github.atengk.cloud.nacos.constant.ConfigFormat;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.sample.nacos.model.TradeRuleConfig;
 import jakarta.annotation.PostConstruct;
@@ -8,7 +9,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -62,6 +65,30 @@ public class DemoTypedSubscriptionService {
                 log.info("[DemoTypedSubscriptionService] 已安全注销 '{}' 动态配置订阅句柄", DATA_ID_TRADE_RULE);
             } catch (Exception ex) {
                 log.warn("Error closing subscription: {}", ex.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 模拟 Nacos 服务端动态下发配置原始文本，全真经过 NacosConfigParser 泛型反序列化与 MDC 链路装饰
+     */
+    public void simulateConfigPush(String rawConfigJson) {
+        String traceId = MDC.get("traceId");
+        boolean traceCreated = false;
+        if (!StringUtils.hasText(traceId)) {
+            traceId = UUID.randomUUID().toString().replace("-", "");
+            MDC.put("traceId", traceId);
+            traceCreated = true;
+        }
+        try {
+            TradeRuleConfig parsed = nacosTemplate.getConfigParser().parse(
+                    rawConfigJson, ConfigFormat.JSON, TradeRuleConfig.class);
+            if (parsed != null) {
+                onTradeRuleUpdated(parsed);
+            }
+        } finally {
+            if (traceCreated) {
+                MDC.remove("traceId");
             }
         }
     }

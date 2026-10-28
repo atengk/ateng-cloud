@@ -163,6 +163,40 @@ class NacosHealthCheckerTest {
         NacosHealthChecker checkerBroken = new NacosHealthChecker(
                 properties, new MockEnvironment(), brokenFactory.getBeanProvider(NacosConfigManager.class));
         assertThat(checkerBroken.detectServerStatus()).isEqualTo("DISCONNECTED");
+
+        // 4. MetricsManager 探测断连时优先判为 DISCONNECTED
+        io.github.atengk.cloud.nacos.metrics.NacosMetricsManager metricsManager =
+                mock(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
+        when(metricsManager.getGrpcConnectionStatus()).thenReturn(0.0);
+        StaticListableBeanFactory metricsFactory = new StaticListableBeanFactory();
+        metricsFactory.addBean("metricsManager", metricsManager);
+
+        NacosHealthChecker checkerMetricsDown = new NacosHealthChecker(
+                properties, new MockEnvironment(),
+                metricsFactory.getBeanProvider(NacosConfigManager.class),
+                null, null,
+                metricsFactory.getBeanProvider(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class)
+        );
+        assertThat(checkerMetricsDown.detectServerStatus()).isEqualTo("DISCONNECTED");
+
+        // 5. NacosTemplate 探查服务注册发现状态
+        io.github.atengk.cloud.nacos.template.NacosTemplate template =
+                mock(io.github.atengk.cloud.nacos.template.NacosTemplate.class);
+        when(template.isConfigAvailable()).thenReturn(false);
+        when(template.isDiscoveryAvailable()).thenReturn(true);
+        when(template.getNamingServerStatus()).thenReturn("UP");
+
+        StaticListableBeanFactory templateFactory = new StaticListableBeanFactory();
+        templateFactory.addBean("template", template);
+
+        NacosHealthChecker checkerTemplateUp = new NacosHealthChecker(
+                properties, new MockEnvironment(),
+                templateFactory.getBeanProvider(NacosConfigManager.class),
+                null,
+                templateFactory.getBeanProvider(io.github.atengk.cloud.nacos.template.NacosTemplate.class),
+                null
+        );
+        assertThat(checkerTemplateUp.detectServerStatus()).isEqualTo("UP");
     }
 
     @Test

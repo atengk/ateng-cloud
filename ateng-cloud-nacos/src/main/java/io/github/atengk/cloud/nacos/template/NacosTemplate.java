@@ -763,6 +763,24 @@ public class NacosTemplate implements DisposableBean {
     }
 
     /**
+     * 探测 Nacos 注册发现服务端当前连接状态
+     *
+     * @return 连接状态（如 UP, DISCONNECTED, UNAVAILABLE 等）
+     */
+    public String getNamingServerStatus() {
+        NamingService namingService = getNamingService();
+        if (namingService == null) {
+            return "UNAVAILABLE";
+        }
+        try {
+            String status = namingService.getServerStatus();
+            return StringUtils.hasText(status) ? status : "UNKNOWN";
+        } catch (Exception ex) {
+            return "DISCONNECTED";
+        }
+    }
+
+    /**
      * 解析配置分组名（未显式指定时依序兜底至配置中心属性与 DEFAULT_GROUP）
      *
      * @param groupName 传入的分组名
@@ -1328,21 +1346,7 @@ public class NacosTemplate implements DisposableBean {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                boolean traceIdCreated = false;
-                if (MDC.get("traceId") == null) {
-                    MDC.put("traceId", UUID.randomUUID().toString().replace("-", ""));
-                    traceIdCreated = true;
-                }
-                try {
-                    T parsed = configParser.parse(configInfo, resolvedFormat, targetType);
-                    callback.accept(parsed);
-                } catch (Throwable t) {
-                    log.error("Error processing dynamic Nacos config subscription for dataId '{}', group '{}'", dataId, targetGroup, t);
-                } finally {
-                    if (traceIdCreated) {
-                        MDC.remove("traceId");
-                    }
-                }
+                dispatchTypedConfigUpdate(configInfo, resolvedFormat, targetType, callback, dataId, targetGroup);
             }
         };
 
@@ -1358,25 +1362,47 @@ public class NacosTemplate implements DisposableBean {
     private <T> void deliverInitialConfig(String dataId, String targetGroup, ConfigFormat format, Class<T> targetType, Consumer<T> callback) {
         try {
             String currentContent = getConfig(dataId, targetGroup);
-            if (StringUtils.hasText(currentContent)) {
-                boolean traceIdCreated = false;
-                if (MDC.get("traceId") == null) {
-                    MDC.put("traceId", UUID.randomUUID().toString().replace("-", ""));
-                    traceIdCreated = true;
-                }
-                try {
-                    T parsed = configParser.parse(currentContent, format, targetType);
-                    if (parsed != null) {
-                        callback.accept(parsed);
-                    }
-                } finally {
-                    if (traceIdCreated) {
-                        MDC.remove("traceId");
-                    }
-                }
-            }
+            dispatchTypedConfigUpdate(currentContent, format, targetType, callback, dataId, targetGroup);
         } catch (Exception ex) {
             log.warn("Failed to fetch or parse initial Nacos config for dataId '{}', group '{}'", dataId, targetGroup, ex);
+        }
+    }
+
+    private <T> void dispatchTypedConfigUpdate(String configInfo, ConfigFormat format, Class<T> targetType,
+                                               Consumer<T> callback, String dataId, String group) {
+        if (!StringUtils.hasText(configInfo)) {
+            log.warn("Nacos config content is empty or deleted for dataId '{}', group '{}'. Skipping typed callback invocation.",
+                    dataId, group);
+            return;
+        }
+        executeWithTrace(() -> {
+            try {
+                T parsed = configParser.parse(configInfo, format, targetType);
+                if (parsed != null) {
+                    callback.accept(parsed);
+                } else {
+                    log.warn("Nacos config parsed to null for dataId '{}', group '{}'. Skipping typed callback invocation.",
+                            dataId, group);
+                }
+            } catch (Throwable t) {
+                log.error("Error processing dynamic Nacos config subscription for dataId '{}', group '{}'",
+                        dataId, group, t);
+            }
+        });
+    }
+
+    private void executeWithTrace(Runnable action) {
+        boolean traceIdCreated = false;
+        if (MDC.get("traceId") == null) {
+            MDC.put("traceId", UUID.randomUUID().toString().replace("-", ""));
+            traceIdCreated = true;
+        }
+        try {
+            action.run();
+        } finally {
+            if (traceIdCreated) {
+                MDC.remove("traceId");
+            }
         }
     }
 

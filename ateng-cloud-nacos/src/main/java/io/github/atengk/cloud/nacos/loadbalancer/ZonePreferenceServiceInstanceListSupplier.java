@@ -8,6 +8,8 @@ import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.loadbalancer.Request;
 import org.springframework.cloud.loadbalancer.core.DelegatingServiceInstanceListSupplier;
 import org.springframework.cloud.loadbalancer.core.ServiceInstanceListSupplier;
+import org.springframework.core.env.Environment;
+import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
@@ -31,11 +33,19 @@ public class ZonePreferenceServiceInstanceListSupplier extends DelegatingService
     private static final Logger log = LoggerFactory.getLogger(ZonePreferenceServiceInstanceListSupplier.class);
 
     private final AtengNacosProperties properties;
+    private final Environment environment;
 
     public ZonePreferenceServiceInstanceListSupplier(ServiceInstanceListSupplier delegate,
                                                      AtengNacosProperties properties) {
+        this(delegate, properties, null);
+    }
+
+    public ZonePreferenceServiceInstanceListSupplier(ServiceInstanceListSupplier delegate,
+                                                     AtengNacosProperties properties,
+                                                     @Nullable Environment environment) {
         super(delegate);
         this.properties = properties;
+        this.environment = environment;
     }
 
     @Override
@@ -146,6 +156,17 @@ public class ZonePreferenceServiceInstanceListSupplier extends DelegatingService
             if (properties.getMetadata() != null && StringUtils.hasText(properties.getMetadata().getZone())) {
                 return properties.getMetadata().getZone();
             }
+        }
+        if (environment != null) {
+            String zone = environment.getProperty("ZONE");
+            if (StringUtils.hasText(zone)) {
+                return zone;
+            }
+            String region = environment.getProperty("REGION");
+            if (StringUtils.hasText(region)) {
+                return region;
+            }
+            return null;
         }
         String envZone = System.getProperty("ZONE", System.getenv("ZONE"));
         if (StringUtils.hasText(envZone)) {
