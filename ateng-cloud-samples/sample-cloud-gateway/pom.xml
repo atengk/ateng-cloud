@@ -23,6 +23,12 @@
             <artifactId>ateng-cloud-gateway</artifactId>
         </dependency>
 
+        <!-- ateng-cloud-nacos 动态配置中心与服务注册发现 -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-nacos</artifactId>
+        </dependency>
+
         <!-- Spring Boot Actuator 监控端点支持 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
