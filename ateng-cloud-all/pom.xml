@@ -22,5 +22,11 @@
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-nacos</artifactId>
         </dependency>
+
+        <!-- OpenFeign 声明式 HTTP 通信与治理增强 -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-feign</artifactId>
+        </dependency>
     </dependencies>
 </project>
