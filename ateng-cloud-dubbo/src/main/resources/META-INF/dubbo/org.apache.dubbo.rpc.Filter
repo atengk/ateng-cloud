@@ -1,2 +1,4 @@
 exception=io.github.atengk.cloud.dubbo.filter.AtengDubboExceptionFilter
 resultUnwrap=io.github.atengk.cloud.dubbo.filter.DubboResultUnwrapFilter
+contextPropagation=io.github.atengk.cloud.dubbo.filter.DubboContextPropagationFilter
+sameToken=io.github.atengk.cloud.dubbo.filter.DubboSameTokenFilter

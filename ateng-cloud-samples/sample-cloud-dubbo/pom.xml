@@ -35,6 +35,13 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Sa-Token 内部受信凭据测试套件 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot3-starter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Spring Boot Test 测试套件 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -52,5 +52,12 @@ public interface UserRpcService {
      * 服务端抛出未受检非 JDK 自定义底层异常（验证异常转译为标准 BusinessException 并防御反序列化崩溃）
      */
     void throwCustomException();
+
+    /**
+     * 获取服务端当前线程绑定的上下文镜像（验证四维上下文与流量染色透传及服务端线程确定性清理）
+     *
+     * @return 服务端线程上下文快照
+     */
+    java.util.Map<String, String> getProviderContext();
 }
 

@@ -46,4 +46,15 @@ public class UserRpcServiceImpl implements UserRpcService {
     public void throwCustomException() {
         throw new CustomDatabaseException("模拟底座数据库死锁超时");
     }
+
+    @Override
+    public java.util.Map<String, String> getProviderContext() {
+        java.util.Map<String, String> map = new java.util.HashMap<>();
+        map.put("traceId", org.slf4j.MDC.get("traceId"));
+        map.put("userId", io.github.atengk.boot.core.context.UserContextHolder.getUserId());
+        map.put("tenantId", io.github.atengk.boot.core.context.TenantContextHolder.getTenantId());
+        map.put("ignoreTenant", String.valueOf(io.github.atengk.boot.core.context.TenantContextHolder.isIgnoreTenant()));
+        map.put("trafficTag", org.slf4j.MDC.get("X-Traffic-Tag"));
+        return map;
+    }
 }
