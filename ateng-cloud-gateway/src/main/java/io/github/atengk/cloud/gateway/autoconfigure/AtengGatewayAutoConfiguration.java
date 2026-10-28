@@ -2,23 +2,31 @@ package io.github.atengk.cloud.gateway.autoconfigure;
 
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.gateway.filter.GatewayAccessLogFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayClientIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayHeaderSanitizeFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayPathValidationFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayRateLimitResponseFilter;
+import io.github.atengk.cloud.gateway.filter.GatewaySecurityHeadersFilter;
+import io.github.atengk.cloud.gateway.filter.GatewaySignGuardFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayTenantFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayTraceFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayTrafficTagFilter;
+import io.github.atengk.cloud.gateway.filter.OpenApiGuardFilter;
 import io.github.atengk.cloud.gateway.filter.SaTokenGatewayFilter;
 import io.github.atengk.cloud.gateway.filter.factory.AtengRetryGatewayFilterFactory;
 import io.github.atengk.cloud.gateway.handler.GatewayGlobalExceptionHandler;
+import io.github.atengk.cloud.gateway.loadbalancer.GrayLoadBalancerClientConfiguration;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
+import io.github.atengk.cloud.gateway.provider.InMemorySignSecretProvider;
 import io.github.atengk.cloud.gateway.provider.PropertiesIpFilterProvider;
 import io.github.atengk.cloud.gateway.ratelimit.ApiKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.IpKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.UserKeyResolver;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
+import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -27,6 +35,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.codec.CodecCustomizer;
+import org.springframework.cloud.loadbalancer.annotation.LoadBalancerClients;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,6 +51,7 @@ import org.springframework.context.annotation.Primary;
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
 @EnableConfigurationProperties(AtengGatewayProperties.class)
 @ConditionalOnProperty(prefix = "ateng.cloud.gateway", name = "enabled", havingValue = "true", matchIfMissing = true)
+@LoadBalancerClients(defaultConfiguration = GrayLoadBalancerClientConfiguration.class)
 public class AtengGatewayAutoConfiguration {
 
     /**
@@ -78,6 +88,88 @@ public class AtengGatewayAutoConfiguration {
     @ConditionalOnMissingBean
     public AtengRetryGatewayFilterFactory atengRetryGatewayFilterFactory() {
         return new AtengRetryGatewayFilterFactory();
+    }
+
+    /**
+     * 注册全链路灰度染色标签解析全局过滤器
+     *
+     * @param properties 网关配置属性
+     * @return GatewayTrafficTagFilter
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.traffic", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public GatewayTrafficTagFilter gatewayTrafficTagFilter(AtengGatewayProperties properties) {
+        return new GatewayTrafficTagFilter(properties.getTraffic());
+    }
+
+    /**
+     * 注册 OWASP 等保三级合规安全响应头强化与跨域出站标头去重全局过滤器
+     *
+     * @param properties 网关配置属性
+     * @return GatewaySecurityHeadersFilter
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security-headers", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public GatewaySecurityHeadersFilter gatewaySecurityHeadersFilter(AtengGatewayProperties properties) {
+        return new GatewaySecurityHeadersFilter(properties.getSecurityHeaders());
+    }
+
+    /**
+     * 注册微服务 OpenAPI / Swagger 统一接口文档访问安全守卫全局过滤器
+     *
+     * @param properties 网关配置属性
+     * @param objectMapper Jackson 对象映射器
+     * @return OpenApiGuardFilter
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.openapi", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public OpenApiGuardFilter openApiGuardFilter(AtengGatewayProperties properties, ObjectMapper objectMapper) {
+        return new OpenApiGuardFilter(properties.getOpenapi(), objectMapper);
+    }
+
+    /**
+     * 注册轻量级响应式访问日志审计与慢请求度量告警全局过滤器
+     *
+     * @param properties 网关配置属性
+     * @return GatewayAccessLogFilter
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.access-log", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public GatewayAccessLogFilter gatewayAccessLogFilter(AtengGatewayProperties properties) {
+        return new GatewayAccessLogFilter(properties.getAccessLog());
+    }
+
+    /**
+     * 注册开放接口数字签名密钥提供者默认实现 (基于内存字典)
+     *
+     * @return InMemorySignSecretProvider
+     */
+    @Bean
+    @ConditionalOnMissingBean(SignSecretProvider.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public SignSecretProvider defaultSignSecretProvider() {
+        return new InMemorySignSecretProvider();
+    }
+
+    /**
+     * 注册开放接口 API 签名防篡改与 Nonce 防重放全局过滤器
+     *
+     * @param properties 网关配置属性
+     * @param secretProvider 签名密钥提供者
+     * @param objectMapper Jackson 对象映射器
+     * @return GatewaySignGuardFilter
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public GatewaySignGuardFilter gatewaySignGuardFilter(AtengGatewayProperties properties,
+                                                        SignSecretProvider secretProvider,
+                                                        ObjectMapper objectMapper) {
+        return new GatewaySignGuardFilter(properties.getSign(), secretProvider, objectMapper);
     }
 
     /**

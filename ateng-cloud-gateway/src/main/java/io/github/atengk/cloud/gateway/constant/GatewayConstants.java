@@ -124,9 +124,14 @@ public final class GatewayConstants {
     // --- 全局过滤器执行顺序基线 ---
 
     /**
+     * OWASP 与等保三级出站安全响应头强化过滤器执行顺序 (最高优先级注册 beforeCommit 钩子)
+     */
+    public static final int ORDER_SECURITY_HEADERS = Ordered.HIGHEST_PRECEDENCE;
+
+    /**
      * 路径规范化与目录穿越防卫过滤器执行顺序
      */
-    public static final int ORDER_PATH_VALIDATION = Ordered.HIGHEST_PRECEDENCE;
+    public static final int ORDER_PATH_VALIDATION = Ordered.HIGHEST_PRECEDENCE + 1;
 
     /**
      * 响应式链路追踪 traceId 生成与透传过滤器执行顺序
@@ -163,10 +168,6 @@ public final class GatewayConstants {
      */
     public static final int ORDER_TENANT = -90;
 
-    /**
-     * OWASP 与等保三级出站安全响应头强化过滤器执行顺序
-     */
-    public static final int ORDER_SECURITY_HEADERS = -1;
 
     /**
      * 访问日志轻量审计与慢请求告警过滤器执行顺序

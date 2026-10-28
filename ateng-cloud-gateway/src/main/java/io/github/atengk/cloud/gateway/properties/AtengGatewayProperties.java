@@ -42,6 +42,12 @@ public class AtengGatewayProperties {
     private AtengGatewaySecurityProperties security = new AtengGatewaySecurityProperties();
 
     /**
+     * OWASP 与等保三级安全响应头配置
+     */
+    @NestedConfigurationProperty
+    private AtengGatewaySecurityHeadersProperties securityHeaders = new AtengGatewaySecurityHeadersProperties();
+
+    /**
      * Nacos 动态路由配置
      */
     @NestedConfigurationProperty
@@ -121,6 +127,14 @@ public class AtengGatewayProperties {
 
     public void setSecurity(AtengGatewaySecurityProperties security) {
         this.security = security;
+    }
+
+    public AtengGatewaySecurityHeadersProperties getSecurityHeaders() {
+        return securityHeaders;
+    }
+
+    public void setSecurityHeaders(AtengGatewaySecurityHeadersProperties securityHeaders) {
+        this.securityHeaders = securityHeaders;
     }
 
     public AtengGatewayDynamicRouteProperties getDynamicRoute() {
