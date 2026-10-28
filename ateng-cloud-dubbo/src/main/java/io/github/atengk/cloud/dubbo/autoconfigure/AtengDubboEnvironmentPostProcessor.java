@@ -12,11 +12,10 @@ import java.util.Map;
 /**
  * Dubbo 生产级安全基线环境后置处理器
  * <p>
- * 为 Dubbo 核心参数注入生产安全默认基线：
- * 1. 预设 dubbo.application.shut-down.wait=15000 与 dubbo.application.shutwait=15000（15秒超时硬兜底，排空在途请求）；
- * 2. 预设 dubbo.protocol.payload=16777216 与 dubbo.provider.payload=16777216 (16MB 载荷硬防爆上限)；
- * 3. 预设 dubbo.consumer.retries=0 (非幂等写防雪崩)；
- * 用户在 application.yml 中显式声明的配置拥有更高优先级，可无缝接管覆盖。
+ * 为 Dubbo 核心停机参数注入生产安全默认基线：
+ * 预设 dubbo.application.shut-down.wait=15000 与 dubbo.application.shutwait=15000（15秒超时硬兜底，排空在途请求）；
+ * 若用户已在 ateng.cloud.dubbo.application.shut-wait 中指定，则自动对齐转换；
+ * 若用户已在 application.yml 中显式配置 native dubbo 属性，则以最低优先级挂载确保用户配置绝对优先生效。
  *
  * @author Ateng
  * @since 2026-10-28
@@ -24,19 +23,44 @@ import java.util.Map;
 public class AtengDubboEnvironmentPostProcessor implements EnvironmentPostProcessor, Ordered {
 
     private static final String PROPERTY_SOURCE_NAME = "atengDubboDefaultProperties";
+    private static final long DEFAULT_SHUTDOWN_WAIT_MILLIS = 15000L;
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
+        String shutWait = environment.getProperty("ateng.cloud.dubbo.application.shut-wait");
+        if (shutWait == null) {
+            shutWait = environment.getProperty("ateng.cloud.dubbo.application.shutwait");
+        }
+        long waitMillis = parseDurationMillis(shutWait, DEFAULT_SHUTDOWN_WAIT_MILLIS);
+
         Map<String, Object> defaults = new HashMap<>();
-        defaults.put("dubbo.application.shut-down.wait", "15000");
-        defaults.put("dubbo.application.shutwait", "15000");
-        defaults.put("dubbo.protocol.payload", "16777216");
-        defaults.put("dubbo.provider.payload", "16777216");
-        defaults.put("dubbo.consumer.retries", "0");
-        defaults.put("dubbo.provider.retries", "0");
+        defaults.put("dubbo.application.shut-down.wait", String.valueOf(waitMillis));
+        defaults.put("dubbo.application.shutwait", String.valueOf(waitMillis));
 
         // 挂载至最低优先级，确保用户的 application.yml 与显式配置绝对优先生效
         environment.getPropertySources().addLast(new MapPropertySource(PROPERTY_SOURCE_NAME, defaults));
+    }
+
+    private static long parseDurationMillis(String value, long defaultValue) {
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        String trimmed = value.trim().toLowerCase();
+        try {
+            if (trimmed.endsWith("ms")) {
+                return Long.parseLong(trimmed.substring(0, trimmed.length() - 2).trim());
+            } else if (trimmed.endsWith("s")) {
+                return Long.parseLong(trimmed.substring(0, trimmed.length() - 1).trim()) * 1000L;
+            } else if (trimmed.endsWith("m")) {
+                return Long.parseLong(trimmed.substring(0, trimmed.length() - 1).trim()) * 60_000L;
+            } else if (trimmed.startsWith("pt")) {
+                return java.time.Duration.parse(value.trim()).toMillis();
+            } else {
+                return Long.parseLong(trimmed);
+            }
+        } catch (Exception e) {
+            return defaultValue;
+        }
     }
 
     @Override

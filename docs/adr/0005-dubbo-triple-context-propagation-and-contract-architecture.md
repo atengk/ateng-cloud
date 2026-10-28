@@ -32,7 +32,7 @@
 4. **因果异常保真与反序列化防御 (Causal Exception Defense)**：
    - 实现定制 `AtengDubboExceptionFilter`（接管 Dubbo 原生 ExceptionFilter）：
      - 对 `BusinessException`、JSR-303 参数校验异常及 JDK 标准异常实施白名单放行，100% 完整保留原始错误码、错误信息及因果链；
-     - 对客户端类路径可能缺失的底层未知系统崩溃异常，在 Provider 端安全包装为 `BusinessException(CommonResultCode.RPC_ERROR, ...)`，彻底防御 Consumer 端 `ClassNotFoundException`。
+     - 对客户端类路径可能缺失的底层未知系统崩溃异常，在 Provider 端安全包装为 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，彻底防御 Consumer 端 `ClassNotFoundException`。
 
 5. **防重试雪崩安全生产基线 (Retry Storm Defense)**：
    - 遵循“写请求绝对禁止重试不变量”，全局配置基线默认强制收敛为 `dubbo.consumer.retries=0`、`dubbo.provider.retries=0`；
@@ -44,8 +44,8 @@
    - 默认配置 `dubbo.tagforce=false`，若灰度实例全部下线，自动弹性平滑降级至基线（无标签）实例，杜绝全网 503 故障。
 
 7. **服务端线程池过载保护与参数校验统一转译 (Overload Protection & Validation Guard)**：
-   - 默认装配 `fixed` 200 线程池，定制拒绝执行处理器，线程池打满时记录关键过载日志并优雅抛出 `BusinessException(CommonResultCode.FLOW_LIMIT)`；联动 Micrometer 采集线程池指标；
-   - 整合 Dubbo `ValidationFilter`，将 JSR-303 参数格式校验失败异常统一转译为 `BusinessException(CommonResultCode.PARAM_INVALID, ...)`。
+   - 默认装配 `fixed` 200 线程池，定制拒绝执行处理器，线程池打满时记录关键过载日志并优雅抛出 `BusinessException(CommonResultCode.TOO_MANY_REQUESTS)`；联动 Micrometer 采集线程池指标；
+   - 整合 Dubbo `ValidationFilter`，将 JSR-303 参数格式校验失败异常统一转译为 `BusinessException(CommonResultCode.BAD_REQUEST, ...)`。
 
 8. **应用级服务发现与优雅停机联动 (Application Discovery & Zero-Downtime)**：
    - 默认推行纯应用级服务发现（`dubbo.application.register-mode=instance`），与 Nacos 1:1 对齐并彻底消灭注册表膨胀；

@@ -204,6 +204,13 @@ public class StreamAndPayloadDubboRpcTest {
         if (protoConfig != null) {
             assertThat(protoConfig.getPayload()).isEqualTo(expectedPayload);
         }
+        ApplicationModel.defaultModel()
+                .getDefaultModule()
+                .getConfigManager()
+                .getProviders()
+                .forEach(providerConfig -> {
+                    assertThat(providerConfig.getPayload()).isEqualTo(expectedPayload);
+                });
 
         // 3. 验证属性类默认配置值对齐
         assertThat(dubboProperties).isNotNull();

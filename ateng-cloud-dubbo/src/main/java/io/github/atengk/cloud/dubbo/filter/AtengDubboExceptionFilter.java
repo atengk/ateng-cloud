@@ -3,6 +3,7 @@ package io.github.atengk.cloud.dubbo.filter;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadListener;
+import io.github.atengk.cloud.dubbo.support.DubboExceptionUtils;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -48,7 +49,8 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
     @Override
     public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getException() != null && !properties.getException().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getException() != null && !properties.getException().isEnabled()))) {
             return;
         }
 
@@ -64,9 +66,9 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
         }
 
         // 2. JSR-303 参数校验异常：结构化转译为标准受管 BusinessException(BAD_REQUEST)
-        ConstraintViolationException cve = findConstraintViolationException(exception);
+        ConstraintViolationException cve = DubboExceptionUtils.findConstraintViolationException(exception);
         if (cve != null) {
-            String errorMsg = formatConstraintViolations(cve.getConstraintViolations());
+            String errorMsg = DubboExceptionUtils.formatConstraintViolations(cve.getConstraintViolations());
             log.warn("[DUBBO] Provider 拦截 JSR-303 参数校验失败: service={}, method={}, error={}",
                     invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), errorMsg);
             BusinessException be = new BusinessException(CommonResultCode.BAD_REQUEST.getCode(), errorMsg, cve);
@@ -75,7 +77,7 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
         }
 
         // 3. 服务端线程池过载拒绝异常：转译为受管 BusinessException(TOO_MANY_REQUESTS) 并记录过载诊断
-        if (isOverloadException(exception)) {
+        if (DubboExceptionUtils.isOverloadException(exception)) {
             DubboOverloadListener.incrementRejectCount();
             log.warn("[DUBBO-OVERLOAD] Provider 拦截线程池耗尽过载异常: service={}, method={}, error={}",
                     invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), exception.getMessage());
@@ -103,7 +105,8 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
                 }
             }
         } catch (NoSuchMethodException e) {
-            // 方法不存在时继续按规则研判
+            log.debug("[DUBBO] Provider 未能在接口中定位目标方法签名: method={}, error={}",
+                    RpcUtils.getMethodName(invocation), e.getMessage());
         }
 
         // 6. JDK 标准核心异常 (java.*, javax.*, jakarta.*)：直接放行
@@ -133,59 +136,5 @@ public class AtengDubboExceptionFilter implements Filter, BaseFilter.Listener {
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         log.error("[DUBBO] Provider 执行发生系统调用错误: service={}, method={}, error={}",
                 invoker.getInterface().getName(), RpcUtils.getMethodName(invocation), t.getMessage(), t);
-    }
-
-    private ConstraintViolationException findConstraintViolationException(Throwable throwable) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (current instanceof ConstraintViolationException cve) {
-                return cve;
-            }
-            if ("jakarta.validation.ConstraintViolationException".equals(current.getClass().getName())
-                    || "javax.validation.ConstraintViolationException".equals(current.getClass().getName())) {
-                try {
-                    if (current instanceof ConstraintViolationException cve) {
-                        return cve;
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-            current = current.getCause();
-        }
-        return null;
-    }
-
-    private String formatConstraintViolations(Set<? extends ConstraintViolation<?>> violations) {
-        if (violations == null || violations.isEmpty()) {
-            return "参数校验失败";
-        }
-        return violations.stream()
-                .map(v -> {
-                    String path = v.getPropertyPath() != null ? v.getPropertyPath().toString() : "";
-                    int dotIdx = path.lastIndexOf('.');
-                    String field = dotIdx >= 0 ? path.substring(dotIdx + 1) : path;
-                    return field + " " + v.getMessage();
-                })
-                .collect(Collectors.joining("; ", "参数校验失败: ", ""));
-    }
-
-    private boolean isOverloadException(Throwable throwable) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (current instanceof RejectedExecutionException) {
-                return true;
-            }
-            String message = current.getMessage();
-            if (message != null) {
-                String lower = message.toLowerCase();
-                if (lower.contains("thread pool is exhausted")
-                        || lower.contains("threadpool is exhausted")
-                        || lower.contains("threads can not be used anymore")) {
-                    return true;
-                }
-            }
-            current = current.getCause();
-        }
-        return false;
     }
 }

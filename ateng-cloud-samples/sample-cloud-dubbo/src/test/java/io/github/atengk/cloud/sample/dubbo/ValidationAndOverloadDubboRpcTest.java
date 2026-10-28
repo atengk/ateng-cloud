@@ -4,6 +4,7 @@ import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadHandler;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadListener;
+import io.github.atengk.cloud.dubbo.overload.DubboOverloadThreadPool;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
@@ -138,5 +139,18 @@ public class ValidationAndOverloadDubboRpcTest {
         FunctionCounter counter = meterRegistry.find("dubbo.threadpool.reject").functionCounter();
         assertNotNull(counter, "必须成功注册 dubbo.threadpool.reject 拒绝指标");
         assertTrue(counter.count() >= 0.0, "拒绝指标计数值应非负");
+    }
+
+    @Test
+    @DisplayName("验证 DubboOverloadThreadPool SPI 正确装配并挂载 DubboOverloadHandler 拒绝策略")
+    void testDubboOverloadThreadPoolSpi() {
+        DubboOverloadThreadPool threadPool = new DubboOverloadThreadPool();
+        org.apache.dubbo.common.URL url = org.apache.dubbo.common.URL.valueOf("dubbo://127.0.0.1:20880?threadname=TestDubboOverloadPool");
+        java.util.concurrent.Executor executor = threadPool.getExecutor(url);
+        assertNotNull(executor, "过载保护线程池不可为空");
+        assertTrue(executor instanceof ThreadPoolExecutor, "线程池底层应为 ThreadPoolExecutor 实例");
+        ThreadPoolExecutor tpe = (ThreadPoolExecutor) executor;
+        assertTrue(tpe.getRejectedExecutionHandler() instanceof DubboOverloadHandler, "拒绝策略必须为 DubboOverloadHandler");
+        tpe.shutdown();
     }
 }

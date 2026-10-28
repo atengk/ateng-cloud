@@ -44,7 +44,8 @@ public class DubboSameTokenFilter implements Filter {
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getSameToken() != null && !properties.getSameToken().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getSameToken() != null && !properties.getSameToken().isEnabled()))) {
             return invoker.invoke(invocation);
         }
 

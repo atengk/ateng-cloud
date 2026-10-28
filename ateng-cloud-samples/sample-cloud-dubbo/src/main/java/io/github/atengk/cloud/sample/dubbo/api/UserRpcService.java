@@ -41,7 +41,7 @@ public interface UserRpcService {
     Result<UserVO> getUserResult(Long id);
 
     /**
-     * 返回业务失败状态的 Result（验证消费端 DubboResultUnwrapFilter 自动拦截并抛出 BusinessException）
+     * 返回业务失败状态的 Result（验证消费端 DubboContractAssertFilter 自动拦截并抛出 BusinessException）
      *
      * @param id 用户主键
      * @return 失败的业务结果

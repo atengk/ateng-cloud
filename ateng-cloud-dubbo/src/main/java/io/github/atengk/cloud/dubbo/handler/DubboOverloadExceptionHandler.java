@@ -4,12 +4,9 @@ import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadListener;
 import org.apache.dubbo.common.extension.Activate;
-import org.apache.dubbo.remoting.http12.ExceptionHandler;
-import org.apache.dubbo.remoting.http12.HttpHeaders;
 import org.apache.dubbo.remoting.http12.HttpResult;
 import org.apache.dubbo.remoting.http12.RequestMetadata;
 import org.apache.dubbo.rpc.model.MethodDescriptor;
-import org.apache.dubbo.rpc.protocol.tri.h12.grpc.GrpcHeaderNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,29 +24,12 @@ import java.util.concurrent.RejectedExecutionException;
  * @since 2026-10-28
  */
 @Activate(order = -490)
-public class DubboOverloadExceptionHandler implements ExceptionHandler<RejectedExecutionException, Object> {
+public class DubboOverloadExceptionHandler extends AbstractDubboTripleExceptionHandler<RejectedExecutionException> {
 
     private static final Logger log = LoggerFactory.getLogger(DubboOverloadExceptionHandler.class);
 
     @Override
-    public boolean resolveGrpcStatus(
-            RejectedExecutionException throwable, HttpHeaders headers, RequestMetadata metadata, MethodDescriptor descriptor) {
-        // 豁免流式调用 (非 UNARY 请求交由 Triple 原生流式异常通道处理)
-        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
-            return false;
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[DUBBO] DubboOverloadExceptionHandler resolveGrpcStatus: msg={}", throwable.getMessage());
-        }
-        headers.set(GrpcHeaderNames.GRPC_STATUS.getName(), "0");
-        return true;
-    }
-
-    @Override
-    public Object handleGrpc(RejectedExecutionException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
-        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
-            return null;
-        }
+    protected Object doHandleGrpc(RejectedExecutionException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
         DubboOverloadListener.incrementRejectCount();
         log.warn("[DUBBO] Triple 传输层捕获线程池过载拒绝异常，安全转译为 TOO_MANY_REQUESTS: {}", throwable.getMessage());
         BusinessException businessException = new BusinessException(

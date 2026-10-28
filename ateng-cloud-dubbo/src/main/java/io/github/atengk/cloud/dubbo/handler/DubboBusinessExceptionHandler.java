@@ -2,12 +2,11 @@ package io.github.atengk.cloud.dubbo.handler;
 
 import io.github.atengk.boot.core.exception.BusinessException;
 import org.apache.dubbo.common.extension.Activate;
-import org.apache.dubbo.remoting.http12.ExceptionHandler;
-import org.apache.dubbo.remoting.http12.HttpHeaders;
 import org.apache.dubbo.remoting.http12.HttpResult;
 import org.apache.dubbo.remoting.http12.RequestMetadata;
 import org.apache.dubbo.rpc.model.MethodDescriptor;
-import org.apache.dubbo.rpc.protocol.tri.h12.grpc.GrpcHeaderNames;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Dubbo Triple 协议 BusinessException 受管业务异常保真处理器
@@ -20,31 +19,15 @@ import org.apache.dubbo.rpc.protocol.tri.h12.grpc.GrpcHeaderNames;
  * @since 2026-10-28
  */
 @Activate(order = -500)
-public class DubboBusinessExceptionHandler implements ExceptionHandler<BusinessException, Object> {
+public class DubboBusinessExceptionHandler extends AbstractDubboTripleExceptionHandler<BusinessException> {
 
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DubboBusinessExceptionHandler.class);
-
-    @Override
-    public boolean resolveGrpcStatus(
-            BusinessException throwable, HttpHeaders headers, RequestMetadata metadata, MethodDescriptor descriptor) {
-        // 豁免流式调用 (非 UNARY 请求交由 Triple 原生流式异常通道处理，确保客户端正常触发 onError)
-        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
-            return false;
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[DUBBO] DubboBusinessExceptionHandler resolveGrpcStatus: code={}, msg={}", throwable.getCode(), throwable.getMessage());
-        }
-        headers.set(GrpcHeaderNames.GRPC_STATUS.getName(), "0");
-        return true;
-    }
+    private static final Logger log = LoggerFactory.getLogger(DubboBusinessExceptionHandler.class);
 
     @Override
-    public Object handleGrpc(BusinessException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
-        if (descriptor != null && descriptor.getRpcType() != MethodDescriptor.RpcType.UNARY) {
-            return null;
-        }
+    protected Object doHandleGrpc(BusinessException throwable, RequestMetadata metadata, MethodDescriptor descriptor) {
         if (log.isDebugEnabled()) {
-            log.debug("[DUBBO] DubboBusinessExceptionHandler handleGrpc: code={}, msg={}", throwable.getCode(), throwable.getMessage());
+            log.debug("[DUBBO] DubboBusinessExceptionHandler handleGrpc: code={}, msg={}",
+                    throwable.getCode(), throwable.getMessage());
         }
         return HttpResult.of(throwable);
     }

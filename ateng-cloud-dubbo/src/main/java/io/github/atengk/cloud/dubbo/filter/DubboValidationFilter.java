@@ -2,11 +2,11 @@ package io.github.atengk.cloud.dubbo.filter;
 
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.util.ValidatorUtil;
+import io.github.atengk.cloud.dubbo.support.DubboExceptionUtils;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
-import jakarta.validation.Validation;
-import jakarta.validation.Validator;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
 import org.apache.dubbo.rpc.AsyncRpcResult;
@@ -21,58 +21,41 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- * Dubbo JSR-303 参数校验防卫与结构化转译过滤器
+ * Dubbo 服务端 JSR-303 参数格式快速失败防卫与转译过滤器
  * <p>
- * 1. 在 Provider 入口处对 RPC 入参执行 JSR-303 格式校验 (Fail-Fast 防卫)；
+ * 1. 在 Provider 边界入站时，基于 {@link ValidatorUtil} 对非基础类型入参执行 Fail-Fast 校验，
+ *    一旦存在违规字段立即阻断请求向下游 Service 穿透；
  * 2. 拦截并转译 {@link ConstraintViolationException}，提取具体违规字段路径与错误描述，
  *    统一结构化转译为框架标准受管 {@link BusinessException} (BAD_REQUEST / 400)。
  *
  * @author Ateng
  * @since 2026-10-28
  */
-@Activate(group = {CommonConstants.PROVIDER, CommonConstants.CONSUMER}, order = -9000)
+@Activate(group = CommonConstants.PROVIDER, order = -9000)
 public class DubboValidationFilter implements Filter, BaseFilter.Listener {
 
     private static final Logger log = LoggerFactory.getLogger(DubboValidationFilter.class);
 
-    private static volatile Validator cachedValidator;
-
-    private Validator getValidator() {
-        if (cachedValidator == null) {
-            synchronized (DubboValidationFilter.class) {
-                if (cachedValidator == null) {
-                    try {
-                        cachedValidator = Validation.buildDefaultValidatorFactory().getValidator();
-                    } catch (Throwable t) {
-                        log.debug("[DUBBO-VALIDATION] 初始化 Validator 提示: {}", t.getMessage());
-                    }
-                }
-            }
-        }
-        return cachedValidator;
-    }
-
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getValidation() != null && !properties.getValidation().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getValidation() != null && !properties.getValidation().isEnabled()))) {
             return invoker.invoke(invocation);
         }
 
         // 仅在 Provider 端入站时执行参数格式校验防卫
         if (!RpcContext.getContext().isConsumerSide()) {
             Object[] arguments = invocation.getArguments();
-            Validator validator = getValidator();
-            if (validator != null && arguments != null && arguments.length > 0) {
+            if (arguments != null && arguments.length > 0) {
                 for (Object arg : arguments) {
-                    if (arg != null && !isPrimitiveOrWrapper(arg.getClass())) {
+                    if (arg != null && !isSkippableParameterType(arg.getClass())) {
                         try {
-                            Set<ConstraintViolation<Object>> violations = validator.validate(arg);
+                            Set<ConstraintViolation<Object>> violations = ValidatorUtil.validateResult(arg);
                             if (violations != null && !violations.isEmpty()) {
-                                String errorMsg = formatViolations(violations);
+                                String errorMsg = DubboExceptionUtils.formatConstraintViolations(violations);
                                 log.warn("[DUBBO-VALIDATION] Provider 入参校验拦截: service={}, method={}, error={}",
                                         invoker.getInterface().getName(), invocation.getMethodName(), errorMsg);
                                 BusinessException businessException = new BusinessException(
@@ -92,29 +75,18 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
         return invoker.invoke(invocation);
     }
 
-    private boolean isPrimitiveOrWrapper(Class<?> clazz) {
+    private boolean isSkippableParameterType(Class<?> clazz) {
         return clazz.isPrimitive()
                 || clazz.getName().startsWith("java.lang.")
                 || clazz.getName().startsWith("java.util.")
-                || org.apache.dubbo.common.stream.StreamObserver.class.isAssignableFrom(clazz)
-                || clazz.getName().contains("StreamObserver");
-    }
-
-    private String formatViolations(Set<? extends ConstraintViolation<?>> violations) {
-        return violations.stream()
-                .map(v -> {
-                    String path = v.getPropertyPath() != null ? v.getPropertyPath().toString() : "";
-                    int dotIdx = path.lastIndexOf('.');
-                    String field = dotIdx >= 0 ? path.substring(dotIdx + 1) : path;
-                    return field + " " + v.getMessage();
-                })
-                .collect(Collectors.joining("; ", "参数校验失败: ", ""));
+                || DubboExceptionUtils.isStreamObserver(clazz);
     }
 
     @Override
     public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getValidation() != null && !properties.getValidation().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getValidation() != null && !properties.getValidation().isEnabled()))) {
             return;
         }
 
@@ -123,9 +95,9 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
         }
 
         Throwable exception = appResponse.getException();
-        ConstraintViolationException cve = findConstraintViolationException(exception);
+        ConstraintViolationException cve = DubboExceptionUtils.findConstraintViolationException(exception);
         if (cve != null) {
-            String errorMessage = extractValidationErrorMessage(cve);
+            String errorMessage = DubboExceptionUtils.formatConstraintViolations(cve.getConstraintViolations());
             log.warn("[DUBBO] JSR-303 参数校验拦截: service={}, method={}, error={}",
                     invoker.getInterface().getName(), invocation.getMethodName(), errorMessage);
             BusinessException businessException = new BusinessException(
@@ -141,33 +113,5 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         // 异常由 onResponse 与基础异常过滤器统一调度
-    }
-
-    private ConstraintViolationException findConstraintViolationException(Throwable throwable) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (current instanceof ConstraintViolationException cve) {
-                return cve;
-            }
-            if ("jakarta.validation.ConstraintViolationException".equals(current.getClass().getName())
-                    || "javax.validation.ConstraintViolationException".equals(current.getClass().getName())) {
-                try {
-                    if (current instanceof ConstraintViolationException cve) {
-                        return cve;
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-            current = current.getCause();
-        }
-        return null;
-    }
-
-    private String extractValidationErrorMessage(ConstraintViolationException cve) {
-        Set<ConstraintViolation<?>> violations = cve.getConstraintViolations();
-        if (violations == null || violations.isEmpty()) {
-            return cve.getMessage() != null ? cve.getMessage() : "参数校验失败";
-        }
-        return formatViolations(violations);
     }
 }

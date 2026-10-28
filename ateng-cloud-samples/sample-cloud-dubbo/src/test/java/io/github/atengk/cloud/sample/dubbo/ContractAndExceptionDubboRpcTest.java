@@ -48,7 +48,7 @@ public class ContractAndExceptionDubboRpcTest {
     }
 
     @Test
-    @DisplayName("验证声明返回 Result<T> 且业务失败时由 DubboResultUnwrapFilter 自动转译为本地 BusinessException")
+    @DisplayName("验证声明返回 Result<T> 且业务失败时由 DubboContractAssertFilter 自动转译为本地 BusinessException")
     void testFailedResultConvertedToBusinessException() {
         assertNotNull(userRpcService, "UserRpcService 代理引用不可为空");
         BusinessException ex = assertThrows(BusinessException.class, () -> {

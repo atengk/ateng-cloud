@@ -1,23 +1,12 @@
 package io.github.atengk.cloud.dubbo.properties;
 
 /**
- * Dubbo 双模契约校验与 Result 自动断言配置属性
+ * Dubbo 契约解包配置属性类（已废弃，请使用 {@link AtengDubboContractProperties}）
  *
  * @author Ateng
  * @since 2026-10-28
+ * @deprecated 请使用 {@link AtengDubboContractProperties}
  */
-public class AtengDubboResultUnwrapProperties {
-
-    /**
-     * 是否开启针对 Result&lt;T&gt; 响应的自动业务成功校验与防呆阻断，默认 true
-     */
-    private boolean enabled = true;
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
+@Deprecated(since = "1.0.0", forRemoval = false)
+public class AtengDubboResultUnwrapProperties extends AtengDubboContractProperties {
 }

@@ -43,7 +43,6 @@ public class TrafficTagDubboRpcTest {
     void tearDown() {
         MDC.clear();
         RpcContext.removeClientAttachment();
-        DubboPropertiesHolder.get().getTraffic().setTagForce(false);
     }
 
     @Test
@@ -84,8 +83,8 @@ public class TrafficTagDubboRpcTest {
     void testStrictTagIsolationWhenTagForceIsTrue() {
         assertNotNull(grayEchoRpcService, "GrayEchoRpcService 引用不可为空");
 
-        // 显式开启强制灰度隔离
-        DubboPropertiesHolder.get().getTraffic().setTagForce(true);
+        // 显式在本次 RPC 调用出站上下文中开启强制灰度隔离 (避免原地突变全局单例 Bean)
+        RpcContext.getClientAttachment().setAttachment(Constants.FORCE_USE_TAG, "true");
         MDC.put(DubboTrafficTagFilter.DEFAULT_TRAFFIC_TAG_HEADER, "offline-version");
 
         RpcException ex = assertThrows(RpcException.class, () -> grayEchoRpcService.echo("isolated"),

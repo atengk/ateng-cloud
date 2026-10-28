@@ -9,12 +9,12 @@ package io.github.atengk.cloud.dubbo.properties;
 public class AtengDubboProtocolProperties {
 
     /**
-     * 默认通信协议名称，默认 "tri" (Triple 协议)
+     * 默认通信协议名称，默认 "tri" (Triple 协议)；亦完全支持经典 TCP "dubbo" 协议
      */
     private String name = "tri";
 
     /**
-     * 默认服务暴露端口，默认 50051 (gRPC / Triple 标准推荐端口)
+     * 默认服务暴露端口，默认 50051 (Triple / gRPC 标准端口；若使用 dubbo 协议推荐 20880)
      */
     private Integer port = 50051;
 

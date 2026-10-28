@@ -19,21 +19,23 @@
 | `AtengDubboContextProperties` | 上下文配置属性类 | 全链路四维上下文出站注入与入站还原开关 | 默认 `true` 开启 |
 | `AtengDubboSameTokenProperties` | 零信任配置属性类 | 零信任内网防穿透 Same-Token 校验开关 | 默认 `true` 开启 |
 | `AtengDubboExceptionProperties` | 异常配置属性类 | 因果异常保真与第三方未知未受检异常转译开关 | 默认 `true` 开启 |
-| `AtengDubboResultUnwrapProperties` | 契约解包配置属性类 | 双模契约校验与非 200 业务结果自动断言剥壳开关 | 默认 `true` 开启 |
+| `AtengDubboContractProperties` | 契约配置属性类 | 双模契约校验与非 200 业务结果自动断言转译开关 | 默认 `true` 开启 |
 | `AtengDubboTrafficProperties` | 流量路由配置属性类 | 金丝雀灰度发布流量染色穿透与标签路由模式配置 | 默认 `true` 开启，`tag-force=false` 平滑降级兜底 |
 | `AtengDubboOverloadProperties` | 过载保护配置属性类 | 服务端线程池过载保护转译与指标采集导出开关 | 默认 `true` 开启，`metrics-enabled=true` |
 | `AtengDubboValidationProperties` | 参数校验配置属性类 | JSR-303 参数格式快速失败防卫与结构化转译开关 | 默认 `true` 开启 |
-| `AtengDubboEnvironmentPostProcessor` | 环境后置处理器 | 向 Spring 环境预设生产安全基线默认属性 | 预设停机 15s、载荷 16MB、重试 0 次，用户配置优先生效 |
+| `AtengDubboEnvironmentPostProcessor` | 环境后置处理器 | 向 Spring 环境预设优雅停机安全基线默认属性 | 预设停机 15s 硬兜底，支持用户 application.yml 优先无缝接管 |
 | `DubboContextPropagationFilter` | RPC 过滤器 | 全链路四维上下文透传与服务端 Netty 线程池确定性清理 | 双向激活 (`order = -10000`)，`finally` 块绝对清理杜绝污染 |
 | `DubboSameTokenFilter` | RPC 过滤器 | 零信任 Same-Token 校验拦截器（防公网绕过网关穿透） | 双向激活 (`order = -9500`)，内部调用自动双向校验并清理 |
 | `DubboValidationFilter` | RPC 过滤器 | Provider 边界 JSR-303 参数校验拦截与结构化转译 | 双向激活 (`order = -9000`)，Fail-Fast 抛出 400 业务异常 |
 | `DubboTrafficTagFilter` | RPC 过滤器 | 出站提取流量染色标记并压入 Dubbo 标签路由 | Consumer 端激活 (`order = -8500`)，支持强隔离与平滑降级 |
-| `DubboResultUnwrapFilter` | RPC 过滤器 | 对端返回 `Result<T>` 时自动断言业务成功并剥离外壳 | Consumer 端激活 (`order = 1000`)，豁免流式通信 |
+| `DubboContractAssertFilter` | RPC 过滤器 | 对端返回 `Result<T>` 时自动断言业务成功，失败自动转译 | Consumer 端激活 (`order = 1000`)，豁免流式通信 |
 | `AtengDubboExceptionFilter` | RPC 过滤器 | 接管默认异常过滤器，白名单放行业务异常并转译未知私有异常 | Provider 端激活，防御客户端 `ClassNotFoundException` |
 | `DubboOverloadFilter` | RPC 过滤器 | 捕获线程池打满拒绝异常并转译为标准 429 限流异常 | Provider 端激活 (`order = -9800`) |
 | `DubboOverloadHandler` | 拒绝执行处理器 | Dubbo 线程池耗尽拒绝策略实现，记录过载诊断并递增计数 | 绑定 Dubbo 扩展机制 `threadpool` |
+| `DubboOverloadThreadPool` | 线程池扩展 SPI | 挂载 `DubboOverloadHandler` 拒绝策略的生产级线程池实现 | 注册于 Dubbo `ThreadPool` SPI (`threadpool=overload`) |
 | `DubboOverloadListener` | 线程池耗尽监听器 | 监听 Dubbo 线程池耗尽事件并提供全局静态累计计数器 | SPI 注册于 `ThreadPoolExhaustedListener` |
 | `DubboOverloadMetrics` | 性能指标采集器 | 自动采集 Dubbo 核心线程池状态指标与拒绝计数至 Micrometer | 标配 `@ConditionalOnMissingBean`，支持 Prometheus 监控 |
+| `AbstractDubboTripleExceptionHandler` | 协议异常处理器基类 | Triple 协议异常处理公共模板，统一流式豁免与 grpc-status 封包 | 模板方法模式消除重复代码，统一保护传输层通道 |
 | `DubboBusinessExceptionHandler` | 协议异常处理器 | Triple 传输层受管 `BusinessException` 保真回传 | HTTP/2 协议层异常处理器，流式通信自动放行 |
 | `DubboOverloadExceptionHandler` | 协议异常处理器 | Triple 传输层线程池过载拒绝异常转译为 429 业务异常 | HTTP/2 协议层异常处理器，杜绝传输物理断连 |
 | `DubboValidationExceptionHandler` | 协议异常处理器 | Triple 传输层参数校验违规异常转译为 400 业务异常 | HTTP/2 协议层异常处理器，保真违规字段信息 |
@@ -200,15 +202,15 @@ public class BaselineDubboRpcTest {
 
 ## 维度二：生产扩展接管
 
-### 1. 双模契约校验与非 200 结果自动断言剥壳
+### 1. 双模契约校验与非 200 结果自动断言转译
 
-当 RPC 接口返回 `Result<T>` 统一包装对象时，`DubboResultUnwrapFilter` 自动校验对端业务状态码。当 `code != 200` 时，自动转译为本地 `BusinessException` 抛出，守住业务正确性防线，彻底消除消费端漏判 `isSuccess()` 导致的“带着错误码继续往下跑”隐患：
+当 RPC 接口返回 `Result<T>` 统一包装对象时，`DubboContractAssertFilter` 自动校验对端业务状态码。当 `code != 200` 时，自动转译为本地 `BusinessException` 抛出，守住业务正确性防线，彻底消除消费端漏判 `isSuccess()` 导致的“带着错误码继续往下跑”隐患：
 
 ```java
 @Test
 void testResultFailUnwrapToBusinessException() {
     // 服务端返回 Result.fail(4001, "用户状态已被冻结")
-    // 消费端自动剥壳转译为 BusinessException，无需显式 if (!result.isSuccess()) 判断
+    // 消费端自动断言转译为 BusinessException，无需显式 if (!result.isSuccess()) 判断
     assertThatThrownBy(() -> userRpcService.getFailedResult(99L))
             .isInstanceOf(BusinessException.class)
             .satisfies(ex -> {
@@ -219,12 +221,12 @@ void testResultFailUnwrapToBusinessException() {
 }
 ```
 
-若需对特定接口或全局关闭解包，配置：
+若需对特定接口或全局关闭断言，配置：
 ```yaml
 ateng:
   cloud:
     dubbo:
-      result-unwrap:
+      contract:
         enabled: false
 ```
 
@@ -418,6 +420,7 @@ void testServerStreamSuccessWithContextPropagation() throws InterruptedException
 | [`TrafficTagDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/TrafficTagDubboRpcTest.java) | 流量染色与标签路由 | `testBaselineEchoWithoutTag`<br>`testCanaryTagRoutingSmoothFallback`<br>`testTagForceStrictIsolation`<br>`testTrafficTagCleanup` | 100% PASS |
 | [`ValidationAndOverloadDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/ValidationAndOverloadDubboRpcTest.java) | 参数校验与过载保护 | `testValidationSuccess`<br>`testValidationFailFast`<br>`testOverloadHandlerRejectCount`<br>`testOverloadExceptionFilterTranslation`<br>`testOverloadMetricsBinding`<br>`testValidationCleanup` | 100% PASS |
 | [`StreamAndPayloadDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/StreamAndPayloadDubboRpcTest.java) | 流式通信与载荷/停机防护 | `testServerStreamSuccessWithContextPropagation`<br>`testServerStreamErrorHandling`<br>`testServerStreamValidationFailFast`<br>`testDubboGracefulShutdownAndPayloadConfig`<br>`testEchoNormalPayload`<br>`testExceedPayloadLimitDefense` | 100% PASS |
+| [`ClassicDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/ClassicDubboRpcTest.java) | 经典 TCP Dubbo 协议 | `testClassicDubboPing`<br>`testClassicDubboPojoCall`<br>`testClassicDubboContractAssert` | 100% PASS |
 
 > [!NOTE]
-> 本模块全套 27 个单元测试均遵循“100% 离线自洽铁律”，在脱离外部物理 Nacos / 注册中心的环境下基于直连与内存桩秒级执行，保障 CI/CD 构建流水线坚固稳定。
+> 本模块全套 30 个单元测试均遵循“100% 离线自洽铁律”，在脱离外部物理 Nacos / 注册中心的环境下基于直连与内存桩秒级执行，保障 CI/CD 构建流水线坚固稳定。

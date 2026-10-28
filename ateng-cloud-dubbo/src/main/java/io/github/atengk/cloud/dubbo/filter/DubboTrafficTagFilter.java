@@ -39,6 +39,9 @@ public class DubboTrafficTagFilter implements Filter {
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
+        if (properties != null && !properties.isEnabled()) {
+            return invoker.invoke(invocation);
+        }
         AtengDubboTrafficProperties traffic = properties != null ? properties.getTraffic() : null;
         if (traffic != null && !traffic.isEnabled()) {
             return invoker.invoke(invocation);
@@ -53,7 +56,16 @@ public class DubboTrafficTagFilter implements Filter {
         // 2. 若存在有效流量染色标签，则注入 Dubbo 标签路由及降级策略
         if (StringUtils.hasText(tag) && !"null".equalsIgnoreCase(tag.trim())) {
             String trimmedTag = tag.trim();
-            boolean tagForce = traffic != null && traffic.isTagForce();
+            String forceTagParam = invocation.getAttachment(Constants.FORCE_USE_TAG);
+            if (!StringUtils.hasText(forceTagParam)) {
+                forceTagParam = RpcContext.getClientAttachment().getAttachment(Constants.FORCE_USE_TAG);
+            }
+            if (!StringUtils.hasText(forceTagParam)) {
+                forceTagParam = invocation.getAttachment("dubbo.tagforce");
+            }
+            boolean tagForce = StringUtils.hasText(forceTagParam)
+                    ? Boolean.parseBoolean(forceTagParam)
+                    : (traffic != null && traffic.isTagForce());
             String tagForceStr = String.valueOf(tagForce);
 
             if (log.isDebugEnabled()) {

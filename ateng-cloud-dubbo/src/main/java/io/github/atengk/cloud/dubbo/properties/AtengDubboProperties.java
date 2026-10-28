@@ -66,10 +66,10 @@ public class AtengDubboProperties {
     private AtengDubboExceptionProperties exception = new AtengDubboExceptionProperties();
 
     /**
-     * 双模契约校验与 Result 自动断言配置
+     * 双模契约校验与业务结果自动断言配置
      */
     @NestedConfigurationProperty
-    private AtengDubboResultUnwrapProperties resultUnwrap = new AtengDubboResultUnwrapProperties();
+    private AtengDubboContractProperties contract = new AtengDubboContractProperties();
 
     /**
      * 金丝雀灰度流量染色与标签路由配置
@@ -161,12 +161,22 @@ public class AtengDubboProperties {
         this.exception = exception;
     }
 
-    public AtengDubboResultUnwrapProperties getResultUnwrap() {
-        return resultUnwrap;
+    public AtengDubboContractProperties getContract() {
+        return contract;
     }
 
-    public void setResultUnwrap(AtengDubboResultUnwrapProperties resultUnwrap) {
-        this.resultUnwrap = resultUnwrap;
+    public void setContract(AtengDubboContractProperties contract) {
+        this.contract = contract;
+    }
+
+    @Deprecated(since = "1.0.0", forRemoval = false)
+    public AtengDubboContractProperties getResultUnwrap() {
+        return contract;
+    }
+
+    @Deprecated(since = "1.0.0", forRemoval = false)
+    public void setResultUnwrap(AtengDubboContractProperties resultUnwrap) {
+        this.contract = resultUnwrap;
     }
 
     public AtengDubboTrafficProperties getTraffic() {

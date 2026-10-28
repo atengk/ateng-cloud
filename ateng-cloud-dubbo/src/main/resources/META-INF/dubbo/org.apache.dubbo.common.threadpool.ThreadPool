@@ -1,0 +1,2 @@
+overload=io.github.atengk.cloud.dubbo.overload.DubboOverloadThreadPool
+atengFixed=io.github.atengk.cloud.dubbo.overload.DubboOverloadThreadPool

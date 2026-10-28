@@ -2,6 +2,7 @@ package io.github.atengk.cloud.dubbo.overload;
 
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.dubbo.support.DubboExceptionUtils;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
@@ -34,7 +35,8 @@ public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getOverload() != null && !properties.getOverload().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getOverload() != null && !properties.getOverload().isEnabled()))) {
             return invoker.invoke(invocation);
         }
 
@@ -42,7 +44,7 @@ public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
         try {
             result = invoker.invoke(invocation);
         } catch (RpcException e) {
-            if (isOverloadException(e)) {
+            if (DubboExceptionUtils.isOverloadException(e)) {
                 DubboOverloadListener.incrementRejectCount();
                 log.warn("[DUBBO-OVERLOAD] 同步捕获线程池过载 RpcException: service={}, method={}, error={}",
                         invoker.getInterface().getName(), invocation.getMethodName(), e.getMessage());
@@ -55,7 +57,7 @@ public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
             throw e;
         }
 
-        if (result.hasException() && isOverloadException(result.getException())) {
+        if (result.hasException() && DubboExceptionUtils.isOverloadException(result.getException())) {
             DubboOverloadListener.incrementRejectCount();
             log.warn("[DUBBO-OVERLOAD] invoke 返回结果捕获线程池过载异常: service={}, method={}, error={}",
                     invoker.getInterface().getName(), invocation.getMethodName(), result.getException().getMessage());
@@ -73,7 +75,8 @@ public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
     @Override
     public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getOverload() != null && !properties.getOverload().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getOverload() != null && !properties.getOverload().isEnabled()))) {
             return;
         }
 
@@ -82,7 +85,7 @@ public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
         }
 
         Throwable exception = appResponse.getException();
-        if (isOverloadException(exception) && !(exception instanceof BusinessException)) {
+        if (DubboExceptionUtils.isOverloadException(exception) && !(exception instanceof BusinessException)) {
             DubboOverloadListener.incrementRejectCount();
             log.warn("[DUBBO-OVERLOAD] onResponse 捕获线程池过载异常: service={}, method={}, error={}",
                     invoker.getInterface().getName(), invocation.getMethodName(), exception.getMessage());
@@ -98,30 +101,10 @@ public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
 
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
-        if (isOverloadException(t)) {
+        if (DubboExceptionUtils.isOverloadException(t)) {
             DubboOverloadListener.incrementRejectCount();
             log.warn("[DUBBO-OVERLOAD] 调用 onError 捕获线程池过载: service={}, method={}, error={}",
                     invoker.getInterface().getName(), invocation.getMethodName(), t.getMessage());
         }
-    }
-
-    private boolean isOverloadException(Throwable throwable) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (current instanceof RejectedExecutionException) {
-                return true;
-            }
-            String message = current.getMessage();
-            if (message != null) {
-                String lower = message.toLowerCase();
-                if (lower.contains("thread pool is exhausted")
-                        || lower.contains("threadpool is exhausted")
-                        || lower.contains("threads can not be used anymore")) {
-                    return true;
-                }
-            }
-            current = current.getCause();
-        }
-        return false;
     }
 }

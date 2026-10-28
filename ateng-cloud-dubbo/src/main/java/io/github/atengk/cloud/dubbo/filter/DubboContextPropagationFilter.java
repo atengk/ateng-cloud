@@ -42,7 +42,8 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && properties.getContext() != null && !properties.getContext().isEnabled()) {
+        if (properties != null && (!properties.isEnabled()
+                || (properties.getContext() != null && !properties.getContext().isEnabled()))) {
             return invoker.invoke(invocation);
         }
 
@@ -135,11 +136,7 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
     private void cleanContexts() {
         UserContextHolder.clear();
         TenantContextHolder.clear();
-        MDC.remove("traceId");
-        MDC.remove(MessageHeaderConstants.TRACE_ID);
-        MDC.remove(TRAFFIC_TAG);
-        MDC.remove("trafficTag");
-        MDC.remove("traffic-tag");
+        MDC.clear();
     }
 
     private void setAttachmentIfValid(Invocation invocation, String key, String value) {
