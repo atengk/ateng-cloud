@@ -29,6 +29,17 @@ public class AtengFeignProperties {
     @NestedConfigurationProperty
     private AtengFeignAdaptiveUnwrapProperties adaptiveUnwrap = new AtengFeignAdaptiveUnwrapProperties();
 
+    /**
+     * 全链路四维上下文透传与零信任防穿透配置
+     */
+    @NestedConfigurationProperty
+    private AtengFeignContextProperties context = new AtengFeignContextProperties();
+
+    /**
+     * 全局 Feign 请求响应日志打印级别，生产默认 BASIC
+     */
+    private feign.Logger.Level loggerLevel = feign.Logger.Level.BASIC;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -51,5 +62,21 @@ public class AtengFeignProperties {
 
     public void setAdaptiveUnwrap(AtengFeignAdaptiveUnwrapProperties adaptiveUnwrap) {
         this.adaptiveUnwrap = adaptiveUnwrap;
+    }
+
+    public AtengFeignContextProperties getContext() {
+        return context;
+    }
+
+    public void setContext(AtengFeignContextProperties context) {
+        this.context = context;
+    }
+
+    public feign.Logger.Level getLoggerLevel() {
+        return loggerLevel;
+    }
+
+    public void setLoggerLevel(feign.Logger.Level loggerLevel) {
+        this.loggerLevel = loggerLevel;
     }
 }

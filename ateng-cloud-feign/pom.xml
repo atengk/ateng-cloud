@@ -41,6 +41,13 @@
             <artifactId>feign-hc5</artifactId>
         </dependency>
 
+        <!-- Sa-Token 内部受信凭据可选适配 (编译期可选，未引入时安全静默降级) -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot3-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

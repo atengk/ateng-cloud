@@ -10,7 +10,11 @@ import feign.optionals.OptionalDecoder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.feign.decoder.AtengFeignDecoder;
 import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
+import io.github.atengk.cloud.feign.interceptor.FeignContextPropagationInterceptor;
+import io.github.atengk.cloud.feign.logger.AtengFeignLoggerFactory;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
+import io.github.atengk.cloud.feign.spi.SameTokenProvider;
+import io.github.atengk.cloud.feign.support.SaTokenSameTokenProvider;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.ObjectFactory;
@@ -22,6 +26,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.openfeign.FeignBuilderCustomizer;
+import org.springframework.cloud.openfeign.FeignLoggerFactory;
 import org.springframework.cloud.openfeign.clientconfig.HttpClient5FeignConfiguration;
 import org.springframework.cloud.openfeign.support.HttpMessageConverterCustomizer;
 import org.springframework.cloud.openfeign.support.ResponseEntityDecoder;
@@ -100,5 +105,31 @@ public class AtengFeignAutoConfiguration {
                 };
             });
         };
+    }
+
+    @Bean
+    @ConditionalOnClass(name = "cn.dev33.satoken.same.SaSameUtil")
+    @ConditionalOnMissingBean(SameTokenProvider.class)
+    public SameTokenProvider saTokenSameTokenProvider() {
+        return new SaTokenSameTokenProvider();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "ateng.cloud.feign.context", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public FeignContextPropagationInterceptor feignContextPropagationInterceptor(ObjectProvider<SameTokenProvider> sameTokenProvider) {
+        return new FeignContextPropagationInterceptor(sameTokenProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(FeignLoggerFactory.class)
+    public FeignLoggerFactory feignLoggerFactory() {
+        return new AtengFeignLoggerFactory();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(feign.Logger.Level.class)
+    public feign.Logger.Level feignLoggerLevel(AtengFeignProperties properties) {
+        return properties.getLoggerLevel() != null ? properties.getLoggerLevel() : feign.Logger.Level.BASIC;
     }
 }
