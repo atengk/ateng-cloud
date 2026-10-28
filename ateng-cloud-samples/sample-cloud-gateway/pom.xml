@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.atengk</groupId>
+        <artifactId>ateng-cloud-samples</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>sample-cloud-gateway</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>ateng-cloud 响应式微服务网关自验场景工程 (100% 离线自洽 · 纯 WebFlux/Netty 架构)</description>
+
+    <dependencies>
+        <!-- ateng-cloud-gateway 核心基础设施 -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-gateway</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Actuator 监控端点支持 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Test 测试套件 (包含 WebTestClient 支持) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
