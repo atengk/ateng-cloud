@@ -47,7 +47,7 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
         }
 
         // 仅在 Provider 端入站时执行参数格式校验防卫
-        if (!RpcContext.getContext().isConsumerSide()) {
+        if (!isConsumerSide(invoker)) {
             Object[] arguments = invocation.getArguments();
             if (arguments != null && arguments.length > 0) {
                 for (Object arg : arguments) {
@@ -113,5 +113,18 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         // 异常由 onResponse 与基础异常过滤器统一调度
+    }
+
+    private boolean isConsumerSide(Invoker<?> invoker) {
+        if (invoker != null && invoker.getUrl() != null) {
+            String side = invoker.getUrl().getParameter(CommonConstants.SIDE_KEY);
+            if (CommonConstants.CONSUMER_SIDE.equalsIgnoreCase(side)) {
+                return true;
+            }
+            if (CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(side)) {
+                return false;
+            }
+        }
+        return RpcContext.getContext().isConsumerSide();
     }
 }

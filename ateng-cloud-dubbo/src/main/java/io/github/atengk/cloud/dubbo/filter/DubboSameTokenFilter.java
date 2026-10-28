@@ -53,7 +53,13 @@ public class DubboSameTokenFilter implements Filter {
             return invoker.invoke(invocation);
         }
 
-        boolean isConsumer = RpcContext.getContext().isConsumerSide();
+        // 本地短路调用 (injvm 进程内内存直接调用，未暴露任何物理网络端口) 豁免零信任防穿透拦截
+        if (invoker != null && invoker.getUrl() != null
+                && "injvm".equalsIgnoreCase(invoker.getUrl().getProtocol())) {
+            return invoker.invoke(invocation);
+        }
+
+        boolean isConsumer = isConsumerSide(invoker);
         if (isConsumer) {
             handleConsumer(invocation);
             return invoker.invoke(invocation);
@@ -61,6 +67,19 @@ public class DubboSameTokenFilter implements Filter {
             handleProvider(invoker, invocation, properties);
             return invoker.invoke(invocation);
         }
+    }
+
+    private boolean isConsumerSide(Invoker<?> invoker) {
+        if (invoker != null && invoker.getUrl() != null) {
+            String side = invoker.getUrl().getParameter(CommonConstants.SIDE_KEY);
+            if (CommonConstants.CONSUMER_SIDE.equalsIgnoreCase(side)) {
+                return true;
+            }
+            if (CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(side)) {
+                return false;
+            }
+        }
+        return RpcContext.getContext().isConsumerSide();
     }
 
     private void handleConsumer(Invocation invocation) {

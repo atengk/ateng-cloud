@@ -47,7 +47,13 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             return invoker.invoke(invocation);
         }
 
-        boolean isConsumer = RpcContext.getContext().isConsumerSide();
+        // 本地短路调用 (injvm 进程内内存直接调用) 上下文天然共享，直接执行
+        if (invoker != null && invoker.getUrl() != null
+                && "injvm".equalsIgnoreCase(invoker.getUrl().getProtocol())) {
+            return invoker.invoke(invocation);
+        }
+
+        boolean isConsumer = isConsumerSide(invoker);
         if (isConsumer) {
             handleConsumer(invocation);
             return invoker.invoke(invocation);
@@ -59,6 +65,19 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
                 cleanContexts();
             }
         }
+    }
+
+    private boolean isConsumerSide(Invoker<?> invoker) {
+        if (invoker != null && invoker.getUrl() != null) {
+            String side = invoker.getUrl().getParameter(CommonConstants.SIDE_KEY);
+            if (CommonConstants.CONSUMER_SIDE.equalsIgnoreCase(side)) {
+                return true;
+            }
+            if (CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(side)) {
+                return false;
+            }
+        }
+        return RpcContext.getContext().isConsumerSide();
     }
 
     private void handleConsumer(Invocation invocation) {
@@ -166,14 +185,14 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
 
     @Override
     public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
-        if (!RpcContext.getContext().isConsumerSide()) {
+        if (!isConsumerSide(invoker)) {
             cleanContexts();
         }
     }
 
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
-        if (!RpcContext.getContext().isConsumerSide()) {
+        if (!isConsumerSide(invoker)) {
             cleanContexts();
         }
     }

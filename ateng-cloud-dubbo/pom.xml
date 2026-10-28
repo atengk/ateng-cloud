@@ -52,6 +52,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Dubbo Nacos 注册中心可选驱动适配 -->
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-registry-nacos</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Sa-Token 内部受信凭据可选适配 (编译期可选，未引入时安全静默降级) -->
         <dependency>
             <groupId>cn.dev33</groupId>

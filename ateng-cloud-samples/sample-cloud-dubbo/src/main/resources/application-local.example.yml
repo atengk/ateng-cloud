@@ -1,0 +1,34 @@
+# ==============================================================================
+# 本地真实 Nacos 服务注册与发现配置模板（请将本文件复制为 application-local.yml 并填写真实凭据）
+# 注意：application-local.yml 已被 .gitignore 全局物理忽略，严禁向 Git 提交任何真实凭据！
+# ==============================================================================
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    nacos:
+      server-addr: YOUR_NACOS_SERVER:8848
+      username: YOUR_NACOS_USERNAME
+      password: YOUR_NACOS_PASSWORD
+      discovery:
+        server-addr: ${spring.cloud.nacos.server-addr}
+        enabled: true
+
+dubbo:
+  application:
+    # 双注册双发现模式：兼容现代应用级服务发现与传统接口级服务发现
+    register-mode: all
+  registry:
+    # 级联复用 spring.cloud.nacos 配置，自动连接真实 Nacos 注册中心
+    address: nacos://${spring.cloud.nacos.server-addr}
+    username: ${spring.cloud.nacos.username:}
+    password: ${spring.cloud.nacos.password:}
+    parameters:
+      namespace: ${spring.cloud.nacos.discovery.namespace:}
+    use-as-config-center: false
+    use-as-metadata-center: false
+  test:
+    reference:
+      # 置空 direct URL，触发 Dubbo 消费端通过 Nacos 注册中心执行服务发现与负载均衡
+      url: ""

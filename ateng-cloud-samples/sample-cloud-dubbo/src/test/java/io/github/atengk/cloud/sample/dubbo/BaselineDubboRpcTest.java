@@ -15,7 +15,7 @@ import org.springframework.test.util.TestSocketUtils;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Dubbo 基础连通性与 Triple 协议端到端集成测试 (100% 离线自洽)
+ * Dubbo 基础连通性与 Triple 协议端到端集成测试 (支持离线自洽与真实 Nacos 注册发现双模自适应)
  *
  * @author Ateng
  * @since 2026-10-28
@@ -25,19 +25,33 @@ public class BaselineDubboRpcTest {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        int dubboPort = TestSocketUtils.findAvailableTcpPort();
-        registry.add("dubbo.protocol.port", () -> dubboPort);
-        registry.add("test.dubbo.port", () -> dubboPort);
+        String activeProfile = System.getProperty("spring.profiles.active");
+        if (activeProfile == null) {
+            activeProfile = System.getenv("SPRING_PROFILES_ACTIVE");
+        }
+        boolean isLocal = "local".equalsIgnoreCase(activeProfile);
+        if (isLocal) {
+            // 本地真实 Nacos 环境下：固定使用 50051 端口注册至物理 Nacos，置空 direct URL 触发 Nacos 服务发现寻址
+            registry.add("dubbo.protocol.port", () -> 50051);
+            registry.add("test.dubbo.port", () -> 50051);
+            registry.add("dubbo.test.reference.url", () -> "");
+        } else {
+            // 离线自洽环境下 (默认/CI)：动态分配随机端口并通过直连 URL 极速执行，100% 离线免依赖
+            int dubboPort = TestSocketUtils.findAvailableTcpPort();
+            registry.add("dubbo.protocol.port", () -> dubboPort);
+            registry.add("test.dubbo.port", () -> dubboPort);
+            registry.add("dubbo.test.reference.url", () -> "tri://127.0.0.1:" + dubboPort);
+        }
     }
 
-    @DubboReference(url = "tri://127.0.0.1:${test.dubbo.port}", check = false)
+    @DubboReference(url = "${dubbo.test.reference.url:}", check = false, providedBy = "sample-cloud-dubbo")
     private UserRpcService userRpcService;
 
     @Autowired(required = false)
     private AtengDubboProperties dubboProperties;
 
     @Test
-    @DisplayName("端到端验证 Triple 协议 RPC 调用 ping 探活方法成功")
+    @DisplayName("端到端验证 Triple 协议 RPC 调用 ping 探活方法成功 (支持离线直连与 Nacos 注册发现双模自适应)")
     void testPing() {
         assertNotNull(userRpcService, "UserRpcService DubboReference 代理对象不可为空");
         String response = userRpcService.ping("hello-triple");

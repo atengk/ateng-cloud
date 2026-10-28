@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: sample-cloud-dubbo
+  config:
+    import:
+      # 弹性探测本地真实服务配置文件；物理不存在时自动静默忽略，保障 CI 100% 离线自洽
+      - "optional:classpath:application-local.yml"
 
 dubbo:
   application:
@@ -17,6 +21,7 @@ dubbo:
     serialization: fastjson2
   consumer:
     check: false
+    scope: remote
   provider:
     timeout: 5000
 
