@@ -23,6 +23,12 @@ public class AtengFeignProperties {
     @NestedConfigurationProperty
     private AtengFeignHttpClientProperties httpclient = new AtengFeignHttpClientProperties();
 
+    /**
+     * 双模自适应契约解包引擎配置
+     */
+    @NestedConfigurationProperty
+    private AtengFeignAdaptiveUnwrapProperties adaptiveUnwrap = new AtengFeignAdaptiveUnwrapProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -37,5 +43,13 @@ public class AtengFeignProperties {
 
     public void setHttpclient(AtengFeignHttpClientProperties httpclient) {
         this.httpclient = httpclient;
+    }
+
+    public AtengFeignAdaptiveUnwrapProperties getAdaptiveUnwrap() {
+        return adaptiveUnwrap;
+    }
+
+    public void setAdaptiveUnwrap(AtengFeignAdaptiveUnwrapProperties adaptiveUnwrap) {
+        this.adaptiveUnwrap = adaptiveUnwrap;
     }
 }
