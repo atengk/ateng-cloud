@@ -34,5 +34,12 @@
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-dubbo</artifactId>
         </dependency>
+
+        <!-- Spring Cloud Gateway 响应式微服务网关底座 (可选依赖，遵循 Reactive vs Servlet 物理隔离铁律) -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-gateway</artifactId>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 </project>
