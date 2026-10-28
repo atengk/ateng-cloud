@@ -117,26 +117,26 @@ public class GrayServiceInstanceListSupplier extends DelegatingServiceInstanceLi
      * 判定实例是否匹配指定的灰度标签
      */
     private boolean matchTag(ServiceInstance instance, String targetTag) {
-        if (instance == null || instance.getMetadata() == null) {
-            return false;
-        }
-        Map<String, String> meta = instance.getMetadata();
-        String instanceTag = meta.get("tag");
-        if (!StringUtils.hasText(instanceTag)) {
-            instanceTag = meta.get("traffic-tag");
-        }
-        if (!StringUtils.hasText(instanceTag)) {
-            instanceTag = meta.get("traffic.tag");
-        }
-        return targetTag.equalsIgnoreCase(instanceTag);
+        String instanceTag = extractInstanceTag(instance);
+        return targetTag != null && targetTag.equalsIgnoreCase(instanceTag);
     }
 
     /**
      * 判定实例是否为基线实例
      */
     private boolean isBaselineInstance(ServiceInstance instance) {
+        String tag = extractInstanceTag(instance);
+        return !StringUtils.hasText(tag)
+                || "default".equalsIgnoreCase(tag)
+                || "baseline".equalsIgnoreCase(tag);
+    }
+
+    /**
+     * 从服务实例元数据中提取灰度染色标签 (兼容 tag / traffic-tag / traffic.tag)
+     */
+    private String extractInstanceTag(ServiceInstance instance) {
         if (instance == null || instance.getMetadata() == null) {
-            return true;
+            return null;
         }
         Map<String, String> meta = instance.getMetadata();
         String tag = meta.get("tag");
@@ -146,9 +146,7 @@ public class GrayServiceInstanceListSupplier extends DelegatingServiceInstanceLi
         if (!StringUtils.hasText(tag)) {
             tag = meta.get("traffic.tag");
         }
-        return !StringUtils.hasText(tag)
-                || "default".equalsIgnoreCase(tag)
-                || "baseline".equalsIgnoreCase(tag);
+        return tag;
     }
 
     /**

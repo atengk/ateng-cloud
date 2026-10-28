@@ -1,5 +1,7 @@
 package io.github.atengk.cloud.gateway.properties;
 
+import java.time.Duration;
+
 /**
  * 网关流量染色与金丝雀灰度配置属性
  *
@@ -18,6 +20,11 @@ public class AtengGatewayTrafficProperties {
      */
     private boolean fallbackToDefault = true;
 
+    /**
+     * 负载均衡实例列表本地缓存生存时间 TTL (默认压缩至 3s，敏捷感知实例上下线)
+     */
+    private Duration cacheTtl = Duration.ofSeconds(3);
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -32,5 +39,13 @@ public class AtengGatewayTrafficProperties {
 
     public void setFallbackToDefault(boolean fallbackToDefault) {
         this.fallbackToDefault = fallbackToDefault;
+    }
+
+    public Duration getCacheTtl() {
+        return cacheTtl;
+    }
+
+    public void setCacheTtl(Duration cacheTtl) {
+        this.cacheTtl = cacheTtl;
     }
 }

@@ -31,20 +31,8 @@ public class ApiKeyResolver implements KeyResolver {
             path = "/";
         }
 
-        // 解析真实 IP
-        String ip = exchange.getAttribute(GatewayConstants.ATTR_CLIENT_IP);
-        if (!StringUtils.hasText(ip)) {
-            ip = exchange.getRequest().getHeaders().getFirst(GatewayConstants.X_REAL_IP);
-        }
-        if (!StringUtils.hasText(ip) && exchange.getRequest().getRemoteAddress() != null) {
-            InetSocketAddress remoteAddress = exchange.getRequest().getRemoteAddress();
-            if (remoteAddress.getAddress() != null) {
-                ip = remoteAddress.getAddress().getHostAddress();
-            }
-        }
-        if (!StringUtils.hasText(ip)) {
-            ip = "127.0.0.1";
-        }
+        // 复用统一安全客户端真实 IP 解析
+        String ip = IpKeyResolver.resolveClientIp(exchange);
 
         return Mono.just(path + "_" + ip);
     }

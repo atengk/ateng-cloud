@@ -79,3 +79,11 @@ _Avoid_: 签名校验, 接口验签, 防重放拦截
 **Canary Gray LoadBalancing**:
 网关基于请求上下文中的 `X-Traffic-Tag` 过滤 Nacos 实例元数据（`metadata.tag`）并执行精准分流，且在灰度节点全下线时自动弹性降级回退至基线默认实例的反应式负载均衡机制。
 _Avoid_: 灰度负载均衡, 金丝雀路由, 标签路由
+
+**Composite LoadBalancing Chain**:
+网关构建的将金丝雀灰度隔离、可用区就近亲和与启动预热加权选择器按“业务隔离优先于拓扑亲和”次序动态嵌套的复合责任链调度机制。
+_Avoid_: 组合负载均衡, 责任链负载, 混合路由
+
+**Dynamic Traffic Tag Resolver**:
+网关基于 `TrafficTagResolver` SPI 提供的支持从请求头、Query 参数及自定义业务维度（如租户 ID、用户白名单等）动态解析与计算流量染色标签的可插拔决策机制。
+_Avoid_: 动态打标器, 灰度解析器, 染色策略

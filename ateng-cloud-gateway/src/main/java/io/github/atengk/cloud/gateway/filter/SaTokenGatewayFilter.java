@@ -56,10 +56,6 @@ public class SaTokenGatewayFilter implements GlobalFilter, Ordered {
 
     public SaTokenGatewayFilter(AtengGatewaySecurityProperties securityProperties) {
         this.securityProperties = securityProperties;
-        // 定制 Sa-Token 防火墙检测失败处理逻辑，转译为统一 HTTP 400 Bad Request
-        cn.dev33.satoken.strategy.SaFirewallStrategy.instance.checkFailHandle = (e, req, res, ext) -> {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "非法请求路径：检测到目录穿越或畸形字符", e);
-        };
     }
 
     @Override
@@ -75,25 +71,8 @@ public class SaTokenGatewayFilter implements GlobalFilter, Ordered {
             SaReactorSyncHolder.setContext(exchange);
             try {
                 ServerHttpRequest.Builder reqBuilder = exchange.getRequest().mutate();
-                if (StpUtil.isLogin()) {
-                    Object loginId = StpUtil.getLoginIdDefaultNull();
-                    String userId = loginId != null ? String.valueOf(loginId) : null;
-                    String tenantId = extractTenantId();
-
-                    if (StringUtils.hasText(userId)) {
-                        exchange.getAttributes().put(GatewayConstants.ATTR_USER_ID, userId);
-                        reqBuilder.header(GatewayConstants.X_USER_ID, userId);
-                    }
-                    if (StringUtils.hasText(tenantId)) {
-                        exchange.getAttributes().put(GatewayConstants.ATTR_TENANT_ID, tenantId);
-                        reqBuilder.header(GatewayConstants.X_TENANT_ID, tenantId);
-                    }
-                }
-                injectSameTokenHeaders(reqBuilder);
+                populateAuthHeaders(exchange, reqBuilder);
                 return chain.filter(exchange.mutate().request(reqBuilder.build()).build());
-            } catch (Exception e) {
-                ServerHttpRequest mutatedRequest = injectSameToken(exchange.getRequest());
-                return chain.filter(exchange.mutate().request(mutatedRequest).build());
             } finally {
                 SaReactorSyncHolder.clearContext();
             }
@@ -107,30 +86,8 @@ public class SaTokenGatewayFilter implements GlobalFilter, Ordered {
                 return Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或登录状态已过期，请重新登录"));
             }
 
-            // 3. 提取受信任的用户与租户身份信息
-            Object loginId = StpUtil.getLoginIdDefaultNull();
-            String userId = loginId != null ? String.valueOf(loginId) : null;
-            String tenantId = extractTenantId();
-
-            if (StringUtils.hasText(userId)) {
-                exchange.getAttributes().put(GatewayConstants.ATTR_USER_ID, userId);
-            }
-            if (StringUtils.hasText(tenantId)) {
-                exchange.getAttributes().put(GatewayConstants.ATTR_TENANT_ID, tenantId);
-            }
-
-            // 4. 重写入站下游请求头
             ServerHttpRequest.Builder reqBuilder = exchange.getRequest().mutate();
-            if (StringUtils.hasText(userId)) {
-                reqBuilder.header(GatewayConstants.X_USER_ID, userId);
-            }
-            if (StringUtils.hasText(tenantId)) {
-                reqBuilder.header(GatewayConstants.X_TENANT_ID, tenantId);
-            }
-
-            // 注入网关动态签发的内部同源 Same-Token
-            injectSameTokenHeaders(reqBuilder);
-
+            populateAuthHeaders(exchange, reqBuilder);
             return chain.filter(exchange.mutate().request(reqBuilder.build()).build());
         } catch (NotLoginException e) {
             log.warn("网关集中鉴权：未登录异常: URI=[{}], type=[{}]", path, e.getType());
@@ -138,6 +95,27 @@ public class SaTokenGatewayFilter implements GlobalFilter, Ordered {
         } finally {
             SaReactorSyncHolder.clearContext();
         }
+    }
+
+    /**
+     * 提取当前登录会话中的用户与租户身份，注入上下文 Attributes 与出站请求头，并挂载内部同源 Same-Token
+     */
+    private void populateAuthHeaders(ServerWebExchange exchange, ServerHttpRequest.Builder reqBuilder) {
+        if (StpUtil.isLogin()) {
+            Object loginId = StpUtil.getLoginIdDefaultNull();
+            String userId = loginId != null ? String.valueOf(loginId) : null;
+            String tenantId = extractTenantId();
+
+            if (StringUtils.hasText(userId)) {
+                exchange.getAttributes().put(GatewayConstants.ATTR_USER_ID, userId);
+                reqBuilder.header(GatewayConstants.X_USER_ID, userId);
+            }
+            if (StringUtils.hasText(tenantId)) {
+                exchange.getAttributes().put(GatewayConstants.ATTR_TENANT_ID, tenantId);
+                reqBuilder.header(GatewayConstants.X_TENANT_ID, tenantId);
+            }
+        }
+        injectSameTokenHeaders(reqBuilder);
     }
 
     /**
@@ -195,15 +173,6 @@ public class SaTokenGatewayFilter implements GlobalFilter, Ordered {
         } catch (Exception ignored) {
         }
         return null;
-    }
-
-    /**
-     * 向出站请求注入动态签发的 Same-Token
-     */
-    private ServerHttpRequest injectSameToken(ServerHttpRequest request) {
-        ServerHttpRequest.Builder builder = request.mutate();
-        injectSameTokenHeaders(builder);
-        return builder.build();
     }
 
     private void injectSameTokenHeaders(ServerHttpRequest.Builder builder) {

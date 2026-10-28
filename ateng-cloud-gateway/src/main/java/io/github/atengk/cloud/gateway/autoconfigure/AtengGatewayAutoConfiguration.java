@@ -19,22 +19,31 @@ import io.github.atengk.cloud.gateway.filter.factory.AtengRetryGatewayFilterFact
 import io.github.atengk.cloud.gateway.handler.GatewayGlobalExceptionHandler;
 import io.github.atengk.cloud.gateway.loadbalancer.GrayLoadBalancerClientConfiguration;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
+import io.github.atengk.cloud.gateway.provider.InMemoryGatewayNonceValidator;
 import io.github.atengk.cloud.gateway.provider.InMemorySignSecretProvider;
 import io.github.atengk.cloud.gateway.provider.PropertiesIpFilterProvider;
 import io.github.atengk.cloud.gateway.ratelimit.ApiKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.IpKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.UserKeyResolver;
+import io.github.atengk.cloud.gateway.resolver.DefaultTrafficTagResolver;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
+import io.github.atengk.cloud.gateway.spi.GatewayNonceValidator;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
 import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
+import io.github.atengk.cloud.gateway.spi.TrafficTagResolver;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.codec.CodecCustomizer;
+import org.springframework.cloud.gateway.config.GatewayAutoConfiguration;
+import org.springframework.cloud.gateway.config.HttpClientCustomizer;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
+import org.springframework.cloud.gateway.route.RouteDefinitionRepository;
 import org.springframework.cloud.loadbalancer.annotation.LoadBalancerClients;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
@@ -48,6 +57,8 @@ import org.springframework.context.annotation.Primary;
  * @since 2026-10-28
  */
 @AutoConfiguration
+@AutoConfigureBefore(GatewayAutoConfiguration.class)
+@ConditionalOnClass(GlobalFilter.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
 @EnableConfigurationProperties(AtengGatewayProperties.class)
 @ConditionalOnProperty(prefix = "ateng.cloud.gateway", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -80,6 +91,29 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
+     * 注册 Netty 响应式 HTTP 客户端生产级双阶超时定制器 (connectTimeout + responseTimeout)
+     *
+     * @param properties 网关配置属性
+     * @return HttpClientCustomizer
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(HttpClientCustomizer.class)
+    public HttpClientCustomizer gatewayHttpClientCustomizer(AtengGatewayProperties properties) {
+        return httpClient -> {
+            reactor.netty.http.client.HttpClient client = httpClient;
+            if (properties.getConnectTimeout() != null) {
+                client = client.option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS,
+                        (int) properties.getConnectTimeout().toMillis());
+            }
+            if (properties.getResponseTimeout() != null) {
+                client = client.responseTimeout(properties.getResponseTimeout());
+            }
+            return client;
+        };
+    }
+
+    /**
      * 注册弹性防雪崩安全重试过滤器工厂 (写请求零重试，读请求建连失败弹性重试 1 次)
      *
      * @return AtengRetryGatewayFilterFactory
@@ -91,16 +125,30 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
+     * 注册默认全链路灰度染色标签解析器 (Header > Query)
+     *
+     * @return TrafficTagResolver
+     */
+    @Bean
+    @ConditionalOnMissingBean(TrafficTagResolver.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.traffic", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public TrafficTagResolver defaultTrafficTagResolver() {
+        return new DefaultTrafficTagResolver();
+    }
+
+    /**
      * 注册全链路灰度染色标签解析全局过滤器
      *
      * @param properties 网关配置属性
+     * @param trafficTagResolver 流量染色标签解析器
      * @return GatewayTrafficTagFilter
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.traffic", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public GatewayTrafficTagFilter gatewayTrafficTagFilter(AtengGatewayProperties properties) {
-        return new GatewayTrafficTagFilter(properties.getTraffic());
+    public GatewayTrafficTagFilter gatewayTrafficTagFilter(AtengGatewayProperties properties,
+                                                           TrafficTagResolver trafficTagResolver) {
+        return new GatewayTrafficTagFilter(properties.getTraffic(), trafficTagResolver);
     }
 
     /**
@@ -156,10 +204,23 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
+     * 注册开放接口 Nonce 防重放校验器默认实现 (基于内存滑动窗口)
+     *
+     * @return GatewayNonceValidator
+     */
+    @Bean
+    @ConditionalOnMissingBean(GatewayNonceValidator.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public GatewayNonceValidator defaultGatewayNonceValidator() {
+        return new InMemoryGatewayNonceValidator();
+    }
+
+    /**
      * 注册开放接口 API 签名防篡改与 Nonce 防重放全局过滤器
      *
      * @param properties 网关配置属性
      * @param secretProvider 签名密钥提供者
+     * @param nonceValidator Nonce 校验器
      * @param objectMapper Jackson 对象映射器
      * @return GatewaySignGuardFilter
      */
@@ -168,8 +229,9 @@ public class AtengGatewayAutoConfiguration {
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
     public GatewaySignGuardFilter gatewaySignGuardFilter(AtengGatewayProperties properties,
                                                         SignSecretProvider secretProvider,
+                                                        GatewayNonceValidator nonceValidator,
                                                         ObjectMapper objectMapper) {
-        return new GatewaySignGuardFilter(properties.getSign(), secretProvider, objectMapper);
+        return new GatewaySignGuardFilter(properties.getSign(), secretProvider, nonceValidator, objectMapper);
     }
 
     /**
@@ -206,7 +268,7 @@ public class AtengGatewayAutoConfiguration {
         @ConditionalOnMissingBean
         @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "header-sanitize-enabled", havingValue = "true", matchIfMissing = true)
         public GatewayHeaderSanitizeFilter gatewayHeaderSanitizeFilter(AtengGatewayProperties properties) {
-            return new GatewayHeaderSanitizeFilter(properties.getSecurity());
+            return new GatewayHeaderSanitizeFilter(properties.getSecurity(), properties.getTenant());
         }
 
         /**
@@ -245,15 +307,27 @@ public class AtengGatewayAutoConfiguration {
         @ConditionalOnMissingBean
         @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "sa-token-enabled", havingValue = "true", matchIfMissing = true)
         public SaTokenGatewayFilter saTokenGatewayFilter(AtengGatewayProperties properties) {
+            // 定制 Sa-Token 防火墙检测失败处理逻辑，转译为统一 HTTP 400 Bad Request
+            cn.dev33.satoken.strategy.SaFirewallStrategy.instance.checkFailHandle = (e, req, res, ext) -> {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "非法请求路径：检测到目录穿越或畸形字符", e);
+            };
             return new SaTokenGatewayFilter(properties.getSecurity());
         }
+    }
+
+    /**
+     * 多租户入站解析与防跨越隔离自动装配
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.tenant", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public static class TenantFilterAutoConfiguration {
 
         /**
          * 注册多租户入站解析与防跨越隔离全局过滤器
          */
         @Bean
         @ConditionalOnMissingBean
-        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.tenant", name = "enabled", havingValue = "true", matchIfMissing = true)
         public GatewayTenantFilter gatewayTenantFilter(AtengGatewayProperties properties) {
             return new GatewayTenantFilter(properties.getTenant());
         }
@@ -271,7 +345,7 @@ public class AtengGatewayAutoConfiguration {
          * 注册基于 Nacos 配置中心的动态路由仓库实现
          */
         @Bean
-        @ConditionalOnMissingBean
+        @ConditionalOnMissingBean(RouteDefinitionRepository.class)
         public NacosRouteDefinitionRepository nacosRouteDefinitionRepository(
                 ObjectProvider<NacosConfigManager> nacosConfigManagerProvider,
                 AtengGatewayProperties properties,

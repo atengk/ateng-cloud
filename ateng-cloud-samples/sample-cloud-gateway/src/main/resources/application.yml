@@ -12,8 +12,15 @@ spring:
         enabled: false
       config:
         enabled: false
+    loadbalancer:
+      cache:
+        ttl: 3s
     gateway:
       routes:
+        - id: mock-open-data
+          uri: forward:/mock/open-data
+          predicates:
+            - Path=/api/open/data
         - id: auth-login
           uri: forward:/auth/login
           predicates:
@@ -58,10 +65,20 @@ ateng:
     gateway:
       enabled: true
       max-in-memory-size: 2MB
+      access-log:
+        enabled: true
+        slow-threshold: 3s
+      sign:
+        enabled: true
+        timestamp-threshold: 5m
+        include-paths:
+          - "/api/open/**"
       security:
         enabled: true
         trusted-proxy-count: 1
         exclude-paths:
+          - "/api/open/**"
+          - "/mock/open-data"
           - "/api/mock/hello"
           - "/api/mock/echo-headers"
           - "/mock/echo-headers"

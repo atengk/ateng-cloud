@@ -2,6 +2,7 @@ package io.github.atengk.cloud.gateway.filter;
 
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySecurityProperties;
+import io.github.atengk.cloud.gateway.properties.AtengGatewayTenantProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -9,6 +10,7 @@ import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -18,8 +20,10 @@ import java.util.List;
  * 入站敏感标头物理剥离清洗全局过滤器
  *
  * <p>置于网关最外层边缘防御管道（{@link GatewayConstants#ORDER_HEADER_SANITIZE}），
- * 无条件物理剥离入站请求中的 {@code X-User-Id}、{@code X-Tenant-Id}、{@code X-Ignore-Tenant}、
- * {@code Same-Token} 等内部受信标头，彻底杜绝外部恶意客户端冒充内部受信任身份实施的越权穿透攻击。</p>
+ * 默认物理剥离入站请求中的 {@code X-User-Id}、{@code X-Tenant-Id}、{@code X-Ignore-Tenant}、
+ * {@code Same-Token} 等内部受信标头，彻底杜绝外部恶意客户端冒充内部受信任身份实施的越权穿透攻击。
+ * 若业务显式配置允许入站租户标头（{@code ateng.cloud.gateway.tenant.allow-header: true}），
+ * 则放行租户标头供下游 {@link GatewayTenantFilter} 受控消费。</p>
  *
  * @author Ateng
  * @since 2026-10-28
@@ -29,21 +33,36 @@ public class GatewayHeaderSanitizeFilter implements GlobalFilter, Ordered {
     private static final Logger log = LoggerFactory.getLogger(GatewayHeaderSanitizeFilter.class);
 
     private final AtengGatewaySecurityProperties securityProperties;
+    private final AtengGatewayTenantProperties tenantProperties;
 
     public GatewayHeaderSanitizeFilter(AtengGatewaySecurityProperties securityProperties) {
+        this(securityProperties, null);
+    }
+
+    public GatewayHeaderSanitizeFilter(AtengGatewaySecurityProperties securityProperties,
+                                      AtengGatewayTenantProperties tenantProperties) {
         this.securityProperties = securityProperties;
+        this.tenantProperties = tenantProperties;
     }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        List<String> headersToSanitize = securityProperties.getSanitizeHeaders();
+        List<String> headersToSanitize = securityProperties != null ? securityProperties.getSanitizeHeaders() : null;
         if (headersToSanitize == null || headersToSanitize.isEmpty()) {
             return chain.filter(exchange);
         }
 
+        boolean allowTenantHeader = tenantProperties != null && tenantProperties.isAllowHeader();
+        String tenantHeaderName = (tenantProperties != null && StringUtils.hasText(tenantProperties.getHeaderName()))
+                ? tenantProperties.getHeaderName()
+                : GatewayConstants.X_TENANT_ID;
+
         HttpHeaders currentHeaders = exchange.getRequest().getHeaders();
         boolean containsSensitiveHeader = false;
         for (String headerName : headersToSanitize) {
+            if (allowTenantHeader && headerName.equalsIgnoreCase(tenantHeaderName)) {
+                continue;
+            }
             if (currentHeaders.containsKey(headerName)) {
                 containsSensitiveHeader = true;
                 break;
@@ -59,6 +78,9 @@ public class GatewayHeaderSanitizeFilter implements GlobalFilter, Ordered {
         ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
                 .headers(httpHeaders -> {
                     for (String headerName : headersToSanitize) {
+                        if (allowTenantHeader && headerName.equalsIgnoreCase(tenantHeaderName)) {
+                            continue;
+                        }
                         if (httpHeaders.containsKey(headerName)) {
                             log.debug("网关边缘清洗：物理剥离入站敏感标头 [{}]", headerName);
                             httpHeaders.remove(headerName);

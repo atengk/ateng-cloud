@@ -1,22 +1,21 @@
 package io.github.atengk.cloud.gateway.filter;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySignProperties;
+import io.github.atengk.cloud.gateway.spi.GatewayNonceValidator;
 import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
+import io.github.atengk.cloud.gateway.util.GatewayResponseUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.PathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -30,8 +29,6 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 开放接口 API 签名防篡改与 Nonce 防重放全局过滤器
@@ -39,8 +36,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>核心治理语义：
  * 1. 严格校验必需标头：{@code X-App-Id}、{@code X-Timestamp}、{@code X-Nonce} 与 {@code X-Signature}；
  * 2. 时间戳时钟防偏：校验时间戳与当前系统时间差，超过阈值（默认 5 分钟）判定为过期；
- * 3. Nonce 防重放攻击：在时间窗口内检验 Nonce 唯一性，拒绝重复 Nonce 请求；
- * 4. HMAC-SHA256 签名校验：规范化请求参数与标头，比对摘要防止请求被中间人篡改。</p>
+ * 3. Nonce 防重放攻击：依托可插拔 {@link GatewayNonceValidator} 检验 Nonce 唯一性，拒绝重复 Nonce 请求；
+ * 4. HMAC-SHA256 签名校验：规范化请求参数与标头，比对摘要防止请求被中间人篡改；
+ * 5. 路径白名单与路由边界：支持配置 {@code includePaths} 与 {@code excludePaths} 明确过滤范围，防御范围蔓延。</p>
  *
  * @author Ateng
  * @since 2026-10-28
@@ -51,24 +49,34 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
 
     private final AtengGatewaySignProperties properties;
     private final SignSecretProvider secretProvider;
+    private final GatewayNonceValidator nonceValidator;
     private final ObjectMapper objectMapper;
-
-    /**
-     * 内存滑动窗口 Nonce 缓存 (Key: Nonce, Value: 接收时间戳)
-     */
-    private final Map<String, Long> nonceCache = new ConcurrentHashMap<>();
+    private final PathMatcher pathMatcher = new AntPathMatcher();
 
     public GatewaySignGuardFilter(AtengGatewaySignProperties properties,
                                   SignSecretProvider secretProvider,
                                   ObjectMapper objectMapper) {
+        this(properties, secretProvider, new io.github.atengk.cloud.gateway.provider.InMemoryGatewayNonceValidator(), objectMapper);
+    }
+
+    public GatewaySignGuardFilter(AtengGatewaySignProperties properties,
+                                  SignSecretProvider secretProvider,
+                                  GatewayNonceValidator nonceValidator,
+                                  ObjectMapper objectMapper) {
         this.properties = properties;
         this.secretProvider = secretProvider;
+        this.nonceValidator = nonceValidator;
         this.objectMapper = objectMapper;
     }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         if (properties == null || !properties.isEnabled()) {
+            return chain.filter(exchange);
+        }
+
+        String path = exchange.getRequest().getPath().value();
+        if (!shouldFilter(path)) {
             return chain.filter(exchange);
         }
 
@@ -116,12 +124,13 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
             return writeJsonError(exchange, "请求时间戳偏差过大或已过期");
         }
 
-        // 3. Nonce 防重放校验
-        cleanExpiredNonces(now, allowedDeviation);
-        Long previous = nonceCache.putIfAbsent(nonce.trim(), now);
-        if (previous != null) {
-            log.warn("[GatewaySign] 检测到重复 Nonce 请求，疑似重放攻击: nonce={}", nonce);
-            return writeJsonError(exchange, "请求随机数 Nonce 重复，疑似重放攻击");
+        // 3. Nonce 防重放校验 (委托无状态 SPI 校验)
+        if (nonceValidator != null) {
+            boolean validNonce = nonceValidator.validateAndStore(nonce.trim(), properties.getTimestampThreshold());
+            if (!validNonce) {
+                log.warn("[GatewaySign] 检测到重复 Nonce 请求，疑似重放攻击: nonce={}", nonce);
+                return writeJsonError(exchange, "请求随机数 Nonce 重复，疑似重放攻击");
+            }
         }
 
         // 4. 获取 AppId 对应 Secret
@@ -144,6 +153,30 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
         }
 
         return chain.filter(exchange);
+    }
+
+    /**
+     * 判断当前请求路径是否需要执行签名拦截
+     */
+    private boolean shouldFilter(String path) {
+        List<String> excludes = properties.getExcludePaths();
+        if (excludes != null && !excludes.isEmpty()) {
+            for (String pattern : excludes) {
+                if (pathMatcher.match(pattern, path)) {
+                    return false;
+                }
+            }
+        }
+        List<String> includes = properties.getIncludePaths();
+        if (includes == null || includes.isEmpty()) {
+            return true;
+        }
+        for (String pattern : includes) {
+            if (pathMatcher.match(pattern, path)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -195,39 +228,10 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
     }
 
     /**
-     * 定期清洗过期 Nonce 记录，防止内存无界膨胀
-     */
-    private void cleanExpiredNonces(long now, long allowedDeviation) {
-        if (nonceCache.size() > 5000) {
-            nonceCache.entrySet().removeIf(entry -> now - entry.getValue() > allowedDeviation * 2);
-        }
-    }
-
-    /**
      * 统一写出 HTTP 401 签名错误响应
      */
     private Mono<Void> writeJsonError(ServerWebExchange exchange, String msg) {
-        ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(HttpStatus.UNAUTHORIZED);
-        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-
-        String traceId = (String) exchange.getAttributes().get(GatewayConstants.ATTR_TRACE_ID);
-        if (StringUtils.hasText(traceId)) {
-            response.getHeaders().set(GatewayConstants.X_TRACE_ID, traceId);
-        }
-
-        Result<Void> result = Result.fail(401, msg);
-        result.setTraceId(traceId);
-
-        byte[] bytes;
-        try {
-            bytes = objectMapper.writeValueAsBytes(result);
-        } catch (JsonProcessingException e) {
-            bytes = ("{\"code\":401,\"msg\":\"" + msg + "\"}").getBytes(StandardCharsets.UTF_8);
-        }
-
-        DataBuffer buffer = response.bufferFactory().wrap(bytes);
-        return response.writeWith(Mono.just(buffer));
+        return GatewayResponseUtils.writeJsonError(exchange, objectMapper, HttpStatus.UNAUTHORIZED, 401, msg);
     }
 
     @Override

@@ -34,10 +34,11 @@
    - **多格式强类型解析与发布预检**：支持泛型读取 `getConfig(dataId, group, Class<T>)`（依据 DataId 扩展名自动推断 YAML/JSON/Properties），写接口发布前执行语法 Fail-Fast 校验；
    - **编程式强类型订阅门面 (`subscribeConfig`)**：提供强类型配置变更监听门面，自动捕获解析异常并注入 MDC 链路追踪，返回 `AutoCloseable` 并在容器停机时受管自动注销。
 
-5. **客户端负载均衡与平滑预热加权调度 (Zone & Warmup Load Balancing)**：
-   - 基于 `@ConditionalOnClass(ServiceInstanceListSupplier.class)` 条件自动装配定制 `ZonePreferenceAndWarmupServiceInstanceListSupplier` 与 `NacosWarmupLoadBalancer`；
+5. **客户端负载均衡、平滑预热加权调度与自适应资源降权 (Zone & Warmup Load Balancing & Adaptive Weighting)**：
+   - 基于 `@ConditionalOnClass(ServiceInstanceListSupplier.class)` 条件自动装配定制 `ZonePreferenceServiceInstanceListSupplier` 与 `NacosWarmupLoadBalancer`；
    - **同机房亲和优先**：优先向同可用区（Zone）健康实例路由流量，本区无可用节点时平滑跨区容灾降级；
-   - **平滑加权预热算法**：消费 `startup-time` 与 `warmup-duration`，采用“线性升权（$\text{uptime} / \text{warmupDuration}$）+ 10% 底噪保底权重”算法动态调度，预热期后平滑收敛为 100% 原始权重。
+   - **平滑加权预热算法**：消费 `startup-time` 与 `warmup-duration`，采用“线性升权（$\text{uptime} / \text{warmupDuration}$）+ 10% 底噪保底权重”算法动态调度，预热期后平滑收敛为 100% 原始权重；
+   - **基于节点自身资源的自适应动态加权 (Adaptive Resource Weighting)**：对外提供 `InstanceWeightCalculator` SPI 扩展点，支持结合实例自身 CPU/内存等过载指标进行阶梯阻尼平滑降权（5s~10s 低频采样 + $\pm 15\%$ 防抖），并在全集群过载时触发安全熔断保底退化为均匀轮询，严防雪崩。
 
 6. **长连接通信事件总线 (Connection Event Bus)**：
    - 注册底层 Nacos 原生 gRPC `ConnectionEventListener`，在断开或重连时向 Spring 上下文广播强类型 `NacosConnectionEvent`（封装 `NAMING`/`CONFIG` 模块标识、`CONNECTED`/`DISCONNECTED` 状态与远端地址）；

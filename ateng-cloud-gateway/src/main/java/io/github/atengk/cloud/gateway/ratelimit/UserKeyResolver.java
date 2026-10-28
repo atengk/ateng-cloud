@@ -26,31 +26,14 @@ public class UserKeyResolver implements KeyResolver {
 
     @Override
     public Mono<String> resolve(ServerWebExchange exchange) {
-        // 1. 优先提取鉴权通过后注入的 Exchange 属性
+        // 1. 严格仅从网关内部鉴权通过后注入的 Exchange 属性提取 (零信任铁律，严禁信任未经校验的入站 X-User-Id 头)
         String userId = exchange.getAttribute(GatewayConstants.ATTR_USER_ID);
-        if (!StringUtils.hasText(userId)) {
-            // 2. 探测请求头中的 X-User-Id
-            userId = exchange.getRequest().getHeaders().getFirst(GatewayConstants.X_USER_ID);
-        }
-
         if (StringUtils.hasText(userId)) {
             return Mono.just("user_" + userId);
         }
 
-        // 3. 未登录或白名单接口，兜底使用客户端真实 IP 限流，防止匿名刷接口打崩服务
-        String ip = exchange.getAttribute(GatewayConstants.ATTR_CLIENT_IP);
-        if (!StringUtils.hasText(ip)) {
-            ip = exchange.getRequest().getHeaders().getFirst(GatewayConstants.X_REAL_IP);
-        }
-        if (!StringUtils.hasText(ip) && exchange.getRequest().getRemoteAddress() != null) {
-            InetSocketAddress remoteAddress = exchange.getRequest().getRemoteAddress();
-            if (remoteAddress.getAddress() != null) {
-                ip = remoteAddress.getAddress().getHostAddress();
-            }
-        }
-        if (!StringUtils.hasText(ip)) {
-            ip = "127.0.0.1";
-        }
+        // 2. 未登录或白名单开放接口，保底降级为客户端可信真实 IP 限流，防止匿名刷接口打崩服务
+        String ip = IpKeyResolver.resolveClientIp(exchange);
 
         return Mono.just("anonymous_" + ip);
     }

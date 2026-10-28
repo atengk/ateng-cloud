@@ -25,8 +25,9 @@
    - 集中挂载 Sa-Token 反应式鉴权过滤器（`SaTokenGatewayFilter`），内置系统白名单并支持 `ateng.cloud.gateway.security.exclude-paths` 属性扩展，网关聚焦全局身份认证与租户信息提取，业务接口细粒度权限校验下放至下游微服务；
    - 校验合法后由网关从受信登录态动态重注 `X-User-Id` 与 `X-Tenant-Id`，并使用 `SaSameUtil.getToken()` 动态签发内部同源数字凭证 `Same-Token`；未携带合法签名的直连内网流量被微服务直接 401 熔断。
 
-3. **Nacos 动态路由持久化、快照容错与冷启兜底 (Dynamic Route Hot-Reload & Snapshot Guard)**：
+3. **Nacos 动态路由双轨持久化、快照容错与冷启兜底 (Dynamic Route Hot-Reload & Snapshot Guard)**：
    - 实现 `RouteDefinitionRepository` SPI，默认持久化载体为 Nacos `gateway-routes.json`（支持属性自定义扩展）；
+   - **双轨配置无感热更**：既支持独立的 `gateway-routes.json` 专用路由管理，又支持微服务主配置文件中 `spring.cloud.gateway.routes` 发生变更时通过 `NacosConfigRefreshEngine` 自动广播 `RefreshRoutesEvent` 热更，双轨皆可零停机生效；
    - 内存前置语法语义校验与快照守卫（Keep Last-Known Good Snapshot）：收到 Nacos 推送后若配置格式破损或存在非法断言/过滤器，记录 ERROR 报警日志并坚决保留上一份有效内存路由快照，杜绝误操作导致全网 404；
    - 校验通过后在内存中完成无感原子替换并发布 `RefreshRoutesEvent`，更新全过程零丢包、无需重启网关；
    - 采用多源合并策略：系统启动时加载本地 YAML 静态路由作为兜底（如监控端点），Nacos 动态配置加载后按 `routeId` 合并覆盖。
@@ -94,9 +95,13 @@
     - 提供可选的 `GatewaySignGuardFilter`，针对开放路由实施时间戳（Timestamp）时钟偏差校验、Redis Nonce 唯一性防重放及 HMAC-SHA256 签名防篡改校验；
     - 提供 `SignSecretProvider` SPI 支持按 `appId` 动态获取签名私钥。
 
-19. **网关层金丝雀灰度流量路由与无损降级回退 (Gateway Canary Gray LoadBalancing)**：
+19. **网关复合负载均衡责任链与金丝雀灰度无损降级 (Gateway Composite LoadBalancing Chain)**：
     - 定制扩展反应式负载均衡提供器 `GrayServiceInstanceListSupplier`：提取请求中的 `X-Traffic-Tag`，精准过滤匹配 Nacos 实例元数据（`metadata.tag`）；
-    - 弹性兜底策略：当灰度节点全部下线时，若 `fallback-to-default=true`（默认），平滑降级调度至基线默认实例，杜绝全网 503 故障。
+    - 弹性兜底策略：当灰度节点全部下线时，若 `fallback-to-default=true`（默认），平滑降级调度至基线默认实例，杜绝全网 503 故障；未染色普通流量优先锁定基线实例；
+    - **责任链嵌套与拓扑时序不变量（Gray First）**：遵循“业务隔离级别高于物理机房亲和”铁律，装配链严格按 `DiscoveryClient` $\to$ `GrayServiceInstanceListSupplier`（版本池隔离） $\to$ `ZonePreferenceServiceInstanceListSupplier`（可用区就近） $\to$ `Caching` 嵌套；
+    - **无损下线缓存时效收敛**：默认将网关 `spring.cloud.loadbalancer.cache.ttl` 压缩至 `3s`，确保实例注销后秒级感知，杜绝 35 秒本地缓存滞后导致调用已下线节点；
+    - **流量染色决议扩展点 (TrafficTagResolver SPI)**：标配 `@ConditionalOnMissingBean` 暴露 `TrafficTagResolver`，支持基于登录态、租户 ID 或动态业务规则定制入站打标；
+    - **Nacos 智能加权与预热调度无缝协同**：底层实例选择器无缝接入 `NacosWarmupLoadBalancer`，全面支持 Nacos 控制台静态权重（`nacos.weight`）、运维 `0` 权重摘流隔离、基于 Nginx SWRR 算法的 JVM 冷启动平滑预热升权调度，以及通过 `InstanceWeightCalculator` 实现的自适应资源降权。
 
 20. **100% 离线自洽 1:1 场景工程 (Hermetic Sample Sandbox)**：
     - 在 `ateng-cloud-samples/sample-cloud-gateway` 配套专属响应式沙箱，基于 `WebTestClient` + 内置响应式 Mock 终结点 + 内存动态路由推演，在脱网（`nacos.enabled=false`）环境下秒级跑通全特性回归。

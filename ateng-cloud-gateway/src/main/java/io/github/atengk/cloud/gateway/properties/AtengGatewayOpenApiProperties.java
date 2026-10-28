@@ -21,6 +21,21 @@ public class AtengGatewayOpenApiProperties {
     private String path = "/docs";
 
     /**
+     * 文档跳转目标路径 (默认 /swagger-ui.html)
+     */
+    private String targetPath = "/swagger-ui.html";
+
+    /**
+     * SA_TOKEN 守卫模式下要求的管理员角色 (默认为空表示仅校验已登录)
+     */
+    private String requiredRole;
+
+    /**
+     * SA_TOKEN 守卫模式下要求的管理员权限标识 (默认为空表示不校验特定权限)
+     */
+    private String requiredPermission;
+
+    /**
      * 生产安全守卫模式 (DISABLED: 404熔断 | BASIC: HTTP Basic Auth | SA_TOKEN: 角色鉴权 | PUBLIC: 免密直访)
      */
     private GuardMode guardMode = GuardMode.PUBLIC;
@@ -85,6 +100,30 @@ public class AtengGatewayOpenApiProperties {
 
     public void setPath(String path) {
         this.path = path;
+    }
+
+    public String getTargetPath() {
+        return targetPath;
+    }
+
+    public void setTargetPath(String targetPath) {
+        this.targetPath = targetPath;
+    }
+
+    public String getRequiredRole() {
+        return requiredRole;
+    }
+
+    public void setRequiredRole(String requiredRole) {
+        this.requiredRole = requiredRole;
+    }
+
+    public String getRequiredPermission() {
+        return requiredPermission;
+    }
+
+    public void setRequiredPermission(String requiredPermission) {
+        this.requiredPermission = requiredPermission;
     }
 
     public GuardMode getGuardMode() {

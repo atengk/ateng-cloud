@@ -87,12 +87,12 @@ public class GatewayPathValidationFilter implements GlobalFilter, Ordered {
             return false;
         }
 
+        String lower = path.toLowerCase(Locale.ROOT);
+
         // 空字节探测 (\0 或 %00)
-        if (path.indexOf('\0') >= 0 || path.contains("%00") || path.contains("%0") || path.contains("%00")) {
+        if (path.indexOf('\0') >= 0 || lower.contains("%00")) {
             return true;
         }
-
-        String lower = path.toLowerCase(Locale.ROOT);
 
         // 十六进制编码点号 (%2e%2e, %2e., .%2e)
         if (lower.contains("%2e%2e") || lower.contains("%2e.") || lower.contains(".%2e")) {

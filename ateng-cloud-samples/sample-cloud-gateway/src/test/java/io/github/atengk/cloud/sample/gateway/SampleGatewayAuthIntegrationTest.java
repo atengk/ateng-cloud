@@ -1,7 +1,10 @@
 package io.github.atengk.cloud.sample.gateway;
 
+import cn.dev33.satoken.reactor.context.SaReactorSyncHolder;
 import cn.dev33.satoken.same.SaSameUtil;
+import cn.dev33.satoken.stp.StpUtil;
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +44,16 @@ public class SampleGatewayAuthIntegrationTest {
 
     @Autowired
     private WebTestClient webTestClient;
+
+    @AfterEach
+    void tearDown() {
+        try {
+            StpUtil.logout("20001");
+            StpUtil.logout("10001");
+        } catch (Exception ignored) {
+        }
+        SaReactorSyncHolder.clearContext();
+    }
 
     @Test
     @DisplayName("测试白名单接口免密放行且出站自动回写 X-Trace-Id")

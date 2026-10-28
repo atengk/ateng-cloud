@@ -76,4 +76,32 @@ public class SampleGatewayExceptionIntegrationTest {
                 .jsonPath("$.msg").value(not(containsString("数据库异常")))
                 .jsonPath("$.traceId").isNotEmpty();
     }
+
+    @Test
+    @DisplayName("测试 Sa-Token 未登录异常统一转译为 HTTP 401 Result 契约")
+    void testSaTokenNotLoginTranslation() {
+        webTestClient.get()
+                .uri("/mock/satoken-not-login")
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectHeader().exists("X-Trace-Id")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("未登录"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("测试 Sa-Token 无权限异常统一转译为 HTTP 403 Result 契约")
+    void testSaTokenNotPermissionTranslation() {
+        webTestClient.get()
+                .uri("/mock/satoken-not-permission")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectHeader().exists("X-Trace-Id")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(403)
+                .jsonPath("$.msg").value(containsString("无权限"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
 }

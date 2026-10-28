@@ -2,6 +2,7 @@ package io.github.atengk.cloud.gateway.route;
 
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.nacos.api.config.ConfigService;
+import com.alibaba.nacos.api.config.ConfigType;
 import com.alibaba.nacos.api.config.listener.AbstractListener;
 import com.alibaba.nacos.api.config.listener.Listener;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -92,11 +93,17 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
             if (r == null || !StringUtils.hasText(r.getId())) {
                 return Mono.error(new IllegalArgumentException("RouteDefinition 或其 ID 不能为空"));
             }
+            try {
+                validateRouteDefinition(r);
+            } catch (Exception ex) {
+                return Mono.error(ex);
+            }
             routesSnapshot.updateAndGet(current -> {
                 Map<String, RouteDefinition> next = new LinkedHashMap<>(current);
                 next.put(r.getId(), r);
                 return Collections.unmodifiableMap(next);
             });
+            persistSnapshotToNacos();
             publishRefreshEvent();
             return Mono.empty();
         });
@@ -119,6 +126,7 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
                 return Collections.unmodifiableMap(next);
             });
             if (removed.get()) {
+                persistSnapshotToNacos();
                 publishRefreshEvent();
                 return Mono.empty();
             } else {
@@ -152,9 +160,10 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
             }
             this.configService = service;
 
-            // 1. 读取 Nacos 初始路由配置
+            // 1. 读取 Nacos 初始路由配置 (使用配置强类型超时)
+            long timeoutMillis = properties.getTimeout() != null ? properties.getTimeout().toMillis() : 5000L;
             String initialConfig = service.getConfig(
-                    properties.getDataId(), properties.getGroup(), 5000);
+                    properties.getDataId(), properties.getGroup(), timeoutMillis);
             if (StringUtils.hasText(initialConfig)) {
                 log.info("[Gateway] 读取到 Nacos 动态路由初始配置: dataId={}, group={}",
                         properties.getDataId(), properties.getGroup());
@@ -320,6 +329,41 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
                         throw new IllegalArgumentException("RouteDefinition [" + route.getId() + "] 包含无效 FilterDefinition (名称不能为空)");
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 对单条动态路由执行深度语法与语义防卫校验
+     *
+     * @param route 路由定义
+     */
+    public void validateRouteDefinition(RouteDefinition route) {
+        if (route == null) {
+            throw new IllegalArgumentException("RouteDefinition 不能为 null");
+        }
+        validateRouteDefinitions(Collections.singletonList(route));
+    }
+
+    /**
+     * 将当前最新内存快照反向持久化写入 Nacos 配置中心
+     */
+    private void persistSnapshotToNacos() {
+        if (configService != null && properties.isEnabled()) {
+            try {
+                List<RouteDefinition> currentRoutes = new ArrayList<>(routesSnapshot.get().values());
+                String json = objectMapper.writeValueAsString(currentRoutes);
+                configService.publishConfig(
+                        properties.getDataId(),
+                        properties.getGroup(),
+                        json,
+                        ConfigType.JSON.getType()
+                );
+                log.info("[Gateway] 动态路由反向持久化写入 Nacos 成功: dataId={}, group={}, 路由数={}",
+                        properties.getDataId(), properties.getGroup(), currentRoutes.size());
+            } catch (Exception ex) {
+                log.warn("[Gateway] 动态路由反向持久化写入 Nacos 异常: dataId={}, group={}, error={}",
+                        properties.getDataId(), properties.getGroup(), ex.getMessage());
             }
         }
     }

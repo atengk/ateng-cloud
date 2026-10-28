@@ -22,7 +22,7 @@ import java.util.List;
  *
  * <p>核心治理语义：
  * 1. 采用 Reactor {@code doFinally} 零阻塞异步度量请求往返耗时；
- * 2. 结构化单行输出调用方法、请求路径、响应状态码、执行耗时、客户端 IP 及 TraceId 等核心指标；
+ * 2. 结构化单行输出 {@code [ACCESS]} 核心指标（方法、URI、状态码、耗时、真实 IP、userId、traceId）；
  * 3. 针对超过慢请求阈值（默认 3s）的接口打印 WARN 级别慢请求告警。</p>
  *
  * @author Ateng
@@ -87,6 +87,11 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
             clientIp = ClientIpResolver.resolveClientIp(exchange.getRequest(), 1);
         }
 
+        String userId = (String) exchange.getAttributes().get(GatewayConstants.ATTR_USER_ID);
+        if (!StringUtils.hasText(userId)) {
+            userId = "-";
+        }
+
         String traceId = (String) exchange.getAttributes().get(GatewayConstants.ATTR_TRACE_ID);
         if (!StringUtils.hasText(traceId)) {
             traceId = exchange.getRequest().getHeaders().getFirst(GatewayConstants.X_TRACE_ID);
@@ -97,11 +102,11 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
                 : 3000L;
 
         if (duration >= slowThresholdMs) {
-            log.warn("[GatewayAccessLog] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, traceId={}",
-                    method, path, status, duration, slowThresholdMs, clientIp, traceId);
+            log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}",
+                    method, path, status, duration, slowThresholdMs, clientIp, userId, traceId);
         } else {
-            log.info("[GatewayAccessLog] method={}, path={}, status={}, duration={}ms, ip={}, traceId={}",
-                    method, path, status, duration, clientIp, traceId);
+            log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}",
+                    method, path, status, duration, clientIp, userId, traceId);
         }
     }
 

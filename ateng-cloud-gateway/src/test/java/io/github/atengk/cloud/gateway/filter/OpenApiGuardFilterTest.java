@@ -96,8 +96,34 @@ public class OpenApiGuardFilterTest {
     }
 
     @Test
-    @DisplayName("测试 BASIC 模式下正确凭据放行通过")
+    @DisplayName("测试 BASIC 模式下正确凭据放行文档资源通过")
     void testBasicModeValidAuthPasses() {
+        AtengGatewayOpenApiProperties props = new AtengGatewayOpenApiProperties();
+        props.setEnabled(true);
+        props.setGuardMode(GuardMode.BASIC);
+        props.getBasicAuth().setUsername("admin");
+        props.getBasicAuth().setPassword("secret123");
+
+        OpenApiGuardFilter filter = new OpenApiGuardFilter(props, objectMapper);
+
+        String credentials = Base64.getEncoder().encodeToString("admin:secret123".getBytes(StandardCharsets.UTF_8));
+        MockServerHttpRequest request = MockServerHttpRequest.get("/v3/api-docs/swagger-config")
+                .header(HttpHeaders.AUTHORIZATION, "Basic " + credentials)
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        AtomicBoolean executed = new AtomicBoolean(false);
+        filter.filter(exchange, ex -> {
+            executed.set(true);
+            return Mono.empty();
+        }).block();
+
+        assertTrue(executed.get(), "认证通过应放行文档资源");
+    }
+
+    @Test
+    @DisplayName("测试 BASIC 模式下入口路径 /docs 认证通过后自动重定向至 Swagger UI")
+    void testBasicModeRedirectsEntryPath() {
         AtengGatewayOpenApiProperties props = new AtengGatewayOpenApiProperties();
         props.setEnabled(true);
         props.setGuardMode(GuardMode.BASIC);
@@ -112,13 +138,10 @@ public class OpenApiGuardFilterTest {
                 .build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
 
-        AtomicBoolean executed = new AtomicBoolean(false);
-        filter.filter(exchange, ex -> {
-            executed.set(true);
-            return Mono.empty();
-        }).block();
+        filter.filter(exchange, ex -> Mono.empty()).block();
 
-        assertTrue(executed.get(), "认证通过应放行");
+        assertEquals(HttpStatus.FOUND, exchange.getResponse().getStatusCode());
+        assertEquals("/swagger-ui.html", exchange.getResponse().getHeaders().getFirst(HttpHeaders.LOCATION));
     }
 
     @Test

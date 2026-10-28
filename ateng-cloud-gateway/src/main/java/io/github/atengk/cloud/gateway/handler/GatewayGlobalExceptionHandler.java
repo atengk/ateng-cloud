@@ -1,5 +1,9 @@
 package io.github.atengk.cloud.gateway.handler;
 
+import cn.dev33.satoken.exception.NotLoginException;
+import cn.dev33.satoken.exception.NotPermissionException;
+import cn.dev33.satoken.exception.NotRoleException;
+import cn.dev33.satoken.exception.SameTokenInvalidException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.code.CommonResultCode;
@@ -114,6 +118,34 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
             String msg = be.getMessage();
             HttpStatusCode status = resolveHttpStatusFromCode(code);
             return new ErrorContext(status, code, msg, false);
+        }
+
+        // 模式 1.1：Sa-Token 集中安全认证与权限异常
+        if (isCausedBy(ex, NotLoginException.class)) {
+            return new ErrorContext(
+                    HttpStatus.UNAUTHORIZED,
+                    CommonResultCode.UNAUTHORIZED.getCode(),
+                    "未登录或登录状态已过期，请重新登录",
+                    false
+            );
+        }
+
+        if (isCausedBy(ex, NotPermissionException.class) || isCausedBy(ex, NotRoleException.class)) {
+            return new ErrorContext(
+                    HttpStatus.FORBIDDEN,
+                    CommonResultCode.FORBIDDEN.getCode(),
+                    "无权限访问当前资源",
+                    false
+            );
+        }
+
+        if (isCausedBy(ex, SameTokenInvalidException.class)) {
+            return new ErrorContext(
+                    HttpStatus.UNAUTHORIZED,
+                    CommonResultCode.UNAUTHORIZED.getCode(),
+                    "内部受信同源凭据无效或已过期",
+                    false
+            );
         }
 
         // 模式 2：Spring WebFlux 响应式状态异常 ResponseStatusException (如 NoResourceFoundException)

@@ -42,6 +42,8 @@
 | `IpFilterProvider` | `getBlacklist()` | `List<String>` | 获取当前生效的 IP 黑名单规则列表（支持 CIDR） | 默认实现读取配置属性 `ip-blacklist` |
 | `IpFilterProvider` | `getWhitelist()` | `List<String>` | 获取当前生效的 IP 白名单规则列表（支持 CIDR） | 默认实现读取配置属性 `ip-whitelist` |
 | `SignSecretProvider` | `getSecret(appId)` | `String` | 根据应用唯一标识 AppId 获取签名密钥明文 | 默认基于 `InMemorySignSecretProvider` 字典 |
+| `GatewayNonceValidator` | `validateAndStore(nonce, ttl)` | `boolean` | 校验并记录 Nonce 唯一性，防御重放攻击 | 默认基于 `InMemoryGatewayNonceValidator` 滑动窗口 |
+| `TrafficTagResolver` | `resolveTag(exchange)` | `String` | 根据进站上下文决议全链路灰度染色标签 | 默认实现 `DefaultTrafficTagResolver`（Header > Query） |
 | `IpKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于客户端真实公网 IP 进行限流解析（`@Primary` 默认解析器） | 保底返回 `"127.0.0.1"` |
 | `UserKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于 Sa-Token 登录用户 ID 进行限流解析 | 未登录平滑降级为 `"anonymous:" + IP` |
 | `ApiKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于请求接口路径与客户端 IP 双维度进行限流解析 | 返回 `"path:clientIp"` 复合键 |
@@ -79,6 +81,7 @@
 | `ateng.cloud.gateway.dynamic-route.timeout` | `Duration` | `3s` | 从 Nacos 拉取初始动态路由的超时时限 |
 | `ateng.cloud.gateway.traffic.enabled` | `boolean` | `true` | 是否激活全链路流量染色与金丝雀灰度路由 |
 | `ateng.cloud.gateway.traffic.fallback-to-default` | `boolean` | `true` | 当灰度实例全下线时，是否自动平滑降级调度至基线默认实例（杜绝 503 报警） |
+| `ateng.cloud.gateway.traffic.cache-ttl` | `Duration` | `3s` | 负载均衡实例列表本地缓存生存时间 TTL（敏捷感知节点变更） |
 | `ateng.cloud.gateway.security-headers.enabled` | `boolean` | `true` | 是否开启出站 OWASP 等保三级合规安全响应头注入与 CORS 去重 |
 | `ateng.cloud.gateway.security-headers.content-type-options` | `String` | `nosniff` | 防 MIME 类型嗅探安全标头 |
 | `ateng.cloud.gateway.security-headers.frame-options` | `String` | `SAMEORIGIN` | 防点击劫持 iframe 嵌入标头 |
@@ -86,7 +89,10 @@
 | `ateng.cloud.gateway.security-headers.hsts` | `String` | `max-age=31536000; includeSubDomains` | 强制安全传输 HSTS 标头 |
 | `ateng.cloud.gateway.security-headers.referrer-policy` | `String` | `strict-origin-when-cross-origin` | 来源跳转安全策略标头 |
 | `ateng.cloud.gateway.openapi.enabled` | `boolean` | `true` | 是否激活微服务接口文档统一聚合与守卫 |
-| `ateng.cloud.gateway.openapi.path` | `String` | `/docs` | 文档统一入口路径（访问时自动 302 重定向至 Swagger UI） |
+| `ateng.cloud.gateway.openapi.path` | `String` | `/docs` | 文档统一入口路径（访问时自动 302 重定向至目标路径） |
+| `ateng.cloud.gateway.openapi.target-path` | `String` | `/swagger-ui.html` | 文档跳转目标路径 |
+| `ateng.cloud.gateway.openapi.required-role` | `String` | `null` | SA_TOKEN 模式下要求的管理员角色（配置则校验 hasRole） |
+| `ateng.cloud.gateway.openapi.required-permission` | `String` | `null` | SA_TOKEN 模式下要求的管理员权限（配置则校验 hasPermission） |
 | `ateng.cloud.gateway.openapi.guard-mode` | `GuardMode` | `PUBLIC` | 文档安全守卫模式：`DISABLED`（404 熔断）、`BASIC`（弹窗挑战）、`SA_TOKEN`、`PUBLIC` |
 | `ateng.cloud.gateway.openapi.basic-auth.username` | `String` | `admin` | BASIC 模式下的 HTTP Basic 认证用户名 |
 | `ateng.cloud.gateway.openapi.basic-auth.password` | `String` | `admin` | BASIC 模式下的 HTTP Basic 认证密码 |
@@ -96,6 +102,8 @@
 | `ateng.cloud.gateway.access-log.exclude-paths` | `List<String>` | `[/actuator/**, /favicon.ico]` | 排除访问日志记录的路径列表 |
 | `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否开启开放接口 API 数字签名防篡改与 Nonce 防重放 |
 | `ateng.cloud.gateway.sign.timestamp-threshold` | `Duration` | `5m` | 签名时间戳允许的最大时钟偏差窗口 |
+| `ateng.cloud.gateway.sign.include-paths` | `List<String>` | `[]` | 需进行签名校验的目标路径列表（支持 AntPath，为空对全量生效） |
+| `ateng.cloud.gateway.sign.exclude-paths` | `List<String>` | `[]` | 签名校验排除放行路径列表（支持 AntPath） |
 | `ateng.cloud.gateway.tenant.enabled` | `boolean` | `true` | 是否开启入站多租户标头解析与防跨越隔离 |
 | `ateng.cloud.gateway.tenant.header-name` | `String` | `X-Tenant-Id` | 入站请求租户标识标头名称 |
 

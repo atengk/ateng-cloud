@@ -151,4 +151,107 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .expectHeader().valueEquals(HttpHeaders.LOCATION, "/swagger-ui.html")
                 .expectHeader().valueEquals("X-Content-Type-Options", "nosniff");
     }
+
+    @Test
+    @DisplayName("测试开放接口缺少必需签名标头被 401 阻断")
+    void testSignGuardMissingHeadersBlocked() {
+        webTestClient.get()
+                .uri("/api/open/data")
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("缺少签名"));
+    }
+
+    @Test
+    @DisplayName("测试开放接口合法 HMAC-SHA256 签名校验通过")
+    void testSignGuardValidSignaturePasses() throws Exception {
+        String appId = "sample-app";
+        String secret = "sample-secret-123456";
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "nonce-" + System.nanoTime();
+
+        // 规范签名串: appId + nonce + timestamp (无 query 参数)
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, secret);
+
+        webTestClient.get()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data").isEqualTo("open-api-verified");
+    }
+
+    @Test
+    @DisplayName("测试开放接口 Nonce 重放攻击被防御性阻断")
+    void testSignGuardReplayAttackBlocked() throws Exception {
+        String appId = "sample-app";
+        String secret = "sample-secret-123456";
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "replay-nonce-" + System.nanoTime();
+
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, secret);
+
+        // 首次请求成功
+        webTestClient.get()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isOk();
+
+        // 相同 Nonce 二次重放请求应被 401 阻断
+        webTestClient.get()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("重放攻击"));
+    }
+
+    @Test
+    @DisplayName("测试开放接口签名时间戳偏差超限被 401 阻断")
+    void testSignGuardExpiredTimestampBlocked() throws Exception {
+        String appId = "sample-app";
+        String secret = "sample-secret-123456";
+        // 构造 10 分钟前的过期时间戳 (阈值为 5 分钟)
+        String expiredTimestamp = String.valueOf(System.currentTimeMillis() - 600_000L);
+        String nonce = "nonce-" + System.nanoTime();
+
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + expiredTimestamp;
+        String signature = calculateHmacSha256(canonical, secret);
+
+        webTestClient.get()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, expiredTimestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("时间戳偏差过大"));
+    }
+
+    private String calculateHmacSha256(String data, String key) throws Exception {
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(key.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+        return java.util.HexFormat.of().formatHex(mac.doFinal(data.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
 }

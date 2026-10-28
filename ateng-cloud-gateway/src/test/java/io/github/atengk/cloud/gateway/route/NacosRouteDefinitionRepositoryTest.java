@@ -318,6 +318,11 @@ class NacosRouteDefinitionRepositoryTest {
         assertEquals(1, repository.getRoutesSnapshot().size());
         assertEquals(1, publishedEvents.size());
 
+        // 1.1 校验非法路由 (无 URI 或无协议头) 被拦截抛出异常
+        RouteDefinition invalidRoute = new RouteDefinition();
+        invalidRoute.setId("invalid-route");
+        assertThrows(IllegalArgumentException.class, () -> repository.save(Mono.just(invalidRoute)).block());
+
         // 2. getRouteDefinitions 查询
         List<RouteDefinition> list = repository.getRouteDefinitions().collectList().block();
         assertNotNull(list);

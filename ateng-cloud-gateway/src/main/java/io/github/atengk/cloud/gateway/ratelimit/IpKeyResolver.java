@@ -26,16 +26,29 @@ public class IpKeyResolver implements KeyResolver {
 
     @Override
     public Mono<String> resolve(ServerWebExchange exchange) {
+        return Mono.just(resolveClientIp(exchange));
+    }
+
+    /**
+     * 统一安全解析客户端真实公网 IP (属性 -> X-Real-IP -> remoteAddress -> 127.0.0.1)
+     *
+     * @param exchange 服务网络交换契约
+     * @return 解析出的可信真实客户端 IP
+     */
+    public static String resolveClientIp(ServerWebExchange exchange) {
+        if (exchange == null) {
+            return "127.0.0.1";
+        }
         // 1. 优先从 GatewayClientIpFilter 解析出的安全属性获取
         String ip = exchange.getAttribute(GatewayConstants.ATTR_CLIENT_IP);
         if (StringUtils.hasText(ip)) {
-            return Mono.just(ip);
+            return ip;
         }
 
         // 2. 探测已清洗的 X-Real-IP 标头
         ip = exchange.getRequest().getHeaders().getFirst(GatewayConstants.X_REAL_IP);
         if (StringUtils.hasText(ip)) {
-            return Mono.just(ip);
+            return ip;
         }
 
         // 3. 从底层 TCP 连接远端地址获取
@@ -43,11 +56,11 @@ public class IpKeyResolver implements KeyResolver {
         if (remoteAddress != null && remoteAddress.getAddress() != null) {
             String host = remoteAddress.getAddress().getHostAddress();
             if (StringUtils.hasText(host)) {
-                return Mono.just(host);
+                return host;
             }
         }
 
         // 4. 保底默认地址
-        return Mono.just("127.0.0.1");
+        return "127.0.0.1";
     }
 }

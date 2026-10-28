@@ -55,7 +55,7 @@ class KeyResolverTest {
     }
 
     @Test
-    @DisplayName("UserKeyResolver 从安全属性或标头提取用户 ID")
+    @DisplayName("UserKeyResolver 严格仅从鉴权安全属性提取用户 ID，伪造入站标头零信任忽略并降级为 anonymous")
     void testUserKeyResolverAuthenticated() {
         MockServerHttpRequest request = MockServerHttpRequest.get("/test").build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
@@ -63,11 +63,12 @@ class KeyResolverTest {
 
         assertEquals("user_88888", userKeyResolver.resolve(exchange).block());
 
+        // 零信任防线：未通过鉴权（属性无 ATTR_USER_ID）时，即便入站携带伪造 X-User-Id 也坚决忽略
         MockServerHttpRequest requestHeader = MockServerHttpRequest.get("/test")
                 .header(GatewayConstants.X_USER_ID, "99999")
                 .build();
         MockServerWebExchange exchangeHeader = MockServerWebExchange.from(requestHeader);
-        assertEquals("user_99999", userKeyResolver.resolve(exchangeHeader).block());
+        assertEquals("anonymous_127.0.0.1", userKeyResolver.resolve(exchangeHeader).block());
     }
 
     @Test

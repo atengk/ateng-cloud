@@ -52,6 +52,11 @@ public class MockTestController {
         return Mono.just(Result.success("gateway-ok"));
     }
 
+    @GetMapping("/open-data")
+    public Mono<Result<String>> openData() {
+        return Mono.just(Result.success("open-api-verified"));
+    }
+
     @GetMapping("/protected")
     public Mono<Result<String>> protectedEndpoint() {
         return Mono.just(Result.success("protected-access-ok"));
@@ -113,5 +118,15 @@ public class MockTestController {
     public Mono<Result<Integer>> postRetry() throws Exception {
         postRetryCounter.incrementAndGet();
         throw new ConnectException("模拟非幂等写操作底层建连失败");
+    }
+
+    @GetMapping("/satoken-not-login")
+    public Mono<Void> saTokenNotLogin() {
+        return Mono.error(new cn.dev33.satoken.exception.NotLoginException("未登录", cn.dev33.satoken.stp.StpUtil.TYPE, cn.dev33.satoken.exception.NotLoginException.NOT_TOKEN));
+    }
+
+    @GetMapping("/satoken-not-permission")
+    public Mono<Void> saTokenNotPermission() {
+        return Mono.error(new cn.dev33.satoken.exception.NotPermissionException("system:user:export"));
     }
 }
