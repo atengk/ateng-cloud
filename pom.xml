@@ -38,6 +38,7 @@
         <module>ateng-cloud-bom</module>
         <module>ateng-cloud-nacos</module>
         <module>ateng-cloud-feign</module>
+        <module>ateng-cloud-dubbo</module>
         <module>ateng-cloud-all</module>
     </modules>
 
@@ -129,6 +130,11 @@
             <dependency>
                 <groupId>io.github.atengk</groupId>
                 <artifactId>ateng-cloud-feign</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.atengk</groupId>
+                <artifactId>ateng-cloud-dubbo</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

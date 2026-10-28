@@ -19,6 +19,7 @@
     <modules>
         <module>sample-cloud-nacos</module>
         <module>sample-cloud-feign</module>
+        <module>sample-cloud-dubbo</module>
         <module>sample-cloud-smoke-test</module>
     </modules>
 

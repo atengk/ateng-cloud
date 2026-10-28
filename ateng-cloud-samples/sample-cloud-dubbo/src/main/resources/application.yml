@@ -1,0 +1,32 @@
+server:
+  port: 0
+
+spring:
+  application:
+    name: sample-cloud-dubbo
+
+dubbo:
+  application:
+    name: sample-cloud-dubbo
+    register-mode: instance
+  registry:
+    address: N/A
+  protocol:
+    name: tri
+    port: 50051
+    serialization: fastjson2
+  consumer:
+    check: false
+  provider:
+    timeout: 5000
+
+ateng:
+  boot:
+    web:
+      shutdown:
+        enabled: false
+  cloud:
+    dubbo:
+      enabled: true
+      timeout: 5000ms
+      retries: 0
