@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.nacos;
 
+import io.github.atengk.cloud.nacos.event.NacosConnectionEvent;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -8,10 +9,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.cloud.client.DefaultServiceInstance;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
+import org.springframework.cloud.client.discovery.ReactiveDiscoveryClient;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import reactor.core.publisher.Flux;
+
+import java.util.Collections;
+import java.util.List;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -41,6 +52,9 @@ class SampleCloudNacosApplicationTest {
     @Autowired(required = false)
     private NacosTemplate nacosTemplate;
 
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+
     /**
      * 离线 Mock/环境守卫测试配置
      * 关键守卫：标配 @Profile("!local")。当激活 local 时本配置自动失效，完全让位给真实中间件自动装配
@@ -48,7 +62,64 @@ class SampleCloudNacosApplicationTest {
     @TestConfiguration
     @Profile("!local")
     static class OfflineMockConfig {
-        // 离线守卫扩展配置：在 !local 模式下保持离线自洽，零外部网络依赖
+        @Bean
+        public DiscoveryClient discoveryClient() {
+            return new DiscoveryClient() {
+                @Override
+                public String description() {
+                    return "OfflineMockDiscoveryClient";
+                }
+
+                @Override
+                public List<ServiceInstance> getInstances(String serviceId) {
+                    if ("order-service".equalsIgnoreCase(serviceId)) {
+                        // 1. 同机房可用区实例（与 sample-cloud-nacos 同在 beijing-az1，预热中）
+                        DefaultServiceInstance inst1 = new DefaultServiceInstance(
+                                "order-service-1", "order-service", "10.0.1.10", 8080, false
+                        );
+                        inst1.getMetadata().put("zone", "beijing-az1");
+                        inst1.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 15_000L));
+                        inst1.getMetadata().put("warmup-duration", "60s");
+
+                        // 2. 跨机房可用区实例（shanghai-az2）
+                        DefaultServiceInstance inst2 = new DefaultServiceInstance(
+                                "order-service-2", "order-service", "10.0.2.20", 8080, false
+                        );
+                        inst2.getMetadata().put("zone", "shanghai-az2");
+                        inst2.getMetadata().put("startup-time", String.valueOf(System.currentTimeMillis() - 70_000L));
+                        inst2.getMetadata().put("warmup-duration", "60s");
+
+                        return List.of(inst1, inst2);
+                    }
+                    return Collections.emptyList();
+                }
+
+                @Override
+                public List<String> getServices() {
+                    return List.of("order-service", "sample-cloud-nacos");
+                }
+            };
+        }
+
+        @Bean
+        public ReactiveDiscoveryClient reactiveDiscoveryClient(DiscoveryClient discoveryClient) {
+            return new ReactiveDiscoveryClient() {
+                @Override
+                public String description() {
+                    return "OfflineMockReactiveDiscoveryClient";
+                }
+
+                @Override
+                public Flux<ServiceInstance> getInstances(String serviceId) {
+                    return Flux.fromIterable(discoveryClient.getInstances(serviceId));
+                }
+
+                @Override
+                public Flux<String> getServices() {
+                    return Flux.fromIterable(discoveryClient.getServices());
+                }
+            };
+        }
     }
 
     @AfterEach
@@ -91,6 +162,10 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.serviceName", is("sample-cloud-nacos")))
                 .andExpect(jsonPath("$.zone", is("beijing-az1")))
                 .andExpect(jsonPath("$.metadata['version']", is("1.0.0")))
+                .andExpect(jsonPath("$.warmupDuration", is("60s")))
+                .andExpect(jsonPath("$.warmupUptimeSeconds", notNullValue()))
+                .andExpect(jsonPath("$.warmupRemainingSeconds", notNullValue()))
+                .andExpect(jsonPath("$.warmupCompleted", notNullValue()))
                 .andExpect(jsonPath("$.config.enforceBeanImmutability", is(true)))
                 .andExpect(jsonPath("$.config.listeners").isArray());
     }
@@ -255,5 +330,63 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.code", is(400)))
                 .andExpect(jsonPath("$.success", is(false)))
                 .andExpect(jsonPath("$.msg", org.hamcrest.Matchers.containsString("变更键名集合不可为空")));
+    }
+
+    @Test
+    @DisplayName("测试编程式动态配置泛型强类型订阅、回调触发与 MDC 链路追踪传递")
+    void testTypedConfigSubscriptionAndMdcTracing() throws Exception {
+        // 1. 读取初始风控规则
+        mockMvc.perform(get("/api/nacos/config/trade-rule")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.ruleName", notNullValue()))
+                .andExpect(jsonPath("$.data.updateCount", is(0)));
+
+        // 2. 模拟推送 TradeRuleConfig 泛型强类型配置
+        String ruleJson = "{\"ruleName\": \"AntiFraud-HighRisk-Block\", \"maxLimit\": 200000, \"enabled\": true}";
+        mockMvc.perform(post("/api/nacos/config/trade-rule/simulate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ruleJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.ruleName", is("AntiFraud-HighRisk-Block")))
+                .andExpect(jsonPath("$.data.maxLimit", is(200000)))
+                .andExpect(jsonPath("$.data.enabled", is(true)))
+                .andExpect(jsonPath("$.data.updateCount", is(1)));
+    }
+
+    @Test
+    @DisplayName("测试 Nacos gRPC 长连接生命周期领域事件感知与状态透出")
+    void testConnectionEventListening() throws Exception {
+        // 发布模拟长连接断开领域事件
+        eventPublisher.publishEvent(new NacosConnectionEvent(
+                this,
+                NacosConnectionEvent.ModuleType.CONFIG,
+                NacosConnectionEvent.ConnectionStatus.DISCONNECTED,
+                "127.0.0.1:8848",
+                "sample-cloud-nacos"
+        ));
+
+        mockMvc.perform(get("/api/nacos/ops/connection-event")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.eventCount", org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.data.moduleType", is("CONFIG")))
+                .andExpect(jsonPath("$.data.status", is("DISCONNECTED")))
+                .andExpect(jsonPath("$.data.serverAddress", is("127.0.0.1:8848")));
+    }
+
+    @Test
+    @DisplayName("测试客户端负载均衡同机房亲和优先路由与加权调度")
+    void testLoadBalancerZoneAffinity() throws Exception {
+        mockMvc.perform(get("/api/nacos/loadbalancer/choose?serviceName=order-service")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.serviceName", is("order-service")))
+                .andExpect(jsonPath("$.data.ip", is("10.0.1.10")))
+                .andExpect(jsonPath("$.data.metadata.zone", is("beijing-az1")));
     }
 }

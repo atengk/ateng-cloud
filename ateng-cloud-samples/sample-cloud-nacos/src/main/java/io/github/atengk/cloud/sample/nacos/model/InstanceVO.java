@@ -42,6 +42,22 @@ public class InstanceVO implements Serializable {
         return vo;
     }
 
+    public static InstanceVO fromServiceInstance(org.springframework.cloud.client.ServiceInstance instance) {
+        if (instance == null) {
+            return null;
+        }
+        InstanceVO vo = new InstanceVO();
+        vo.setServiceName(instance.getServiceId());
+        vo.setIp(instance.getHost());
+        vo.setPort(instance.getPort());
+        vo.setClusterName(instance.getMetadata() != null ? instance.getMetadata().getOrDefault("cluster", "DEFAULT") : "DEFAULT");
+        vo.setWeight(1.0);
+        vo.setHealthy(true);
+        vo.setEnabled(true);
+        vo.setMetadata(instance.getMetadata() != null ? instance.getMetadata() : Collections.emptyMap());
+        return vo;
+    }
+
     public String getServiceName() {
         return serviceName;
     }

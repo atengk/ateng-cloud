@@ -1,8 +1,12 @@
 package io.github.atengk.cloud.sample.nacos.controller;
 
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.nacos.event.NacosConnectionEvent;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
+import io.github.atengk.cloud.sample.nacos.event.DemoConnectionEventListener;
+import io.github.atengk.cloud.sample.nacos.model.ConnectionEventVO;
 import io.github.atengk.cloud.sample.nacos.model.InstanceVO;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,9 +29,12 @@ import java.util.stream.Collectors;
 public class NacosOpsDemoController {
 
     private final NacosTemplate nacosTemplate;
+    private final ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider;
 
-    public NacosOpsDemoController(NacosTemplate nacosTemplate) {
+    public NacosOpsDemoController(NacosTemplate nacosTemplate,
+                                  ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider) {
         this.nacosTemplate = nacosTemplate;
+        this.connectionEventListenerProvider = connectionEventListenerProvider;
     }
 
     /**
@@ -129,5 +136,24 @@ public class NacosOpsDemoController {
     public Result<Void> markOffline() {
         nacosTemplate.markOffline();
         return Result.success();
+    }
+
+    /**
+     * 获取最近一次 Nacos 长连接事件状态
+     */
+    @GetMapping("/connection-event")
+    public Result<ConnectionEventVO> getConnectionEvent() {
+        DemoConnectionEventListener listener = connectionEventListenerProvider.getIfAvailable();
+        if (listener == null) {
+            return Result.success(new ConnectionEventVO(0, "NONE", "UNKNOWN", "N/A"));
+        }
+        NacosConnectionEvent lastEvent = listener.getLastEvent();
+        ConnectionEventVO vo = new ConnectionEventVO(
+                listener.getEventCount(),
+                lastEvent != null ? lastEvent.getModuleType().name() : "NONE",
+                lastEvent != null ? lastEvent.getStatus().name() : "CONNECTED",
+                lastEvent != null ? String.valueOf(lastEvent.getServerAddress()) : "127.0.0.1:8848"
+        );
+        return Result.success(vo);
     }
 }
