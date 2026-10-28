@@ -24,20 +24,27 @@ import io.github.atengk.cloud.feign.spi.SameTokenProvider;
 import io.github.atengk.cloud.feign.support.SaTokenSameTokenProvider;
 import io.micrometer.observation.ObservationRegistry;
 import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.io.HttpClientConnectionManager;
+import org.apache.hc.core5.util.TimeValue;
 import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cloud.openfeign.FeignAutoConfiguration;
 import org.springframework.cloud.openfeign.FeignBuilderCustomizer;
 import org.springframework.cloud.openfeign.FeignClientProperties;
 import org.springframework.cloud.openfeign.FeignLoggerFactory;
+import io.github.atengk.cloud.feign.interceptor.AtengFeignAcceptGzipEncodingInterceptor;
+import io.github.atengk.cloud.feign.interceptor.AtengFeignContentGzipEncodingInterceptor;
 import org.springframework.cloud.openfeign.clientconfig.HttpClient5FeignConfiguration;
 import org.springframework.cloud.openfeign.support.HttpMessageConverterCustomizer;
 import org.springframework.cloud.openfeign.support.ResponseEntityDecoder;
@@ -56,10 +63,27 @@ import java.util.Map;
  * @since 2026-10-28
  */
 @AutoConfiguration
+@AutoConfigureBefore(FeignAutoConfiguration.class)
 @ConditionalOnClass(Feign.class)
 @EnableConfigurationProperties(AtengFeignProperties.class)
 @ConditionalOnProperty(prefix = "ateng.cloud.feign", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AtengFeignAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean(HttpClientConnectionManager.class)
+    @ConditionalOnClass(HttpClientConnectionManager.class)
+    public HttpClientConnectionManager hc5ConnectionManager(AtengFeignProperties properties) {
+        var httpclientProps = properties.getHttpclient();
+        var builder = PoolingHttpClientConnectionManagerBuilder.create();
+        if (httpclientProps != null && httpclientProps.isEnabled()) {
+            builder.setMaxConnTotal(httpclientProps.getMaxConnections());
+            builder.setMaxConnPerRoute(httpclientProps.getMaxConnectionsPerRoute());
+            if (httpclientProps.getTimeToLive() != null) {
+                builder.setConnectionTimeToLive(TimeValue.ofMilliseconds(httpclientProps.getTimeToLive().toMillis()));
+            }
+        }
+        return builder.build();
+    }
 
     @Bean
     @ConditionalOnMissingBean
@@ -164,6 +188,7 @@ public class AtengFeignAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(name = "atengFeignClientPropertiesSyncPostProcessor")
     public static BeanPostProcessor atengFeignClientPropertiesSyncPostProcessor(
             ObjectProvider<AtengFeignProperties> propertiesProvider) {
         return new BeanPostProcessor() {
@@ -246,5 +271,19 @@ public class AtengFeignAutoConfiguration {
     @ConditionalOnMissingBean(feign.Logger.Level.class)
     public feign.Logger.Level feignLoggerLevel(AtengFeignProperties properties) {
         return properties.getLoggerLevel() != null ? properties.getLoggerLevel() : feign.Logger.Level.BASIC;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(AtengFeignAcceptGzipEncodingInterceptor.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.feign.compression", name = "response-enabled", havingValue = "true")
+    public AtengFeignAcceptGzipEncodingInterceptor atengFeignAcceptGzipEncodingInterceptor() {
+        return new AtengFeignAcceptGzipEncodingInterceptor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(AtengFeignContentGzipEncodingInterceptor.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.feign.compression", name = "request-enabled", havingValue = "true")
+    public AtengFeignContentGzipEncodingInterceptor atengFeignContentGzipEncodingInterceptor(AtengFeignProperties properties) {
+        return new AtengFeignContentGzipEncodingInterceptor(properties.getCompression());
     }
 }

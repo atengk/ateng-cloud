@@ -31,7 +31,7 @@ public class AdvancedMockController {
                 file.getOriginalFilename(),
                 file.getSize(),
                 description,
-                new String(file.getBytes()));
+                new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8));
         return Result.success(summary);
     }
 

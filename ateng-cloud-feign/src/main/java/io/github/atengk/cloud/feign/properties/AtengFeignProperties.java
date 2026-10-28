@@ -57,6 +57,12 @@ public class AtengFeignProperties {
     private AtengFeignPayloadProperties payload = new AtengFeignPayloadProperties();
 
     /**
+     * GZIP 传输压缩配置
+     */
+    @NestedConfigurationProperty
+    private AtengFeignCompressionProperties compression = new AtengFeignCompressionProperties();
+
+    /**
      * 单 Client 独立隔离配置映射，Key 为 Feign 客户端的 contextId 或 name
      */
     private Map<String, AtengFeignClientProperties> clients = new LinkedHashMap<>();
@@ -120,6 +126,14 @@ public class AtengFeignProperties {
 
     public void setPayload(AtengFeignPayloadProperties payload) {
         this.payload = payload;
+    }
+
+    public AtengFeignCompressionProperties getCompression() {
+        return compression;
+    }
+
+    public void setCompression(AtengFeignCompressionProperties compression) {
+        this.compression = compression;
     }
 
     public Map<String, AtengFeignClientProperties> getClients() {

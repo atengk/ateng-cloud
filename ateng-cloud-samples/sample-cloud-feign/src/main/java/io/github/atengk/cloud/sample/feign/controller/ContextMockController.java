@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.feign.controller;
 
+import io.github.atengk.boot.core.model.Result;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,7 +21,7 @@ import java.util.Map;
 public class ContextMockController {
 
     @GetMapping("/echo-headers")
-    public Map<String, String> echoHeaders(HttpServletRequest request) {
+    public Result<Map<String, String>> echoHeaders(HttpServletRequest request) {
         Map<String, String> headers = new HashMap<>();
         Enumeration<String> headerNames = request.getHeaderNames();
         if (headerNames != null) {
@@ -29,6 +30,6 @@ public class ContextMockController {
                 headers.put(name.toLowerCase(), request.getHeader(name));
             }
         }
-        return headers;
+        return Result.success(headers);
     }
 }

@@ -206,4 +206,37 @@ public class AtengFeignRetryerUnitTest {
         assertEquals(1, cloned.getAttempt(), "克隆出来的重试器必须是初始 attempt=1 的全新调用副本");
         assertEquals(retryer.getMaxAttempts(), cloned.getMaxAttempts());
     }
+
+    @org.springframework.cloud.openfeign.FeignClient(name = "shared-service", contextId = "contextIdClient")
+    interface ContextIdTestClient {
+    }
+
+    @Test
+    @DisplayName("9. 验证基于 @FeignClient(contextId = ...) 优先匹配单 Client 重试配置")
+    void testContextIdClientRetryOverride() {
+        AtengFeignProperties properties = new AtengFeignProperties();
+        AtengFeignClientProperties clientProps = new AtengFeignClientProperties();
+        AtengFeignRetryProperties retryOverride = new AtengFeignRetryProperties();
+        retryOverride.setMaxAttempts(4);
+        retryOverride.setPeriod(Duration.ofMillis(5));
+        retryOverride.setMaxPeriod(Duration.ofMillis(20));
+        clientProps.setRetry(retryOverride);
+
+        properties.getClients().put("contextIdClient", clientProps);
+
+        RequestTemplate template = new RequestTemplate();
+        template.feignTarget(new Target.HardCodedTarget<>(ContextIdTestClient.class, "shared-service", "http://shared-service"));
+        Request request = Request.create(Request.HttpMethod.GET, "/test", Collections.emptyMap(), new byte[0], StandardCharsets.UTF_8, template);
+        RetryableException ex = new RetryableException(-1, "Connect failed", Request.HttpMethod.GET, new ConnectTimeoutException("Connect timed out"), (Long) null, request);
+
+        AtengFeignRetryer retryer = new AtengFeignRetryer(properties);
+        assertDoesNotThrow(() -> retryer.continueOrPropagate(ex)); // 1 -> 2
+        assertEquals(2, retryer.getAttempt());
+        assertDoesNotThrow(() -> retryer.continueOrPropagate(ex)); // 2 -> 3
+        assertEquals(3, retryer.getAttempt());
+        assertDoesNotThrow(() -> retryer.continueOrPropagate(ex)); // 3 -> 4
+        assertEquals(4, retryer.getAttempt());
+        assertThrows(RetryableException.class, () -> retryer.continueOrPropagate(ex)); // 4 >= 4 throws, attempt becomes 5
+        assertEquals(5, retryer.getAttempt());
+    }
 }

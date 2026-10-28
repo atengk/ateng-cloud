@@ -33,14 +33,13 @@ public class AtengFeignErrorDecoder implements ErrorDecoder {
     public Exception decode(String methodKey, Response response) {
         FeignException feignException = FeignException.errorStatus(methodKey, response);
         if (response.body() != null) {
-            try {
-                byte[] bytes = Util.toByteArray(response.body().asInputStream());
+            try (var is = response.body().asInputStream()) {
+                byte[] bytes = Util.toByteArray(is);
                 if (bytes.length > 0) {
                     JsonNode jsonNode = objectMapper.readTree(bytes);
-                    if (jsonNode != null && jsonNode.isObject() && jsonNode.has("code") && jsonNode.get("code").isNumber()) {
-                        int code = jsonNode.get("code").asInt();
-                        String msg = jsonNode.has("msg") && !jsonNode.get("msg").isNull() ? jsonNode.get("msg").asText()
-                                : (jsonNode.has("message") && !jsonNode.get("message").isNull() ? jsonNode.get("message").asText() : "");
+                    if (FeignResultSupport.isResultObject(jsonNode)) {
+                        int code = FeignResultSupport.extractCode(jsonNode);
+                        String msg = FeignResultSupport.extractMessage(jsonNode);
                         return new BusinessException(code, msg, feignException);
                     }
                 }

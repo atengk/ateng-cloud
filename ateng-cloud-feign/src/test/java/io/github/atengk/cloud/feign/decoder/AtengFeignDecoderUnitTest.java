@@ -63,4 +63,25 @@ public class AtengFeignDecoderUnitTest {
         assertEquals(CommonResultCode.SERVICE_UNAVAILABLE.getCode(), be.getCode());
         assertNotNull(be.getCause());
     }
+
+    @Test
+    @DisplayName("测试 FeignResultSupport 契约识别与字段提取能力")
+    void testFeignResultSupport() throws Exception {
+        String jsonMsg = "{\"code\":200,\"msg\":\"成功\",\"data\":\"ok\"}";
+        var nodeMsg = objectMapper.readTree(jsonMsg);
+        assertTrue(FeignResultSupport.isResultObject(nodeMsg));
+        assertEquals(200, FeignResultSupport.extractCode(nodeMsg));
+        assertEquals("成功", FeignResultSupport.extractMessage(nodeMsg));
+
+        String jsonMessage = "{\"code\":500,\"message\":\"系统错误\"}";
+        var nodeMessage = objectMapper.readTree(jsonMessage);
+        assertTrue(FeignResultSupport.isResultObject(nodeMessage));
+        assertEquals(500, FeignResultSupport.extractCode(nodeMessage));
+        assertEquals("系统错误", FeignResultSupport.extractMessage(nodeMessage));
+
+        String nonResult = "{\"status\":200,\"data\":\"ok\"}";
+        var nodeNonResult = objectMapper.readTree(nonResult);
+        assertFalse(FeignResultSupport.isResultObject(nodeNonResult));
+        assertEquals("", FeignResultSupport.extractMessage(nodeNonResult));
+    }
 }

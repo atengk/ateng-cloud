@@ -3,7 +3,9 @@ package io.github.atengk.cloud.sample.feign;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.feign.client.AdaptiveFeignClient;
+import io.github.atengk.cloud.sample.feign.client.ClassLevelExcludedFeignClient;
 import io.github.atengk.cloud.sample.feign.client.ExcludedFeignClient;
+import io.github.atengk.cloud.sample.feign.client.ForcedAdaptiveFeignClient;
 import io.github.atengk.cloud.sample.feign.model.UserVO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,12 @@ public class AdaptiveFeignClientTest {
 
     @Autowired
     private ExcludedFeignClient excludedFeignClient;
+
+    @Autowired
+    private ClassLevelExcludedFeignClient classLevelExcludedFeignClient;
+
+    @Autowired
+    private ForcedAdaptiveFeignClient forcedAdaptiveFeignClient;
 
     @Test
     @DisplayName("1. 验证声明返回业务对象 T 时，底层自动校验 code==200 并剥离 Result 外壳返回业务实体")
@@ -105,5 +113,23 @@ public class AdaptiveFeignClientTest {
         assertNotNull(user);
         assertEquals(888L, user.getId());
         assertEquals("third-party-user", user.getUsername());
+    }
+
+    @Test
+    @DisplayName("9. 验证类级标注 @AdaptiveUnwrap(false) 时，整接口跳过 Result 剥壳，直接反序列化为 UserVO")
+    void testClassLevelAnnotationBypass() {
+        UserVO user = classLevelExcludedFeignClient.getThirdPartyData();
+        assertNotNull(user);
+        assertEquals(888L, user.getId());
+        assertEquals("third-party-user", user.getUsername());
+    }
+
+    @Test
+    @DisplayName("10. 验证客户端虽在 exclude-clients 白名单中，但类级标注 @AdaptiveUnwrap(true) 时强制剥壳（注解优先级最高）")
+    void testAnnotationOverridesExcludeClients() {
+        UserVO user = forcedAdaptiveFeignClient.getUserById(1L);
+        assertNotNull(user, "声明式注解覆盖排除名单后，必须成功剥壳");
+        assertEquals(1L, user.getId());
+        assertEquals("ateng-1", user.getUsername());
     }
 }

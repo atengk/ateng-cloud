@@ -18,6 +18,10 @@ spring:
         enabled: false
 
 ateng:
+  boot:
+    web:
+      shutdown:
+        enabled: false
   cloud:
     feign:
       enabled: true
@@ -39,3 +43,9 @@ ateng:
         isolated-timeout-client:
           socket-timeout: 300ms
           connect-timeout: 300ms
+        custom-retry-client:
+          retry:
+            enabled: true
+            period: 20ms
+            max-period: 80ms
+            max-attempts: 3

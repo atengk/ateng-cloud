@@ -15,11 +15,13 @@
 | `AtengFeignAutoConfiguration` | 自动装配类 | Feign 基础设施自动装配总入口 | 当 `ateng.cloud.feign.enabled=true` 且存在 Feign 相关类时激活 |
 | `AtengFeignProperties` | 配置属性类 | 强类型映射配置前缀 `ateng.cloud.feign` | 默认开启，收敛连接池、自适应解包、重试与预热配置 |
 | `AtengFeignHttpClientProperties` | 配置属性类 | Apache HttpClient 5 高并发连接池传输层配置 | 默认最大连接 200，单路由 50，TTL 900s，握手 2s，读取 5s |
+| `HttpClientConnectionManager` | 传输连接池管理器 | Apache HttpClient 5 物理连接池管控（最大连接数、路由连接数与 TTL） | 标配 `@ConditionalOnMissingBean`，支持外部连接池无缝接管 |
 | `AtengFeignAdaptiveUnwrapProperties` | 配置属性类 | 双模自适应契约解包配置（支持客户端白名单豁免） | 默认开启全局自适应解包，支持 `excludeClients` |
 | `AtengFeignContextProperties` | 配置属性类 | 全链路四维上下文透传与零信任防穿透开关 | 默认开启出站标头注入拦截 |
 | `AtengFeignRetryProperties` | 配置属性类 | 防雪崩弹性重试纪律配置（退避休眠与最大尝试次数） | 默认开启，退避 100ms~1s，最大尝试 2 次（重试 1 次） |
 | `AtengFeignPreheatProperties` | 配置属性类 | 客户端启动期饥饿预热配置（消灭首调冷启动延迟） | 默认开启，自动预热容器扫描到的全部 FeignClient |
 | `AtengFeignPayloadProperties` | 配置属性类 | 响应载荷硬防爆与内存安全配置（防 OOM 击穿） | 默认阈值 `10MB`（强类型 `DataSize`） |
+| `AtengFeignCompressionProperties` | 配置属性类 | GZIP 传输压缩配置（请求/响应压缩开关与请求体阈值） | 默认关闭，触发阈值 `2KB`（强类型 `DataSize`） |
 | `AtengFeignClientProperties` | 配置属性类 | 单 Client 独立物理隔离配置（超时、重试、解包与日志） | 按客户端名称独立声明，未配项平滑回退全局基线 |
 | `AtengFeignDecoder` | 核心解码器 | 双模自适应契约解包、流透传白名单、有界防爆与 void 解包 | 标配 `@ConditionalOnMissingBean`，智能剥离 `Result<T>` |
 | `AtengFeignErrorDecoder` | 错误解码器 | HTTP 状态码异常拦截并因果转译为业务异常 | 标配 `@ConditionalOnMissingBean`，100% 保留原始 `cause` |
@@ -56,6 +58,10 @@
 | `ateng.cloud.feign.preheat.enabled` | `boolean` | `true` | 是否开启容器启动期饥饿预热机制 |
 | `ateng.cloud.feign.preheat.clients` | `List<String>` | `[]` | 显式预热目标客户端清单（为空则自动预热扫描到的全部客户端） |
 | `ateng.cloud.feign.payload.max-response-size` | `DataSize` | `10MB` | 响应载荷有界读取硬防爆阈值（超限立即熔断抛 413） |
+| `ateng.cloud.feign.compression.request-enabled` | `boolean` | `false` | 是否开启请求体 GZIP 压缩传输 |
+| `ateng.cloud.feign.compression.response-enabled` | `boolean` | `false` | 是否开启响应体 GZIP 压缩接收（自动携带 Accept-Encoding: gzip 标头） |
+| `ateng.cloud.feign.compression.min-request-size` | `DataSize` | `2KB` | 触发请求 GZIP 压缩的最小请求体阈值（强类型 `DataSize`） |
+| `ateng.cloud.feign.compression.mime-types` | `List<String>` | `["text/xml", ...]` | 支持请求 GZIP 压缩的 MIME 媒体类型白名单 |
 | `ateng.cloud.feign.clients.<name>.connect-timeout` | `Duration` | `null` | 单 Client 独立建连超时（未配平滑回退全局基线） |
 | `ateng.cloud.feign.clients.<name>.socket-timeout` | `Duration` | `null` | 单 Client 独立读取超时（未配平滑回退全局基线） |
 | `ateng.cloud.feign.clients.<name>.adaptive-unwrap` | `Boolean` | `null` | 单 Client 独立解包覆盖（未配遵循全局规则） |

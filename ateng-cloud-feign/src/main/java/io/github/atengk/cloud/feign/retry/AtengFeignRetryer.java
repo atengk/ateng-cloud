@@ -36,7 +36,6 @@ public class AtengFeignRetryer implements Retryer {
     private final AtengFeignProperties properties;
 
     int attempt;
-    long sleptForMillis;
 
     public AtengFeignRetryer() {
         this(100, SECONDS.toMillis(1), 2, null);
@@ -87,9 +86,9 @@ public class AtengFeignRetryer implements Retryer {
             throw e;
         }
 
-        // 4. 解析 Client 级别独立的重试配置与最大尝试次数
+        // 4. 解析 Client 级别独立的重试配置与最大尝试次数 (优先匹配 contextId，其次匹配 name)
         String clientName = resolveClientName(e);
-        AtengFeignRetryProperties retryProps = resolveRetryProperties(clientName);
+        AtengFeignRetryProperties retryProps = resolveRetryProperties(e, clientName);
 
         if (retryProps != null && !retryProps.isEnabled()) {
             log.debug("Feign 客户端 [{}] 重试机制已显式禁用", clientName);
@@ -132,15 +131,13 @@ public class AtengFeignRetryer implements Retryer {
             Thread.currentThread().interrupt();
             throw e;
         }
-        sleptForMillis += interval;
     }
 
     /**
      * 判断异常因果链中是否包含网络建连超时或端口不可达
      */
     protected boolean isConnectTimeout(Throwable t) {
-        Throwable current = t;
-        while (current != null) {
+        return hasCause(t, current -> {
             if (current instanceof org.apache.hc.client5.http.ConnectTimeoutException
                     || current instanceof ConnectException) {
                 return true;
@@ -151,32 +148,25 @@ public class AtengFeignRetryer implements Retryer {
                 if (lower.contains("connect timed out")
                         || lower.contains("connection refused")
                         || lower.contains("connect to")) {
-                    if (!lower.contains("read timed out") && !lower.contains("response timeout")) {
-                        return true;
-                    }
+                    return !lower.contains("read timed out") && !lower.contains("response timeout");
                 }
             }
-            current = current.getCause();
-        }
-        return false;
+            return false;
+        });
     }
 
     /**
      * 判断异常因果链中是否包含读取超时
      */
     protected boolean isReadTimeout(Throwable t) {
-        Throwable current = t;
-        while (current != null) {
-            // Apache HttpClient 5 的 ConnectTimeoutException 继承自 SocketTimeoutException，此处必须前置排除
-            if (current instanceof org.apache.hc.client5.http.ConnectTimeoutException) {
-                current = current.getCause();
-                continue;
-            }
+        // Apache HttpClient 5 的 ConnectTimeoutException 继承自 SocketTimeoutException，前置排除
+        if (isConnectTimeout(t)) {
+            return false;
+        }
+        return hasCause(t, current -> {
             if (current instanceof SocketTimeoutException) {
                 String msg = current.getMessage();
-                if (msg == null || !msg.toLowerCase().contains("connect")) {
-                    return true;
-                }
+                return msg == null || !msg.toLowerCase().contains("connect");
             }
             if (current instanceof org.apache.hc.core5.http.ConnectionClosedException
                     || current instanceof org.apache.hc.core5.http.NoHttpResponseException) {
@@ -185,34 +175,71 @@ public class AtengFeignRetryer implements Retryer {
             String msg = current.getMessage();
             if (msg != null) {
                 String lower = msg.toLowerCase();
-                if (lower.contains("read timed out")
+                return lower.contains("read timed out")
                         || lower.contains("response timeout")
                         || lower.contains("socket read timeout")
-                        || lower.contains("read timeout")) {
-                    return true;
-                }
+                        || lower.contains("read timeout");
+            }
+            return false;
+        });
+    }
+
+    private static boolean hasCause(Throwable t, java.util.function.Predicate<Throwable> predicate) {
+        Throwable current = t;
+        while (current != null) {
+            if (predicate.test(current)) {
+                return true;
             }
             current = current.getCause();
         }
         return false;
     }
 
+    private Target<?> extractFeignTarget(RetryableException e) {
+        if (e != null && e.request() != null && e.request().requestTemplate() != null) {
+            return e.request().requestTemplate().feignTarget();
+        }
+        return null;
+    }
+
     private String resolveClientName(RetryableException e) {
-        if (e.request() != null && e.request().requestTemplate() != null) {
-            Target<?> target = e.request().requestTemplate().feignTarget();
-            if (target != null && target.name() != null) {
+        Target<?> target = extractFeignTarget(e);
+        if (target != null) {
+            Class<?> type = target.type();
+            if (type != null && type.isAnnotationPresent(org.springframework.cloud.openfeign.FeignClient.class)) {
+                var feignClient = type.getAnnotation(org.springframework.cloud.openfeign.FeignClient.class);
+                if (feignClient.contextId() != null && !feignClient.contextId().isBlank()) {
+                    return feignClient.contextId();
+                }
+                if (feignClient.value() != null && !feignClient.value().isBlank()) {
+                    return feignClient.value();
+                }
+                if (feignClient.name() != null && !feignClient.name().isBlank()) {
+                    return feignClient.name();
+                }
+            }
+            if (target.name() != null) {
                 return target.name();
             }
         }
         return null;
     }
 
-    private AtengFeignRetryProperties resolveRetryProperties(String clientName) {
-        if (properties == null) {
-            return null;
+    private AtengFeignRetryProperties resolveRetryProperties(RetryableException e, String clientName) {
+        if (properties == null || properties.getClients() == null) {
+            return properties != null ? properties.getRetry() : null;
         }
-        if (clientName != null && properties.getClients() != null) {
+        // 1. 优先按解析出的 clientName (contextId 优先) 匹配配置
+        if (clientName != null && properties.getClients().containsKey(clientName)) {
             AtengFeignClientProperties clientProps = properties.getClients().get(clientName);
+            if (clientProps != null && clientProps.getRetry() != null) {
+                return clientProps.getRetry();
+            }
+        }
+        // 2. 其次按 target.name() 匹配配置
+        Target<?> target = extractFeignTarget(e);
+        if (target != null && target.name() != null && properties.getClients().containsKey(target.name())) {
+            AtengFeignClientProperties clientProps = properties.getClients().get(target.name());
             if (clientProps != null && clientProps.getRetry() != null) {
                 return clientProps.getRetry();
             }

@@ -43,6 +43,12 @@ public class AdvancedFeignClientTest {
     @Autowired(required = false)
     private AtengFeignPreheatListener preheatListener;
 
+    @Autowired(required = false)
+    private io.micrometer.observation.ObservationRegistry observationRegistry;
+
+    @Autowired
+    private org.springframework.cloud.openfeign.FeignClientFactory feignClientFactory;
+
     @Test
     @DisplayName("1. 强断言：二进制流下载 (byte[]) 纯净透传，无损且未触碰 JSON 解包")
     void testBinaryStreamDownload() {
@@ -90,8 +96,19 @@ public class AdvancedFeignClientTest {
     }
 
     @Test
-    @DisplayName("5. 强断言：容器启动期饥饿预热监听器已成功装配并运行")
+    @DisplayName("5. 强断言：容器启动期饥饿预热监听器已成功装配并运行且客户端预热就绪")
     void testPreheatListenerInitialized() {
         assertNotNull(preheatListener, "AtengFeignPreheatListener 必须受管初始化并完成预热");
+        assertTrue(preheatListener.isPreheated(), "预热状态必须为 true");
+        assertTrue(preheatListener.getPreheatedCount() > 0, "预热客户端数量必须大于 0");
+    }
+
+    @Test
+    @DisplayName("6. 强断言：Micrometer Observation 统一监控度量基础设施正常装配")
+    void testObservationRegistryConfigured() {
+        assertNotNull(observationRegistry, "ObservationRegistry 必须受管初始化并就绪");
+        feign.micrometer.MicrometerObservationCapability capability =
+                feignClientFactory.getInstance("advanced-client", feign.micrometer.MicrometerObservationCapability.class);
+        assertNotNull(capability, "Feign 客户端子容器中必须成功自动装配 MicrometerObservationCapability");
     }
 }

@@ -84,7 +84,10 @@ public class AtengFeignDecoder implements Decoder {
         }
 
         // 5. 按照硬防爆上限流式读取 body 字节流并保留副本，防流关闭
-        byte[] bodyBytes = readBoundedBody(response.body().asInputStream(), maxBytes);
+        byte[] bodyBytes;
+        try (InputStream is = response.body().asInputStream()) {
+            bodyBytes = readBoundedBody(is, maxBytes);
+        }
         if (bodyBytes.length == 0) {
             return null;
         }
@@ -100,10 +103,9 @@ public class AtengFeignDecoder implements Decoder {
         }
 
         // 7. 判断是否符合 Result 结构 (具备数字类型的 code 字段)
-        if (jsonNode != null && jsonNode.isObject() && jsonNode.has("code") && jsonNode.get("code").isNumber()) {
-            int code = jsonNode.get("code").asInt();
-            String msg = jsonNode.has("msg") && !jsonNode.get("msg").isNull() ? jsonNode.get("msg").asText()
-                    : (jsonNode.has("message") && !jsonNode.get("message").isNull() ? jsonNode.get("message").asText() : "");
+        if (FeignResultSupport.isResultObject(jsonNode)) {
+            int code = FeignResultSupport.extractCode(jsonNode);
+            String msg = FeignResultSupport.extractMessage(jsonNode);
 
             // 7.1 业务失败 (code != 200)，直接抛出受管 BusinessException
             if (code != 200) {
@@ -130,19 +132,20 @@ public class AtengFeignDecoder implements Decoder {
     }
 
     private byte[] readBoundedBody(InputStream is, long maxBytes) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        long total = 0;
-        int len;
-        while ((len = is.read(buffer)) != -1) {
-            total += len;
-            if (total > maxBytes) {
-                throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
-                        String.format("Feign 响应体大小超出硬防爆限制 [%d 字节]，已熔断防御客户端内存溢出", maxBytes));
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            long total = 0;
+            int len;
+            while ((len = is.read(buffer)) != -1) {
+                total += len;
+                if (total > maxBytes) {
+                    throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
+                            String.format("Feign 响应体大小超出硬防爆限制 [%d 字节]，已熔断防御客户端内存溢出", maxBytes));
+                }
+                baos.write(buffer, 0, len);
             }
-            baos.write(buffer, 0, len);
+            return baos.toByteArray();
         }
-        return baos.toByteArray();
     }
 
     private boolean isResultType(Type type) {
@@ -169,8 +172,7 @@ public class AtengFeignDecoder implements Decoder {
         if (type instanceof ParameterizedType pType) {
             Type rawType = pType.getRawType();
             if (rawType instanceof Class<?> clazz) {
-                if (Response.class.isAssignableFrom(clazz)
-                        || Resource.class.isAssignableFrom(clazz)
+                if (Resource.class.isAssignableFrom(clazz)
                         || HttpEntity.class.isAssignableFrom(clazz)) {
                     Type[] args = pType.getActualTypeArguments();
                     if (args.length > 0) {
@@ -184,9 +186,19 @@ public class AtengFeignDecoder implements Decoder {
     }
 
     private boolean isUnwrapEnabled(Response response) {
-        if (properties.getAdaptiveUnwrap() == null || !properties.getAdaptiveUnwrap().isEnabled()) {
-            return false;
+        // 1. 最高优先级：方法级别 @AdaptiveUnwrap 声明式注解
+        Method method = extractMethod(response);
+        if (method != null && method.isAnnotationPresent(AdaptiveUnwrap.class)) {
+            return method.getAnnotation(AdaptiveUnwrap.class).value();
         }
+
+        // 2. 次高优先级：类/接口级别 @AdaptiveUnwrap 声明式注解
+        Class<?> targetType = extractTargetType(response);
+        if (targetType != null && targetType.isAnnotationPresent(AdaptiveUnwrap.class)) {
+            return targetType.getAnnotation(AdaptiveUnwrap.class).value();
+        }
+
+        // 3. 单 Client 独立配置优先级高于全局白名单与全局开关
         String clientName = extractClientName(response);
         if (clientName != null && properties.getClients() != null) {
             var clientProps = properties.getClients().get(clientName);
@@ -194,49 +206,48 @@ public class AtengFeignDecoder implements Decoder {
                 return clientProps.getAdaptiveUnwrap();
             }
         }
-        if (clientName != null && properties.getAdaptiveUnwrap().getExcludeClients().contains(clientName)) {
+
+        // 4. 客户端排除白名单检查
+        if (clientName != null && properties.getAdaptiveUnwrap() != null
+                && properties.getAdaptiveUnwrap().getExcludeClients().contains(clientName)) {
             return false;
         }
-        Method method = extractMethod(response);
-        if (method != null && method.isAnnotationPresent(AdaptiveUnwrap.class)) {
-            return method.getAnnotation(AdaptiveUnwrap.class).value();
+
+        // 5. 全局开关保底
+        return properties.getAdaptiveUnwrap() != null && properties.getAdaptiveUnwrap().isEnabled();
+    }
+
+    private feign.RequestTemplate extractRequestTemplate(Response response) {
+        if (response != null && response.request() != null) {
+            return response.request().requestTemplate();
         }
-        Class<?> targetType = extractTargetType(response);
-        if (targetType != null && targetType.isAnnotationPresent(AdaptiveUnwrap.class)) {
-            return targetType.getAnnotation(AdaptiveUnwrap.class).value();
-        }
-        return true;
+        return null;
     }
 
     private String extractClientName(Response response) {
-        if (response.request() != null && response.request().requestTemplate() != null) {
-            feign.Target<?> target = response.request().requestTemplate().feignTarget();
-            if (target != null && target.name() != null) {
-                return target.name();
-            }
+        feign.RequestTemplate template = extractRequestTemplate(response);
+        if (template != null && template.feignTarget() != null) {
+            return template.feignTarget().name();
         }
         return null;
     }
 
     private Method extractMethod(Response response) {
-        if (response.request() != null && response.request().requestTemplate() != null) {
-            feign.MethodMetadata metadata = response.request().requestTemplate().methodMetadata();
-            if (metadata != null) {
-                return metadata.method();
-            }
+        feign.RequestTemplate template = extractRequestTemplate(response);
+        if (template != null && template.methodMetadata() != null) {
+            return template.methodMetadata().method();
         }
         return null;
     }
 
     private Class<?> extractTargetType(Response response) {
-        if (response.request() != null && response.request().requestTemplate() != null) {
-            feign.MethodMetadata metadata = response.request().requestTemplate().methodMetadata();
-            if (metadata != null && metadata.targetType() != null) {
-                return metadata.targetType();
+        feign.RequestTemplate template = extractRequestTemplate(response);
+        if (template != null) {
+            if (template.methodMetadata() != null && template.methodMetadata().targetType() != null) {
+                return template.methodMetadata().targetType();
             }
-            feign.Target<?> target = response.request().requestTemplate().feignTarget();
-            if (target != null) {
-                return target.type();
+            if (template.feignTarget() != null) {
+                return template.feignTarget().type();
             }
         }
         return null;
