@@ -103,7 +103,8 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
                 .jsonPath("$.data['x-user-id']").doesNotExist()
                 .jsonPath("$.data['x-tenant-id']").doesNotExist()
                 .jsonPath("$.data['x-ignore-tenant']").doesNotExist()
-                .jsonPath("$.data['same-token']").doesNotExist();
+                // 伪造的 Same-Token 被剥离，网关重新签发合法的内部同源凭据
+                .jsonPath("$.data['same-token']").value(org.hamcrest.Matchers.not("forged-same-token-signature"));
     }
 
     @Test

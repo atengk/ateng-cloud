@@ -89,6 +89,13 @@
                 <artifactId>ateng-cloud-all</artifactId>
                 <version>${project.version}</version>
             </dependency>
+
+            <!-- Sa-Token 响应式网关起步依赖 -->
+            <dependency>
+                <groupId>cn.dev33</groupId>
+                <artifactId>sa-token-reactor-spring-boot3-starter</artifactId>
+                <version>${sa-token.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 </project>

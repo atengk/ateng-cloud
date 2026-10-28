@@ -41,6 +41,12 @@
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
 
+        <!-- Sa-Token 反应式微服务网关集中鉴权与零信任防御 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-reactor-spring-boot3-starter</artifactId>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

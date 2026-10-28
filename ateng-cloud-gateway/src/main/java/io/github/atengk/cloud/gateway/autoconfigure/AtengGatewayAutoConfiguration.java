@@ -5,6 +5,9 @@ import io.github.atengk.cloud.gateway.filter.GatewayClientIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayHeaderSanitizeFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayPathValidationFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayTenantFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayTraceFilter;
+import io.github.atengk.cloud.gateway.filter.SaTokenGatewayFilter;
 import io.github.atengk.cloud.gateway.handler.GatewayGlobalExceptionHandler;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
 import io.github.atengk.cloud.gateway.provider.PropertiesIpFilterProvider;
@@ -73,6 +76,16 @@ public class AtengGatewayAutoConfiguration {
         }
 
         /**
+         * 注册响应式无锁链路追踪 Trace 全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "trace-enabled", havingValue = "true", matchIfMissing = true)
+        public GatewayTraceFilter gatewayTraceFilter() {
+            return new GatewayTraceFilter();
+        }
+
+        /**
          * 注册入站敏感标头物理剥离清洗全局过滤器
          */
         @Bean
@@ -109,6 +122,26 @@ public class AtengGatewayAutoConfiguration {
         @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "ip-filter-enabled", havingValue = "true", matchIfMissing = true)
         public GatewayIpFilter gatewayIpFilter(IpFilterProvider ipFilterProvider) {
             return new GatewayIpFilter(ipFilterProvider);
+        }
+
+        /**
+         * 注册 Sa-Token 反应式微服务网关集中安全鉴权与零信任防御全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security", name = "sa-token-enabled", havingValue = "true", matchIfMissing = true)
+        public SaTokenGatewayFilter saTokenGatewayFilter(AtengGatewayProperties properties) {
+            return new SaTokenGatewayFilter(properties.getSecurity());
+        }
+
+        /**
+         * 注册多租户入站解析与防跨越隔离全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.gateway.tenant", name = "enabled", havingValue = "true", matchIfMissing = true)
+        public GatewayTenantFilter gatewayTenantFilter(AtengGatewayProperties properties) {
+            return new GatewayTenantFilter(properties.getTenant());
         }
     }
 }

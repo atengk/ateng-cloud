@@ -52,6 +52,16 @@ public class AtengGatewaySecurityProperties {
     private boolean ipFilterEnabled = true;
 
     /**
+     * 是否启用响应式无锁链路追踪 Trace 过滤器
+     */
+    private boolean traceEnabled = true;
+
+    /**
+     * 是否启用 Sa-Token 响应式集中鉴权与同源签名过滤器
+     */
+    private boolean saTokenEnabled = true;
+
+    /**
      * Sa-Token 鉴权忽略放行的 AntPath 路径列表 (如 /auth/**, /actuator/**)
      */
     private List<String> excludePaths = new ArrayList<>();
@@ -123,6 +133,22 @@ public class AtengGatewaySecurityProperties {
 
     public void setIpFilterEnabled(boolean ipFilterEnabled) {
         this.ipFilterEnabled = ipFilterEnabled;
+    }
+
+    public boolean isTraceEnabled() {
+        return traceEnabled;
+    }
+
+    public void setTraceEnabled(boolean traceEnabled) {
+        this.traceEnabled = traceEnabled;
+    }
+
+    public boolean isSaTokenEnabled() {
+        return saTokenEnabled;
+    }
+
+    public void setSaTokenEnabled(boolean saTokenEnabled) {
+        this.saTokenEnabled = saTokenEnabled;
     }
 
     public List<String> getExcludePaths() {

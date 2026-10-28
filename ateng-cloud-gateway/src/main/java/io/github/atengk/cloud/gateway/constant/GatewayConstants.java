@@ -102,6 +102,16 @@ public final class GatewayConstants {
     public static final String ATTR_CLIENT_IP = "ateng.gateway.clientIp";
 
     /**
+     * 挂载在 ServerWebExchange Attributes 中的当前登录用户 ID 键
+     */
+    public static final String ATTR_USER_ID = "ateng.gateway.userId";
+
+    /**
+     * 挂载在 ServerWebExchange Attributes 中的租户 ID 键
+     */
+    public static final String ATTR_TENANT_ID = "ateng.gateway.tenantId";
+
+    /**
      * 挂载在 ServerWebExchange Attributes 中的流量染色标签键
      */
     public static final String ATTR_TRAFFIC_TAG = "ateng.gateway.trafficTag";
@@ -144,19 +154,14 @@ public final class GatewayConstants {
     public static final int ORDER_TRAFFIC_TAG = Ordered.HIGHEST_PRECEDENCE + 5;
 
     /**
-     * 多租户入站解析过滤器执行顺序
-     */
-    public static final int ORDER_TENANT = Ordered.HIGHEST_PRECEDENCE + 6;
-
-    /**
-     * 开放接口数字签名防篡改与防重放过滤器执行顺序
-     */
-    public static final int ORDER_SIGN_GUARD = Ordered.HIGHEST_PRECEDENCE + 7;
-
-    /**
      * Sa-Token 反应式集中鉴权过滤器执行顺序
      */
     public static final int ORDER_SA_TOKEN = -100;
+
+    /**
+     * 多租户入站解析与防跨越过滤器执行顺序 (紧随鉴权之后)
+     */
+    public static final int ORDER_TENANT = -90;
 
     /**
      * OWASP 与等保三级出站安全响应头强化过滤器执行顺序

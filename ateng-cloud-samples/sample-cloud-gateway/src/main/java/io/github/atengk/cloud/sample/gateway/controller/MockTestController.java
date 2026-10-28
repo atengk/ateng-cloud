@@ -26,6 +26,11 @@ public class MockTestController {
         return Mono.just(Result.success("gateway-ok"));
     }
 
+    @GetMapping("/protected")
+    public Mono<Result<String>> protectedEndpoint() {
+        return Mono.just(Result.success("protected-access-ok"));
+    }
+
     @GetMapping("/echo-headers")
     public Mono<Result<Map<String, String>>> echoHeaders(ServerHttpRequest request) {
         Map<String, String> headerMap = new HashMap<>();

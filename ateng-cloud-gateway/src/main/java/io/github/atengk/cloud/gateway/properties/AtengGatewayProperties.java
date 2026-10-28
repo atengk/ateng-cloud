@@ -77,6 +77,12 @@ public class AtengGatewayProperties {
     @NestedConfigurationProperty
     private AtengGatewaySignProperties sign = new AtengGatewaySignProperties();
 
+    /**
+     * 多租户入站解析配置
+     */
+    @NestedConfigurationProperty
+    private AtengGatewayTenantProperties tenant = new AtengGatewayTenantProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -163,5 +169,13 @@ public class AtengGatewayProperties {
 
     public void setSign(AtengGatewaySignProperties sign) {
         this.sign = sign;
+    }
+
+    public AtengGatewayTenantProperties getTenant() {
+        return tenant;
+    }
+
+    public void setTenant(AtengGatewayTenantProperties tenant) {
+        this.tenant = tenant;
     }
 }

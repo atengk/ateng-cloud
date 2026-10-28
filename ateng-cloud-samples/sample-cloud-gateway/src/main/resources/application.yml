@@ -14,6 +14,10 @@ spring:
         enabled: false
     gateway:
       routes:
+        - id: auth-login
+          uri: forward:/auth/login
+          predicates:
+            - Path=/api/auth/login
         - id: mock-hello
           uri: forward:/mock/hello
           predicates:
@@ -22,6 +26,10 @@ spring:
           uri: forward:/mock/echo-headers
           predicates:
             - Path=/api/mock/echo-headers
+        - id: mock-protected
+          uri: forward:/mock/protected
+          predicates:
+            - Path=/api/mock/protected
         - id: mock-fallback
           uri: forward:/mock/hello
           predicates:
@@ -35,9 +43,31 @@ ateng:
       security:
         enabled: true
         trusted-proxy-count: 1
+        exclude-paths:
+          - "/api/mock/hello"
+          - "/api/mock/echo-headers"
+          - "/mock/echo-headers"
+          - "/api/auth/**"
+          - "/auth/**"
+          - "/mock/hello"
+          - "/mock/business-error"
+          - "/mock/server-error"
         ip-blacklist:
           - "192.168.100.1"
           - "10.99.0.0/16"
+      tenant:
+        enabled: true
+        allow-header: false
+
+sa-token:
+  token-name: satoken
+  timeout: 86400
+  active-timeout: -1
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  same-token:
+    project-key: ateng-cloud-test-secret-key-123456
 
 management:
   endpoints:
