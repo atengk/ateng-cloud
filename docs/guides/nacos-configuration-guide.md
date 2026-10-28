@@ -1,7 +1,7 @@
 # ateng-cloud 微服务配置中心治理与组件配置全景速查指南
 
 > **所属生态**：`ateng` 顶级技术品牌矩阵  
-> **基线对齐**：JDK 17 LTS、Spring Boot `3.3.13`、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、ateng-boot-bom `1.0.0`  
+> **基线对齐**：JDK 17 LTS、Spring Boot `3.3.13`、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、ateng-boot-bom `1.1.0`  
 > **关联架构**：微服务基础设施顶级架构设计（参见 `D:/My/doc/ateng-cloud/`）  
 > **设计日期**：2026-10-27  
 > **文档作者**：Ateng  

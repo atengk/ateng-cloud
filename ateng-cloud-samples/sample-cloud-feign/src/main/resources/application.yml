@@ -1,0 +1,23 @@
+server:
+  port: 0
+
+spring:
+  application:
+    name: sample-cloud-feign
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+
+ateng:
+  cloud:
+    feign:
+      enabled: true
+      httpclient:
+        max-connections: 200
+        max-connections-per-route: 50
+        time-to-live: 900s
+        connection-timeout: 2000ms
+        socket-timeout: 5000ms

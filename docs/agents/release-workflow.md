@@ -6,7 +6,7 @@
 
 - **分支唯一性**：版本发布必须且只能在 `main` 主干分支发起，严禁从任何未经合入的特性分支或孤立提交发版；
 - **状态纯净度**：发版前置要求本地工作区 100% 干净（无未暂存或未提交变更），且本地 `main` 必须与远端 `origin/main` 保持完全同步；
-- **上游 BOM 依赖锁定**：`ateng-cloud` 仅消费上游 `ateng-boot-bom` 的正式 Release 版本（当前基线 `1.0.0`），发版前必须确保工程中不存在任何 SNAPSHOT 依赖；
+- **上游 BOM 依赖锁定**：`ateng-cloud` 仅消费上游 `ateng-boot-bom` 的正式 Release 版本（当前基线 `1.1.0`），发版前必须确保工程中不存在任何 SNAPSHOT 依赖；
 - **CI 祖先谱系校验**：GitHub Actions 流水线针对网页手动调度（`workflow_dispatch`）与 Tag 推送事件实施双重祖先谱系校验（`git merge-base --is-ancestor`），确保发布产物 100% 源自主干分支。
 
 ---

@@ -16,7 +16,7 @@
 
 - **开发工具**：IntelliJ IDEA 或 VS Code
 - **运行基线**：JDK 17 LTS（字节码 17，兼容 JDK 21+ 运行）
-- **核心基线**：Spring Boot `3.3.13`、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、Apache Dubbo `3.3.x`、ateng-boot-bom `1.0.0`
+- **核心基线**：Spring Boot `3.3.13`、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、Apache Dubbo `3.3.x`、ateng-boot-bom `1.1.0`
 - **工程构建**：Apache Maven 3.6.3+
 
 在本地克隆代码后，执行以下命令验证构建环境并激活本地提交守门钩子：

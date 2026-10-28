@@ -20,7 +20,7 @@ flowchart TD
     Cloud -.->|"标准契约对接"| Vue
 ```
 
-- **技术基线**：JDK 17 LTS（运行时兼容 21+）、Spring Boot `3.3.13`、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、Apache Dubbo `3.3.x`、ateng-boot-bom `1.0.0`；
+- **技术基线**：JDK 17 LTS（运行时兼容 21+）、Spring Boot `3.3.13`、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、Apache Dubbo `3.3.x`、ateng-boot-bom `1.1.0`；
 - **配置与注册**：统一收敛于 Nacos 2.4.x（严格遵循 Spring Boot 3 原生 `spring.config.import` 规范）；
 - **通信底座**：OpenFeign (声明式 HTTP) 与 Apache Dubbo 3.3 (高性能 Triple/TCP) 双核驱动；
 - **边界防御**：WebFlux 响应式纯净网关 + Sa-Token 网关鉴权 + 内部 `Same-Token` 零信任防穿透；

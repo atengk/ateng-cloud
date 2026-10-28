@@ -4,7 +4,7 @@
 `ateng-cloud` 是面向企业级高可用分布式生产环境的 Spring Cloud & Apache Dubbo 双模微服务基础设施 Starter 套件，单向依赖消费已发布的 `ateng-boot-bom`（纯净单体基础设施底座），专注于打造垂直正交、开箱即用、无侵入的微服务通用治理能力。
 
 - **运行与编译**：JDK 17 LTS（字节码 17，兼容 21+ 运行）
-- **核心基线**：Spring Boot `3.3.13`，Spring Cloud `2023.0.x`，Spring Cloud Alibaba `2023.0.x`，Apache Dubbo `3.3.x`，ateng-boot-bom `1.0.0`
+- **核心基线**：Spring Boot `3.3.13`，Spring Cloud `2023.0.x`，Spring Cloud Alibaba `2023.0.x`，Apache Dubbo `3.3.x`，ateng-boot-bom `1.1.0`
 - **命名坐标**：GroupId `io.github.atengk`，基础包名 `io.github.atengk.cloud.*`，配置前缀 `ateng.cloud.*`
 - **仓库命名**：`ateng-cloud`（完全遵循极简命名法则，彻底摒弃 `-starter-` 中缀）
 
@@ -184,7 +184,7 @@
 - **双分支开发铁律 (Dual-Branch Policy: dev for Active Coding & main for Pure Release)**：
   本项目严格遵循 `main`（只读发布）与 `dev`（活跃开发）双分支演进模型；Agent 开展任何编码或修复工作前，必须确认当前处于 `dev` 分支；若检测到处于 `main`，必须主动执行 `git checkout dev` 切换至开发分支，严禁在 `main` 直接编辑业务代码；发版时严格收口于 `main` 分支。
 - **上游依赖单向解耦与锁定 (BOM Baseline Lock)**：
-  `ateng-cloud` 单向依赖上游已发布的 `ateng-boot-bom` 正式 Release 版本（基线对齐 `1.0.0`），坚决杜绝依赖上游的 SNAPSHOT 快照，确保微服务底座的稳定性。
+  `ateng-cloud` 单向依赖上游已发布的 `ateng-boot-bom` 正式 Release 版本（基线对齐 `1.1.0`），坚决杜绝依赖上游的 SNAPSHOT 快照，确保微服务底座的稳定性。
 - **精准路径暂存 (Safe Path Staging)**：
   暂存必须显式、精准指定具体的变更文件相对路径（如 `git add pom.xml scripts/commit.sh`），**严禁使用 `.` 或 `-A` 全量通配**，严禁在任何会话答复或建议命令中推介 `git add .`。
 - **受控提交与脚本门面 (Explicit Git & Script Facade)**：

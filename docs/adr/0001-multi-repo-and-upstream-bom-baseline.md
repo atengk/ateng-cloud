@@ -6,7 +6,7 @@
 
 ## Decision
 
-确立 `ateng-cloud` 为完全独立的独立代码仓库，单向依赖消费已发布的 `ateng-boot-bom`（基线锁定 `1.0.0` Release 版本），坚决杜绝依赖快照版本或双向循环依赖。
+确立 `ateng-cloud` 为完全独立的独立代码仓库，单向依赖消费已发布的 `ateng-boot-bom`（基线锁定 `1.1.0` Release 版本），坚决杜绝依赖快照版本或双向循环依赖。
 
 ## Consequences
 
