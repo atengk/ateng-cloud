@@ -30,6 +30,24 @@ spring:
           uri: forward:/mock/protected
           predicates:
             - Path=/api/mock/protected
+        - id: mock-retry-test
+          uri: forward:/mock/retry-counter
+          predicates:
+            - Path=/api/mock/retry-counter
+          filters:
+            - AtengRetry=1
+        - id: mock-upload-echo
+          uri: forward:/mock/upload-echo
+          predicates:
+            - Path=/api/mock/upload-echo
+        - id: mock-sse
+          uri: forward:/mock/sse
+          predicates:
+            - Path=/api/mock/sse
+        - id: mock-rate-limit
+          uri: forward:/mock/simulate-rate-limit
+          predicates:
+            - Path=/api/mock/simulate-rate-limit
         - id: mock-fallback
           uri: forward:/mock/hello
           predicates:
@@ -52,6 +70,11 @@ ateng:
           - "/mock/hello"
           - "/mock/business-error"
           - "/mock/server-error"
+          - "/api/mock/sse"
+          - "/api/mock/upload-echo"
+          - "/api/mock/simulate-rate-limit"
+          - "/api/mock/retry-counter"
+          - "/mock/**"
           - "/dynamic/**"
         ip-blacklist:
           - "192.168.100.1"

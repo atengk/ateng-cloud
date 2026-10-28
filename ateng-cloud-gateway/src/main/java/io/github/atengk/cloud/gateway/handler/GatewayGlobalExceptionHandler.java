@@ -139,11 +139,24 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
         }
 
         // 模式 4：报文超限异常 (413 Payload Too Large)
-        if (ex.getClass().getSimpleName().contains("PayloadTooLarge")) {
+        if (ex.getClass().getSimpleName().contains("PayloadTooLarge")
+                || ex.getClass().getSimpleName().contains("DataBufferLimitException")
+                || isCausedBy(ex, org.springframework.core.io.buffer.DataBufferLimitException.class)) {
             return new ErrorContext(
                     HttpStatus.PAYLOAD_TOO_LARGE,
                     CommonResultCode.PAYLOAD_TOO_LARGE.getCode(),
                     "请求报文超出最大允许限制 (2MB)",
+                    false
+            );
+        }
+
+        // 模式 4.1：限流熔断异常 (429 Too Many Requests)
+        if (ex.getClass().getSimpleName().contains("RateLimit")
+                || (ex instanceof ResponseStatusException rse && rse.getStatusCode().value() == 429)) {
+            return new ErrorContext(
+                    HttpStatus.TOO_MANY_REQUESTS,
+                    HttpStatus.TOO_MANY_REQUESTS.value(),
+                    "当前访问过于频繁，请稍后重试",
                     false
             );
         }

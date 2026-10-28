@@ -6,12 +6,17 @@ import io.github.atengk.cloud.gateway.filter.GatewayClientIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayHeaderSanitizeFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayPathValidationFilter;
+import io.github.atengk.cloud.gateway.filter.GatewayRateLimitResponseFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayTenantFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayTraceFilter;
 import io.github.atengk.cloud.gateway.filter.SaTokenGatewayFilter;
+import io.github.atengk.cloud.gateway.filter.factory.AtengRetryGatewayFilterFactory;
 import io.github.atengk.cloud.gateway.handler.GatewayGlobalExceptionHandler;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
 import io.github.atengk.cloud.gateway.provider.PropertiesIpFilterProvider;
+import io.github.atengk.cloud.gateway.ratelimit.ApiKeyResolver;
+import io.github.atengk.cloud.gateway.ratelimit.IpKeyResolver;
+import io.github.atengk.cloud.gateway.ratelimit.UserKeyResolver;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
 import org.springframework.beans.factory.ObjectProvider;
@@ -25,6 +30,7 @@ import org.springframework.boot.web.codec.CodecCustomizer;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
  * ateng-cloud 响应式网关自动装配核心配置类
@@ -61,6 +67,17 @@ public class AtengGatewayAutoConfiguration {
     public CodecCustomizer atengGatewayCodecCustomizer(AtengGatewayProperties properties) {
         return configurer -> configurer.defaultCodecs()
                 .maxInMemorySize((int) properties.getMaxInMemorySize().toBytes());
+    }
+
+    /**
+     * 注册弹性防雪崩安全重试过滤器工厂 (写请求零重试，读请求建连失败弹性重试 1 次)
+     *
+     * @return AtengRetryGatewayFilterFactory
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AtengRetryGatewayFilterFactory atengRetryGatewayFilterFactory() {
+        return new AtengRetryGatewayFilterFactory();
     }
 
     /**
@@ -173,6 +190,51 @@ public class AtengGatewayAutoConfiguration {
                     properties.getDynamicRoute(),
                     objectMapper,
                     applicationEventPublisher);
+        }
+    }
+
+    /**
+     * 网关分布式多维限流与 429 统一转译自动装配
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.rate-limiter", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public static class RateLimiterAutoConfiguration {
+
+        /**
+         * 注册按客户端真实公网 IP 限流键解析器 (默认 Primary)
+         */
+        @Bean(name = "ipKeyResolver")
+        @Primary
+        @ConditionalOnMissingBean(name = "ipKeyResolver")
+        public IpKeyResolver ipKeyResolver() {
+            return new IpKeyResolver();
+        }
+
+        /**
+         * 注册按 Sa-Token 用户 ID 限流键解析器
+         */
+        @Bean(name = "userKeyResolver")
+        @ConditionalOnMissingBean(name = "userKeyResolver")
+        public UserKeyResolver userKeyResolver() {
+            return new UserKeyResolver();
+        }
+
+        /**
+         * 注册按接口路径与客户端 IP 双维度限流键解析器
+         */
+        @Bean(name = "apiKeyResolver")
+        @ConditionalOnMissingBean(name = "apiKeyResolver")
+        public ApiKeyResolver apiKeyResolver() {
+            return new ApiKeyResolver();
+        }
+
+        /**
+         * 注册限流触发 HTTP 429 响应统一转译全局过滤器
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        public GatewayRateLimitResponseFilter gatewayRateLimitResponseFilter(ObjectMapper objectMapper) {
+            return new GatewayRateLimitResponseFilter(objectMapper);
         }
     }
 }

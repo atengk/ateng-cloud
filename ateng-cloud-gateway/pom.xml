@@ -54,6 +54,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring Data Redis 响应式依赖 (编译期可选依赖，分布式限流与令牌桶支持) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
