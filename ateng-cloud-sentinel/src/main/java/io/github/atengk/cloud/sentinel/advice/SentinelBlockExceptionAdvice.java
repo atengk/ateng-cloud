@@ -1,13 +1,9 @@
 package io.github.atengk.cloud.sentinel.advice;
 
 import com.alibaba.csp.sentinel.slots.block.BlockException;
-import com.alibaba.csp.sentinel.slots.block.authority.AuthorityException;
-import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
-import com.alibaba.csp.sentinel.slots.block.flow.FlowException;
-import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowException;
-import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.handler.AtengBlockExceptionHandler;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -53,7 +49,7 @@ public class SentinelBlockExceptionAdvice {
     }
 
     /**
-     * 捕获因动态代理包装未声明受检异常抛出的 UndeclaredThrowableException
+     * 兼容捕获由动态代理包装的 UndeclaredThrowableException
      */
     @ExceptionHandler(UndeclaredThrowableException.class)
     public ResponseEntity<Result<Void>> handleUndeclaredThrowableException(UndeclaredThrowableException ex, HttpServletRequest request) throws Throwable {
@@ -69,11 +65,11 @@ public class SentinelBlockExceptionAdvice {
      * 构建统一错误响应与状态码
      */
     private ResponseEntity<Result<Void>> buildResponse(BlockException ex, HttpServletRequest request) {
-        SentinelResultCode resultCode = mapResultCode(ex);
-        int targetStatus = mapHttpStatus(ex);
+        SentinelResultCode resultCode = AtengBlockExceptionHandler.determineResultCode(ex);
+        HttpStatus targetStatus = AtengBlockExceptionHandler.determineHttpStatus(ex);
 
         boolean align = properties.getBlockHandler().isHttpStatusAlign();
-        HttpStatus httpStatus = align ? HttpStatus.valueOf(targetStatus) : HttpStatus.OK;
+        HttpStatus httpStatus = align ? targetStatus : HttpStatus.OK;
 
         String path = request != null ? request.getRequestURI() : "unknown";
         String clientIp = SentinelServletUtil.resolveClientIp(request);
@@ -121,33 +117,5 @@ public class SentinelBlockExceptionAdvice {
             current = cause;
         }
         return null;
-    }
-
-    /**
-     * 映射规则错误码
-     */
-    private SentinelResultCode mapResultCode(BlockException ex) {
-        if (ex instanceof FlowException) {
-            return SentinelResultCode.FLOW_LIMIT;
-        } else if (ex instanceof DegradeException) {
-            return SentinelResultCode.DEGRADE;
-        } else if (ex instanceof ParamFlowException) {
-            return SentinelResultCode.PARAM_FLOW_LIMIT;
-        } else if (ex instanceof SystemBlockException) {
-            return SentinelResultCode.SYSTEM_BLOCK;
-        } else if (ex instanceof AuthorityException) {
-            return SentinelResultCode.AUTHORITY_BLOCK;
-        }
-        return SentinelResultCode.FLOW_LIMIT;
-    }
-
-    /**
-     * 映射 HTTP 状态码
-     */
-    private int mapHttpStatus(BlockException ex) {
-        if (ex instanceof DegradeException) {
-            return 503;
-        }
-        return 429;
     }
 }
