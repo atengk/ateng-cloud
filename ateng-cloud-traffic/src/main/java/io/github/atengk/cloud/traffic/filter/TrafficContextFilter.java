@@ -36,19 +36,25 @@ public class TrafficContextFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(TrafficContextFilter.class);
 
     private final AtengTrafficProperties properties;
-    private final TrafficRuleMatcher ruleMatcher;
-    private final TrafficRuleProvider ruleProvider;
+    private final java.util.function.Supplier<TrafficRuleMatcher> ruleMatcherSupplier;
+    private final java.util.function.Supplier<TrafficRuleProvider> ruleProviderSupplier;
 
     public TrafficContextFilter(AtengTrafficProperties properties) {
-        this(properties, null, null);
+        this(properties, (TrafficRuleMatcher) null, (TrafficRuleProvider) null);
     }
 
     public TrafficContextFilter(AtengTrafficProperties properties,
                                 TrafficRuleMatcher ruleMatcher,
                                 TrafficRuleProvider ruleProvider) {
+        this(properties, () -> ruleMatcher, () -> ruleProvider);
+    }
+
+    public TrafficContextFilter(AtengTrafficProperties properties,
+                                java.util.function.Supplier<TrafficRuleMatcher> ruleMatcherSupplier,
+                                java.util.function.Supplier<TrafficRuleProvider> ruleProviderSupplier) {
         this.properties = properties != null ? properties : new AtengTrafficProperties();
-        this.ruleMatcher = ruleMatcher;
-        this.ruleProvider = ruleProvider;
+        this.ruleMatcherSupplier = ruleMatcherSupplier != null ? ruleMatcherSupplier : () -> null;
+        this.ruleProviderSupplier = ruleProviderSupplier != null ? ruleProviderSupplier : () -> null;
     }
 
     @Override
@@ -100,6 +106,8 @@ public class TrafficContextFilter extends OncePerRequestFilter {
         }
 
         // 3. 动态流量分流规则匹配判定 (由 Nacos 动态推送或静态规则提供)
+        TrafficRuleMatcher ruleMatcher = ruleMatcherSupplier.get();
+        TrafficRuleProvider ruleProvider = ruleProviderSupplier.get();
         if (ruleMatcher != null && ruleProvider != null) {
             List<TrafficRule> rules = ruleProvider.getRules();
             if (rules != null && !rules.isEmpty()) {

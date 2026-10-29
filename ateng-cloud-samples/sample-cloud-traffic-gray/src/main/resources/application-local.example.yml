@@ -1,0 +1,15 @@
+# ==============================================================================
+# ateng-cloud 流量治理场景工程本地真实环境联调配置模板
+# 使用方式：复制为 application-local.yml，按需填写真实 Nacos 地址与凭据
+# ==============================================================================
+spring:
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+      username: YOUR_NACOS_USERNAME
+      password: YOUR_NACOS_PASSWORD
+      discovery:
+        enabled: true
+      config:
+        enabled: true
+        group: DEFAULT_GROUP

@@ -1,0 +1,32 @@
+server:
+  port: 0
+
+spring:
+  application:
+    name: sample-cloud-traffic-gray
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+    loadbalancer:
+      cache:
+        enabled: false
+
+ateng:
+  boot:
+    web:
+      shutdown:
+        enabled: false
+  cloud:
+    traffic:
+      enabled: true
+      fallback-to-default: true
+      strict-lane: false
+      lane-continuity: true
+      nacos:
+        enabled: true
+        group: DEFAULT_GROUP
+        global-data-id: traffic-rules.json
+        prefer-app-rule: true

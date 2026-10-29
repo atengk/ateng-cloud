@@ -37,15 +37,15 @@ public class AtengTrafficAutoConfiguration {
      * @param properties 流量治理配置属性
      * @return 过滤器注册 Bean
      */
-    @Bean
-    @ConditionalOnMissingBean
+    @Bean(name = "trafficContextFilter")
+    @ConditionalOnMissingBean(name = "trafficContextFilter")
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     public FilterRegistrationBean<TrafficContextFilter> trafficContextFilter(
             AtengTrafficProperties properties,
             ObjectProvider<TrafficRuleMatcher> ruleMatcherProvider,
             ObjectProvider<TrafficRuleProvider> ruleProvider) {
         FilterRegistrationBean<TrafficContextFilter> registration = new FilterRegistrationBean<>(
-                new TrafficContextFilter(properties, ruleMatcherProvider.getIfAvailable(), ruleProvider.getIfAvailable())
+                new TrafficContextFilter(properties, ruleMatcherProvider::getIfAvailable, ruleProvider::getIfAvailable)
         );
         registration.setOrder(properties.getFilterOrder());
         registration.addUrlPatterns("/*");
@@ -82,7 +82,7 @@ public class AtengTrafficAutoConfiguration {
      * @return RestTemplateCustomizer
      */
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(name = "trafficRestTemplateCustomizer")
     @ConditionalOnClass(RestTemplateCustomizer.class)
     public RestTemplateCustomizer trafficRestTemplateCustomizer(TrafficClientHttpRequestInterceptor interceptor) {
         return restTemplate -> {

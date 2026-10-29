@@ -56,6 +56,7 @@ public class AtengTrafficLoadBalancerClientConfiguration {
     );
 
     @Bean
+    @org.springframework.context.annotation.Primary
     @ConditionalOnMissingBean
     public ServiceInstanceListSupplier serviceInstanceListSupplier(
             ConfigurableApplicationContext context,
@@ -65,16 +66,18 @@ public class AtengTrafficLoadBalancerClientConfiguration {
             trafficProperties = new AtengTrafficProperties();
         }
 
-        // 1. 底层服务发现与缓存层 (默认 TTL=3s)
+        // 1. 底层服务发现与可选缓存层 (默认 TTL=3s)
         ServiceInstanceListSupplierBuilder builder = ServiceInstanceListSupplier.builder();
         if (hasReactiveDiscoveryClient(context)) {
             builder.withDiscoveryClient();
         } else {
             builder.withBlockingDiscoveryClient();
         }
-        ServiceInstanceListSupplier cachingSupplier = builder
-                .withCaching()
-                .build(context);
+        boolean cacheEnabled = context.getEnvironment().getProperty("spring.cloud.loadbalancer.cache.enabled", Boolean.class, true);
+        if (cacheEnabled) {
+            builder.withCaching();
+        }
+        ServiceInstanceListSupplier cachingSupplier = builder.build(context);
 
         // 2. 第一层：业务灰度版本隔离 (按 X-Traffic-Tag 锁定版本池，未染色走基线，全下线平滑降级)
         ServiceInstanceListSupplier trafficSupplier = new TrafficTagServiceInstanceListSupplier(cachingSupplier, trafficProperties);
