@@ -2,6 +2,7 @@ package io.github.atengk.cloud.traffic.loadbalancer;
 
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
+import io.github.atengk.cloud.traffic.exception.TrafficRoutingException;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,9 +91,9 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
 
             // 灰度节点全部下线或不存在时的容灾处理
             if (properties.isStrictLane()) {
-                log.warn("[TrafficLoadBalancer] 目标灰度节点不存在且开启严格隔离模式，阻断调度 [serviceId={}, tag={}]",
+                log.warn("[TrafficLoadBalancer] 目标灰度节点不存在且开启严格隔离模式，直接阻断抛出异常 [serviceId={}, tag={}]",
                         getServiceId(), trimmedTag);
-                return Collections.emptyList();
+                throw new TrafficRoutingException(getServiceId(), trimmedTag);
             }
 
             if (properties.isFallbackToDefault()) {

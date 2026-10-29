@@ -1,7 +1,9 @@
 package io.github.atengk.cloud.traffic.loadbalancer;
 
+import io.github.atengk.cloud.traffic.code.TrafficResultCode;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
+import io.github.atengk.cloud.traffic.exception.TrafficRoutingException;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -129,16 +131,21 @@ class TrafficTagServiceInstanceListSupplierTest {
     }
 
     @Test
-    @DisplayName("测试金融级严格隔离模式 (strictLane=true) 阻断未匹配流量")
+    @DisplayName("测试金融级严格隔离模式 (strictLane=true) 阻断未匹配流量并抛出 TrafficRoutingException")
     void testStrictLaneIsolation() {
         properties.setStrictLane(true);
         properties.setFallbackToDefault(true); // 即使开启了降级，strictLane 优先级更高
         List<ServiceInstance> availableInstances = List.of(baseInstance1, baseInstance2);
         TrafficTagServiceInstanceListSupplier supplier = createSupplier(availableInstances);
 
-        List<ServiceInstance> result = supplier.filterByTag(availableInstances, "non-existent-tag");
-
-        assertThat(result).isEmpty();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplier.filterByTag(availableInstances, "non-existent-tag"))
+                .isInstanceOf(TrafficRoutingException.class)
+                .satisfies(ex -> {
+                    TrafficRoutingException routingEx = (TrafficRoutingException) ex;
+                    assertThat(routingEx.getCode()).isEqualTo(TrafficResultCode.STRICT_LANE_BLOCK.getCode());
+                    assertThat(routingEx.getTag()).isEqualTo("non-existent-tag");
+                    assertThat(routingEx.getServiceId()).isEqualTo("user-service");
+                });
     }
 
     @Test

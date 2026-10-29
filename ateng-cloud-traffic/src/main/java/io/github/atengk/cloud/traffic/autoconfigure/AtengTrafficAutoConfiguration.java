@@ -3,12 +3,15 @@ package io.github.atengk.cloud.traffic.autoconfigure;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
+import io.github.atengk.cloud.traffic.interceptor.TrafficClientHttpRequestInterceptor;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.client.RestTemplateCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 
@@ -50,5 +53,34 @@ public class AtengTrafficAutoConfiguration {
     @ConditionalOnMissingBean
     public TrafficContextSnapshotProvider trafficContextSnapshotProvider() {
         return new TrafficContextSnapshotProvider();
+    }
+
+    /**
+     * 注册出站 HTTP 请求 (RestTemplate) 流量标签透传拦截器
+     *
+     * @param properties 流量治理配置属性
+     * @return TrafficClientHttpRequestInterceptor
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TrafficClientHttpRequestInterceptor trafficClientHttpRequestInterceptor(AtengTrafficProperties properties) {
+        return new TrafficClientHttpRequestInterceptor(properties);
+    }
+
+    /**
+     * 注册 RestTemplate 自动定制器，将流量透传拦截器附加至 RestTemplate 实例
+     *
+     * @param interceptor 出站透传拦截器
+     * @return RestTemplateCustomizer
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(RestTemplateCustomizer.class)
+    public RestTemplateCustomizer trafficRestTemplateCustomizer(TrafficClientHttpRequestInterceptor interceptor) {
+        return restTemplate -> {
+            if (!restTemplate.getInterceptors().contains(interceptor)) {
+                restTemplate.getInterceptors().add(interceptor);
+            }
+        };
     }
 }
