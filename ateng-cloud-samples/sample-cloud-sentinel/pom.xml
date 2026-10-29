@@ -29,6 +29,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- Spring Cloud OpenFeign Starter (用于声明式 Feign 熔断自测) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
         <!-- Spring Boot Test 离线测试套件 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
