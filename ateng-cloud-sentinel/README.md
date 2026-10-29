@@ -19,14 +19,14 @@
 | `AtengBlockExceptionHandler` | 核心处理器 | 统一 Spring MVC 阻断异常处理并物理对齐 HTTP 状态码 | 标配 `@ConditionalOnMissingBean`，实现 `BlockExceptionHandler` |
 | `AtengUrlCleaner` | 核心清洗器 | RESTful 动态 URL 归一化清洗，防范资源监控树内存无界膨胀与 OOM | 标配 `@ConditionalOnMissingBean`，实现 `UrlCleaner` |
 | `AtengRequestOriginParser` | 核心解析器 | 四级调用来源溯源解析器，支持精细化授权与流控 | 标配 `@ConditionalOnMissingBean`，实现 `RequestOriginParser` |
-| `AtengFallbackFactory<T>` | 抽象基类 | 受管 Feign 降级工厂基类，动态代理并转译熔断异常保留因果链 | 开放钩子方法 `createFallbackInstance` 支持业务保底扩展 |
+| `AtengFallbackFactory<T>` | 抽象基类 | 受管 Feign 降级工厂基类，动态代理并转译熔断异常保留因果链 | 开放钩子方法 `handleFallback` 支持业务保底扩展 |
 | `SentinelBlockExceptionAdvice` | 全局切面兜底 | 全局捕获 `@SentinelResource` 逃逸的 `BlockException`，杜绝 500 误报 | 标配 `@ConditionalOnMissingBean`，基于 `@RestControllerAdvice` |
 | `SentinelNacosRuleSubscriber` | 规则订阅管理器 | 基于约定 DataId 统一订阅监听 Flow、Degrade、ParamFlow、System、Authority 5 大规则 | 实现 `InitializingBean` 与 `DisposableBean`，生命周期确定性释放 |
 | `NacosDataSourceFactory` | 扩展点 SPI | Sentinel Nacos 数据源构造工厂函数式接口 | 标配 `@ConditionalOnMissingBean`，支持下游通过 SPI 或测试桩无缝接管 |
 | `DefaultNacosDataSourceFactory` | 默认工厂实现 | 生产级原生 `NacosDataSource` 构建实现类 | 默认注册，连接 Nacos 服务端并提供监听机制 |
 | `SentinelResultCode` | 强类型错误码 | 统一定义 Sentinel 阻断业务错误码 (区段 4200~4299) | 实现 `IResultCode`，覆盖限流、降级、热点、系统、授权全场景 |
 | `SentinelServletUtil` | 工具类 | 客户端真实 IP 解析辅助工具类 | 依次尝试 `X-Forwarded-For`、`X-Real-IP` 与 `RemoteAddr` 回溯解析 |
-| `AtengSentinelEnvironmentPostProcessor` | 环境后置处理器 | 探测到 Classpath 存在 OpenFeign 时自动注入激活 `feign.sentinel.enabled=true` | 注册于 `META-INF/spring.factories`，支持业务显式声明 false 覆盖 |
+| `AtengSentinelEnvironmentPostProcessor` | 环境后置处理器 | 探测到 Classpath 存在 OpenFeign 时自动注入激活 `feign.sentinel.enabled=true` | 注册于 `META-INF/spring/org.springframework.boot.env.EnvironmentPostProcessor.imports`，支持业务显式声明 false 覆盖 |
 
 ---
 
@@ -163,37 +163,55 @@ public class SampleSentinelController {
 
 ### 1. 自定义受管 Feign 降级工厂 (重写保底值)
 
-框架提供 `AtengFallbackFactory<T>` 基类。默认情况下，所有降级方法均通过动态代理自动抛出语义化 `BusinessException`。若业务需要为特定方法提供柔性保底值（如返回离线默认数据），可通过重写 `createFallbackInstance` 优雅扩展：
+框架提供 `AtengFallbackFactory<T>` 抽象基类。默认情况下，继承该类无需编写任何逻辑即可自动代理将熔断异常转译为语义化 `BusinessException(SentinelResultCode.DEGRADE, cause)`。
+
+若业务需要为特定方法提供柔性保底值（如返回离线 Mock 数据），可通过重写受保护方法 `handleFallback` 优雅扩展（1:1 提取自 `sample-cloud-sentinel` 源码）：
 
 ```java
 package io.github.atengk.cloud.sample.sentinel.client;
 
-import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.fallback.AtengFallbackFactory;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.Method;
+
 /**
- * 柔性保底降级工厂实现示例
+ * 柔性受管 Feign 降级工厂 (重写 handleFallback 返回自定义保底业务数据)
  */
 @Component
 public class DemoCustomFallbackFactory extends AtengFallbackFactory<DemoCustomFeignClient> {
 
     @Override
-    protected DemoCustomFeignClient createFallbackInstance(Throwable cause) {
-        return new DemoCustomFeignClient() {
-            @Override
-            public Result<String> getUserName(Long id) {
-                // 业务柔性保底返回，不中断主流程
-                return Result.success("fallback-user-" + id);
-            }
-
-            @Override
-            public Result<Integer> getUserAge(Long id) {
-                // 保底返回默认值
-                return Result.success(18);
-            }
-        };
+    protected Object handleFallback(Method method, Object[] args, Throwable cause) throws Throwable {
+        // 针对特定接口方法提供保底返回值，兼顾自适应解包契约安全
+        if ("getRemoteOrder".equals(method.getName())) {
+            Long orderId = (args != null && args.length > 0) ? (Long) args[0] : 0L;
+            return "MockOrderFallback-" + orderId;
+        }
+        // 其余方法平滑委托给框架默认降级行为 (自动抛出携带原始 cause 的 BusinessException)
+        return super.handleFallback(method, args, cause);
     }
+}
+```
+
+配套声明式 FeignClient 接口定义：
+
+```java
+package io.github.atengk.cloud.sample.sentinel.client;
+
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+
+@FeignClient(
+    name = "demo-custom-client",
+    url = "http://127.0.0.1:18099",
+    fallbackFactory = DemoCustomFallbackFactory.class
+)
+public interface DemoCustomFeignClient {
+
+    @GetMapping("/api/remote/order/{id}")
+    String getRemoteOrder(@PathVariable("id") Long id);
 }
 ```
 
