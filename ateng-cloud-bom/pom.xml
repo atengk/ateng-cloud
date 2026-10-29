@@ -91,8 +91,20 @@
             </dependency>
             <dependency>
                 <groupId>io.github.atengk</groupId>
+                <artifactId>ateng-cloud-traffic</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.atengk</groupId>
                 <artifactId>ateng-cloud-all</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+
+            <!-- 阿里开源 TransmittableThreadLocal 线程池上下文传递增强 -->
+            <dependency>
+                <groupId>com.alibaba</groupId>
+                <artifactId>transmittable-thread-local</artifactId>
+                <version>${transmittable-thread-local.version}</version>
             </dependency>
 
             <!-- Sa-Token 响应式网关起步依赖 -->
