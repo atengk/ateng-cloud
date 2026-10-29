@@ -2,6 +2,9 @@ package io.github.atengk.cloud.traffic.autoconfigure;
 
 import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
+import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
+import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
+import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -31,6 +34,9 @@ class AtengTrafficAutoConfigurationTest {
         nonWebRunner.run(context -> {
             assertThat(context).hasSingleBean(AtengTrafficAutoConfiguration.class);
             assertThat(context).hasSingleBean(TrafficContextSnapshotProvider.class);
+            assertThat(context).hasSingleBean(StickyHashPartitioner.class);
+            assertThat(context).hasSingleBean(TrafficPredicateMatcher.class);
+            assertThat(context).hasSingleBean(TrafficRuleMatcher.class);
             assertThat(context).doesNotHaveBean(FilterRegistrationBean.class);
         });
     }
@@ -41,6 +47,9 @@ class AtengTrafficAutoConfigurationTest {
         servletRunner.run(context -> {
             assertThat(context).hasSingleBean(AtengTrafficAutoConfiguration.class);
             assertThat(context).hasSingleBean(TrafficContextSnapshotProvider.class);
+            assertThat(context).hasSingleBean(StickyHashPartitioner.class);
+            assertThat(context).hasSingleBean(TrafficPredicateMatcher.class);
+            assertThat(context).hasSingleBean(TrafficRuleMatcher.class);
             assertThat(context).hasSingleBean(FilterRegistrationBean.class);
             assertThat(context.getBean(FilterRegistrationBean.class).getFilter())
                     .isInstanceOf(TrafficContextFilter.class);

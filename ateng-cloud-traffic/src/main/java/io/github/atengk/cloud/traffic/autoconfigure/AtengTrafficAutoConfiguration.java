@@ -5,6 +5,9 @@ import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
 import io.github.atengk.cloud.traffic.interceptor.TrafficClientHttpRequestInterceptor;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
+import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
+import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -82,5 +85,41 @@ public class AtengTrafficAutoConfiguration {
                 restTemplate.getInterceptors().add(interceptor);
             }
         };
+    }
+
+    /**
+     * 注册一致性哈希粘性切流分发器 Bean
+     *
+     * @return StickyHashPartitioner
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public StickyHashPartitioner stickyHashPartitioner() {
+        return new StickyHashPartitioner();
+    }
+
+    /**
+     * 注册轻量谓词匹配器 Bean
+     *
+     * @return TrafficPredicateMatcher
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TrafficPredicateMatcher trafficPredicateMatcher() {
+        return new TrafficPredicateMatcher();
+    }
+
+    /**
+     * 注册流量规则决策引擎 Bean
+     *
+     * @param stickyHashPartitioner 哈希切流分发器
+     * @param predicateMatcher      谓词匹配器
+     * @return TrafficRuleMatcher
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TrafficRuleMatcher trafficRuleMatcher(StickyHashPartitioner stickyHashPartitioner,
+                                                 TrafficPredicateMatcher predicateMatcher) {
+        return new TrafficRuleMatcher(stickyHashPartitioner, predicateMatcher);
     }
 }
