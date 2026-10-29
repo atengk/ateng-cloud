@@ -60,7 +60,7 @@ import org.springframework.core.env.Environment;
  * @since 2026-10-28
  */
 @AutoConfiguration
-@AutoConfigureBefore(GatewayAutoConfiguration.class)
+@AutoConfigureBefore(value = GatewayAutoConfiguration.class, name = "io.github.atengk.cloud.nacos.loadbalancer.AtengNacosLoadBalancerAutoConfiguration")
 @ConditionalOnClass(GlobalFilter.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
 @EnableConfigurationProperties(AtengGatewayProperties.class)

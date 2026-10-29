@@ -4,6 +4,7 @@ import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.InstanceWeightCalculator;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.ReactiveDiscoveryClient;
 import org.springframework.cloud.loadbalancer.core.ReactorLoadBalancer;
@@ -26,6 +27,7 @@ public class AtengNacosLoadBalancerClientConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnMissingClass("io.github.atengk.cloud.gateway.loadbalancer.GrayLoadBalancerClientConfiguration")
     public ServiceInstanceListSupplier nacosServiceInstanceListSupplier(
             ConfigurableApplicationContext context,
             AtengNacosProperties properties) {

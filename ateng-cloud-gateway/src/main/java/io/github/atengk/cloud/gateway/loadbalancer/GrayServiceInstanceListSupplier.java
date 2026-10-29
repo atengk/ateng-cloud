@@ -146,6 +146,9 @@ public class GrayServiceInstanceListSupplier extends DelegatingServiceInstanceLi
         if (!StringUtils.hasText(tag)) {
             tag = meta.get("traffic.tag");
         }
+        if (!StringUtils.hasText(tag)) {
+            tag = meta.get("gray");
+        }
         return tag;
     }
 
@@ -153,7 +156,14 @@ public class GrayServiceInstanceListSupplier extends DelegatingServiceInstanceLi
      * 从负载均衡请求上下文中提取灰度染色标签
      */
     private String extractTagFromRequest(Request<?> request) {
-        if (request != null && request.getContext() instanceof RequestDataContext dataContext) {
+        if (request == null) {
+            return null;
+        }
+        Object context = request.getContext();
+        if (context instanceof String s && StringUtils.hasText(s)) {
+            return s.trim();
+        }
+        if (context instanceof RequestDataContext dataContext) {
             RequestData clientRequest = dataContext.getClientRequest();
             if (clientRequest != null) {
                 if (clientRequest.getHeaders() != null) {

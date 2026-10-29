@@ -25,6 +25,11 @@ public class AtengGatewayTrafficProperties {
      */
     private Duration cacheTtl = Duration.ofSeconds(3);
 
+    /**
+     * 当前网关节点归属的可用区 (Zone/Region)，用于同机房就近亲和路由
+     */
+    private String zone;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -47,5 +52,13 @@ public class AtengGatewayTrafficProperties {
 
     public void setCacheTtl(Duration cacheTtl) {
         this.cacheTtl = cacheTtl;
+    }
+
+    public String getZone() {
+        return zone;
+    }
+
+    public void setZone(String zone) {
+        this.zone = zone;
     }
 }

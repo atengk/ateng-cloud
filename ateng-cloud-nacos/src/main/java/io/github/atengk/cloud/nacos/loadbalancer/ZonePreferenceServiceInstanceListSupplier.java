@@ -69,9 +69,9 @@ public class ZonePreferenceServiceInstanceListSupplier extends DelegatingService
             return Collections.emptyList();
         }
 
-        // 1. 若配置关闭了同机房亲和，直接返回可路由实例
-        if (properties == null || properties.getLoadbalancer() == null
-                || !properties.getLoadbalancer().isZoneAffinity()) {
+        // 1. 若配置显式关闭了同机房亲和，直接返回可路由实例
+        if (properties != null && properties.getLoadbalancer() != null
+                && !properties.getLoadbalancer().isZoneAffinity()) {
             return filterRoutableInstances(instances);
         }
 
@@ -158,6 +158,10 @@ public class ZonePreferenceServiceInstanceListSupplier extends DelegatingService
             }
         }
         if (environment != null) {
+            String lbZone = environment.getProperty("spring.cloud.loadbalancer.zone");
+            if (StringUtils.hasText(lbZone)) {
+                return lbZone;
+            }
             String zone = environment.getProperty("ZONE");
             if (StringUtils.hasText(zone)) {
                 return zone;
