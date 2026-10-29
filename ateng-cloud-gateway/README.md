@@ -30,7 +30,9 @@
 | `GatewayRateLimitResponseFilter`| 全局过滤器 | `Ordered.LOWEST_PRECEDENCE - 10` | 拦截分布式限流产生的 HTTP 429 状态，格式化为标准 Result JSON 响应体并附加 `Retry-After: 1` 标头 | `rate-limiter.enabled=true` |
 | `GatewayAccessLogFilter` | 全局过滤器 | `LOWEST_PRECEDENCE` | 基于 Reactor `doFinally` 零阻塞异步度量往返耗时，结构化输出核心审计指标，慢请求打印 WARN 告警 | `access-log.enabled=true`（默认关闭） |
 | `AtengRetryGatewayFilterFactory` | 过滤器工厂 | 路由配置 `AtengRetry=1` | 生产级防雪崩安全重试工厂：写请求严格零重试，仅读请求网络建连失败允许弹性重试 1 次 | 标配 `@ConditionalOnMissingBean` |
-| `NacosRouteDefinitionRepository` | 动态路由仓库 | 依赖 Nacos Config | 基于 Nacos 动态监听路由配置，校验合法后原子热加载并发布内存事件；配置破损触发快照兜底 | 条件装配于 `NacosConfigManager` |
+| `GatewayRouteRefreshListener` | 全局事件监听器 | 监听配置热更事件 | 监听微服务主配置环境变量变更与 Nacos 安全热更事件，增量热绑 `spring.cloud.gateway.routes` 并广播 `RefreshRoutesEvent` | 条件装配于 `dynamic-route.enabled=true` |
+| `GatewayRouteValidator` | 校验工具类 | 静态方法调用 | 统一双轨动态路由深度语法语义防卫（ID 唯一、URI 协议头合规、谓词过滤器非空） | 校验失败抛出 `IllegalArgumentException` |
+| `NacosRouteDefinitionRepository` | 动态路由仓库 | 依赖 Nacos Config | 基于 Nacos 动态监听独立路由配置（`gateway-routes.json`），校验合法后原子热加载并发布内存事件；配置破损触发快照兜底 | 条件装配于 `NacosConfigManager` |
 | `GrayServiceInstanceListSupplier`| 负载均衡提供者 | LoadBalancer 客户端 | 精准匹配 Nacos 实例 `metadata.tag`；灰度节点全部下线时在 `fallbackToDefault=true` 下平滑降级至基线实例 | `@LoadBalancerClients` 默认配置 |
 | `ClientIpResolver` | 工具类 | 静态方法调用 | 提供权威从右向左代理倒推真实 IP 算法及端口号清洗能力 | 开箱即用工具类 |
 | `IpMatcher` | 工具类 | 静态方法调用 | 支持 CIDR 子网段掩码与单 IP 的高效并发匹配 | 开箱即用工具类 |
@@ -51,6 +53,8 @@
 | `ApiKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于请求接口路径与客户端 IP 双维度进行限流解析 | 返回 `"path:clientIp"` 复合键 |
 | `ClientIpResolver` | `resolveClientIp(req, hops)` | `String` | 从右向左安全倒推解析真实公网客户端 IP | 兜底返回物理 TCP 对端 IP 或 `"127.0.0.1"` |
 | `IpMatcher` | `match(pattern, ip)` | `boolean` | 校验指定 IP 是否匹配单个 IP 或 CIDR 网段 | 格式异常时安全拦截返回 `false` |
+| `GatewayRouteValidator` | `validateRouteDefinitions(routes)` | `void` | 统一对路由列表执行深度语法语义防卫校验（ID唯一、URI有效、谓词过滤器非空） | 校验失败抛出 `IllegalArgumentException` |
+| `GatewayRouteRefreshListener` | `refreshRoutesFromEnvironment(keys)` | `boolean` | 响应环境变量变更事件增量热绑 `spring.cloud.gateway.routes`，触发路由刷新与快照守卫 | 无需刷新返回 `true`，校验失败回退返回 `false` |
 | `NacosRouteDefinitionRepository` | `getRouteDefinitions()` | `Flux<RouteDefinition>` | 响应式流式读取当前生效的全量路由定义 | 离线返回空 Flux，不阻塞容器启动 |
 | `NacosRouteDefinitionRepository` | `save(route)` | `Mono<Void>` | 内存动态追加或覆盖指定路由定义并发布刷新事件 | 操作完成后原子广播刷新 |
 | `NacosRouteDefinitionRepository` | `delete(routeId)` | `Mono<Void>` | 内存动态移除指定路由定义并发布刷新事件 | 找不到时静默完成 |
@@ -340,9 +344,11 @@ public class CustomTrafficTagResolverConfiguration {
 - **南北向流量集中鉴权**：网关作为系统唯一公网暴露入口，对外执行 Sa-Token 鉴权，校验通过后向下游请求头注入内部专用受信凭据 `Same-Token`；
 - **内部服务零信任校验**：下游微服务强制开启 `sa-token.same-token.check=true`。凡绕过网关直连内部微服务私网端口的非法流量，因未携带网关签发的同源签名凭证，直接 Fail-Fast 401 阻断。
 
-### 4. Nacos 动态路由无感原子热更与快照容错 (Snapshot Guard)
-- **Spring Boot 3 原生事件驱动**：基于 Nacos 配置监听器，当监听到路由 JSON 发生变化时，先经反序列化与严格语法校验，通过发布 `RefreshRoutesEvent` 原子热替换内存路由表，整个过程零停机零丢包；
-- **Last-Known Good 快照容错机制**：若运维人员在 Nacos 中误配了破损的 JSON 格式或非法谓词，网关抛出告警并坚决保留上一份内存有效路由快照继续提供服务，杜绝因错误配置导致全网路由全灭。
+### 4. 动态路由双轨无感原子热更与快照容错 (Dual-Track Snapshot Guard)
+- **双轨配置无感热更体系**：
+  - **Track A（独立路由数据源）**：通过 `NacosRouteDefinitionRepository` 监听独立文件（默认 `gateway-routes.json`），支持独立管理、反向持久化及发布 `RefreshRoutesEvent`；
+  - **Track B（微服务主配置热绑）**：通过 `GatewayRouteRefreshListener` 动态监听 `${spring.application.name}.yaml` 主配置中的 `spring.cloud.gateway.routes` 环境变量变更与 Nacos `SafeConfigRefreshEvent`，增量重绑后自动驱动路由表原子刷新，彻底消除修改主配置路由后必须重启网关的心智负担；
+- **双轨快照守卫容错与多源共存**：统一由 `GatewayRouteValidator` 实施前置深度语法与语义校验（ID 唯一、URI 协议头合规、谓词与过滤器非空）。当任一轨道配置破损或语法非法时，立即拦截并坚决保留上一份有效路由快照（Last-Known Good Snapshot），静态路由、独立路由与主配置路由多源协同共存，更新过程零丢包。
 
 ### 5. 金丝雀灰度染色与无损降级回退 (Canary Gray & Fallback)
 - **权威染色解析与伪造清洗**：`GatewayTrafficTagFilter` 依托 `TrafficTagResolver` SPI 决议权威染色标签，挂载至上下文（`ATTR_TRAFFIC_TAG`）并向下游微服务透明传递；若未决议出标签，自动物理剥离外部伪造的 `X-Traffic-Tag`，杜绝未授权链路穿透；
@@ -427,5 +433,56 @@ void testWriteMethodZeroRetryOnFailure() {
 
     // 强断言：非幂等写操作绝对禁止重试，执行次数严密锁定为 1
     assertEquals(1, mockTestController.getPostRetryCount(), "非幂等写请求绝对禁止重试");
+}
+```
+
+### 5. 主配置动态路由热更新与快照守卫测试
+```java
+@Test
+@DisplayName("测试主配置动态路由：环境变量增量热绑 (404 -> 200)、畸变路由快照守卫容错与双轨多源共存")
+void testMainConfigRouteHotReloadAndSnapshotGuard() {
+    // 1. 模拟外部配置刷新向 Spring Environment 注入主配置路由定义
+    TestPropertyValues.of(
+            "spring.cloud.gateway.routes[0].id=mock-test-route",
+            "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
+            "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/mock/**",
+            "spring.cloud.gateway.routes[1].id=main-hot-route",
+            "spring.cloud.gateway.routes[1].uri=forward:/mock/hello",
+            "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/main-hot/**"
+    ).applyTo(environment);
+
+    // 广播 EnvironmentChangeEvent 事件
+    applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(
+            Set.of("spring.cloud.gateway.routes[1].id", "spring.cloud.gateway.routes[1].uri")));
+
+    // 2. 强断言：主配置动态路由原子生效 (404 -> 200)
+    webTestClient.get()
+            .uri("/dynamic/main-hot/test")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data").isEqualTo("gateway-ok");
+
+    // 3. 模拟推送非法路由，强断言快照守卫拒绝脏配置，现有路由依然正常提供服务
+    TestPropertyValues.of(
+            "spring.cloud.gateway.routes[0].id=mock-test-route",
+            "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
+            "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/mock/**",
+            "spring.cloud.gateway.routes[1].id=corrupted-route",
+            "spring.cloud.gateway.routes[1].uri=/no-scheme-uri",
+            "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/main-hot/**"
+    ).applyTo(environment);
+
+    applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(
+            Set.of("spring.cloud.gateway.routes[1].uri")));
+
+    webTestClient.get()
+            .uri("/dynamic/main-hot/test")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data").isEqualTo("gateway-ok");
 }
 ```

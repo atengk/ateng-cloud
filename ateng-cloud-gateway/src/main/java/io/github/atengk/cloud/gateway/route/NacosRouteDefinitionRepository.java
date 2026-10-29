@@ -285,64 +285,21 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
     }
 
     /**
-     * 对动态路由列表执行深度语法与语义防卫校验
+     * 对动态路由列表执行深度语法与语义防卫校验 (统一委派至 {@link GatewayRouteValidator})
      *
      * @param routeDefinitions 路由定义列表
      */
     public void validateRouteDefinitions(List<RouteDefinition> routeDefinitions) {
-        if (routeDefinitions == null || routeDefinitions.isEmpty()) {
-            return;
-        }
-        Set<String> routeIds = new HashSet<>();
-        for (RouteDefinition route : routeDefinitions) {
-            if (route == null) {
-                throw new IllegalArgumentException("RouteDefinition 不能为 null");
-            }
-            if (!StringUtils.hasText(route.getId())) {
-                throw new IllegalArgumentException("RouteDefinition ID 不能为空");
-            }
-            if (!routeIds.add(route.getId())) {
-                throw new IllegalArgumentException("存在重复的 RouteDefinition ID: " + route.getId());
-            }
-            URI uri = route.getUri();
-            if (uri == null) {
-                throw new IllegalArgumentException("RouteDefinition [" + route.getId() + "] URI 不能为空");
-            }
-            String scheme = uri.getScheme();
-            if (!StringUtils.hasText(scheme)) {
-                throw new IllegalArgumentException("RouteDefinition [" + route.getId() + "] URI 协议头 (scheme) 不能为空: " + uri);
-            }
-
-            // 校验断言
-            if (route.getPredicates() != null) {
-                for (PredicateDefinition predicate : route.getPredicates()) {
-                    if (predicate == null || !StringUtils.hasText(predicate.getName())) {
-                        throw new IllegalArgumentException("RouteDefinition [" + route.getId() + "] 包含无效 PredicateDefinition (名称不能为空)");
-                    }
-                }
-            }
-
-            // 校验过滤器
-            if (route.getFilters() != null) {
-                for (FilterDefinition filter : route.getFilters()) {
-                    if (filter == null || !StringUtils.hasText(filter.getName())) {
-                        throw new IllegalArgumentException("RouteDefinition [" + route.getId() + "] 包含无效 FilterDefinition (名称不能为空)");
-                    }
-                }
-            }
-        }
+        GatewayRouteValidator.validateRouteDefinitions(routeDefinitions);
     }
 
     /**
-     * 对单条动态路由执行深度语法与语义防卫校验
+     * 对单条动态路由执行深度语法与语义防卫校验 (统一委派至 {@link GatewayRouteValidator})
      *
      * @param route 路由定义
      */
     public void validateRouteDefinition(RouteDefinition route) {
-        if (route == null) {
-            throw new IllegalArgumentException("RouteDefinition 不能为 null");
-        }
-        validateRouteDefinitions(Collections.singletonList(route));
+        GatewayRouteValidator.validateRouteDefinition(route);
     }
 
     /**

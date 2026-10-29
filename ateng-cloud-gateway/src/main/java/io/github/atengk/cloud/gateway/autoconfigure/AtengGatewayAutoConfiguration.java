@@ -26,6 +26,7 @@ import io.github.atengk.cloud.gateway.ratelimit.ApiKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.IpKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.UserKeyResolver;
 import io.github.atengk.cloud.gateway.resolver.DefaultTrafficTagResolver;
+import io.github.atengk.cloud.gateway.route.GatewayRouteRefreshListener;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
 import io.github.atengk.cloud.gateway.spi.GatewayNonceValidator;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
@@ -41,6 +42,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.codec.CodecCustomizer;
 import org.springframework.cloud.gateway.config.GatewayAutoConfiguration;
+import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.config.HttpClientCustomizer;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.route.RouteDefinitionRepository;
@@ -49,6 +51,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.env.Environment;
 
 /**
  * ateng-cloud 响应式网关自动装配核心配置类
@@ -334,17 +337,34 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
-     * Nacos 动态路由持久化与无感原子热更自动装配
+     * 网关双轨动态路由（主配置 spring.cloud.gateway.routes 动态感知 + 独立文件 gateway-routes.json）自动装配
      */
     @Configuration(proxyBeanMethods = false)
-    @ConditionalOnClass(NacosConfigManager.class)
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.dynamic-route", name = "enabled", havingValue = "true", matchIfMissing = true)
     public static class DynamicRouteAutoConfiguration {
 
         /**
-         * 注册基于 Nacos 配置中心的动态路由仓库实现
+         * 注册主配置文件 (spring.cloud.gateway.routes) 环境变量动态感知与安全热更监听器
          */
         @Bean
+        @ConditionalOnMissingBean
+        public GatewayRouteRefreshListener gatewayRouteRefreshListener(
+                ObjectProvider<GatewayProperties> gatewayPropertiesProvider,
+                Environment environment,
+                ApplicationEventPublisher applicationEventPublisher,
+                AtengGatewayProperties properties) {
+            return new GatewayRouteRefreshListener(
+                    gatewayPropertiesProvider.getIfAvailable(),
+                    environment,
+                    applicationEventPublisher,
+                    properties.getDynamicRoute());
+        }
+
+        /**
+         * 注册基于 Nacos 配置中心的独立动态路由仓库实现 (Track A)
+         */
+        @Bean
+        @ConditionalOnClass(NacosConfigManager.class)
         @ConditionalOnMissingBean(RouteDefinitionRepository.class)
         public NacosRouteDefinitionRepository nacosRouteDefinitionRepository(
                 ObjectProvider<NacosConfigManager> nacosConfigManagerProvider,

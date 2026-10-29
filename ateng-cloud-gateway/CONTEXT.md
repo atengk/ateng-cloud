@@ -87,3 +87,7 @@ _Avoid_: 组合负载均衡, 责任链负载, 混合路由
 **Dynamic Traffic Tag Resolver**:
 网关基于 `TrafficTagResolver` SPI 提供的支持从请求头、Query 参数及自定义业务维度（如租户 ID、用户白名单等）动态解析与计算流量染色标签的可插拔决策机制。
 _Avoid_: 动态打标器, 灰度解析器, 染色策略
+
+**Dual-Track Dynamic Route**:
+网关同时支持从独立 Nacos 动态路由数据源（默认 `gateway-routes.json`）与微服务主配置文件（`spring.cloud.gateway.routes`）双轨并存监听与无感原子热更的路由治理机制，结合快照守卫容错与多源协同合并，彻底消除修改主配置路由后必须重启网关的心智负担。
+_Avoid_: 双轨路由, 动态路由双源, 路由双监听
