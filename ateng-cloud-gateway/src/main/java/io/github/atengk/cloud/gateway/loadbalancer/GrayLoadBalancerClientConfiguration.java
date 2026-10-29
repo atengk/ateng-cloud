@@ -8,6 +8,7 @@ import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.InstanceWeightCalculator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.BeanFactoryUtils;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.cloud.client.ServiceInstance;
@@ -85,7 +86,9 @@ public class GrayLoadBalancerClientConfiguration {
 
     private boolean hasReactiveDiscoveryClient(ConfigurableApplicationContext context) {
         try {
-            return context.getBeanProvider(ReactiveDiscoveryClient.class).getIfAvailable() != null;
+            String[] names = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+                    context, ReactiveDiscoveryClient.class);
+            return names != null && names.length > 0;
         } catch (Throwable ignored) {
             return false;
         }

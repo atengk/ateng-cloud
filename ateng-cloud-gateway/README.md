@@ -33,6 +33,8 @@
 | `GatewayRouteRefreshListener` | 全局事件监听器 | 监听配置热更事件 | 监听微服务主配置环境变量变更与 Nacos 安全热更事件，增量热绑 `spring.cloud.gateway.routes` 并广播 `RefreshRoutesEvent` | 条件装配于 `dynamic-route.enabled=true` |
 | `GatewayRouteValidator` | 校验工具类 | 静态方法调用 | 统一双轨动态路由深度语法语义防卫（ID 唯一、URI 协议头合规、谓词过滤器非空） | 校验失败抛出 `IllegalArgumentException` |
 | `NacosRouteDefinitionRepository` | 动态路由仓库 | 依赖 Nacos Config | 基于 Nacos 动态监听独立路由配置（`gateway-routes.json`），校验合法后原子热加载并发布内存事件；配置破损触发快照兜底 | 条件装配于 `NacosConfigManager` |
+| `GrayLoadBalancerClientConfiguration` | 负载均衡配置 | 客户端子上下文 | 针对微服务客户端装配复合责任链 (`DiscoveryClient` ➔ `Caching` (3s) ➔ `Gray` ➔ `ZonePreference` ➔ `NacosWarmupLoadBalancer`) | `@LoadBalancerClients` 默认规范配置 |
+| `AtengGatewayEnvironmentPostProcessor` | 环境后置处理器 | 容器初始化阶段 | 注入 3s 实例缓存 TTL 与 `spring.cloud.loadbalancer.zone` 属性映射，消除配置覆盖与 Bean 冲突 | `EnvironmentPostProcessor` 自动装配 |
 | `GrayServiceInstanceListSupplier`| 负载均衡提供者 | LoadBalancer 客户端 | 精准匹配 Nacos 实例 `metadata.tag`；灰度节点全部下线时在 `fallbackToDefault=true` 下平滑降级至基线实例 | `@LoadBalancerClients` 默认配置 |
 | `ClientIpResolver` | 工具类 | 静态方法调用 | 提供权威从右向左代理倒推真实 IP 算法及端口号清洗能力 | 开箱即用工具类 |
 | `IpMatcher` | 工具类 | 静态方法调用 | 支持 CIDR 子网段掩码与单 IP 的高效并发匹配 | 开箱即用工具类 |
@@ -357,6 +359,15 @@ public class CustomTrafficTagResolverConfiguration {
 ### 6. 分布式限流 429 统一转译与 Retry-After
 - **标准化响应体**：`GatewayRateLimitResponseFilter` 拦截下游或过滤器产生的 HTTP 429 状态，格式化输出企业标准 `Result.fail(429, "当前访问过于频繁，请稍后重试")`，并附带 `Retry-After: 1` 响应头，引导客户端指数退避。
 
+### 7. 复合智能负载均衡责任链与 3 秒缓存时效收敛 (Composite LoadBalancer & 3s TTL)
+- **复合责任链拓扑装配顺序**：
+  网关层通过 `GrayLoadBalancerClientConfiguration` 构建高可用自洽责任链：
+  `DiscoveryClient` ➔ `Caching` (3s) ➔ `GrayServiceInstanceListSupplier` ➔ `ZonePreferenceServiceInstanceListSupplier` ➔ `NacosWarmupLoadBalancer`；
+- **业务隔离级优先于拓扑亲和级**：
+  调度引擎严格执行分层治理：先按 `X-Traffic-Tag` 锁定目标版本池（灰度隔离），再在版本池内部优先筛选同机房健康可用节点（机房亲和）；当灰度节点全宕且 `fallback-to-default=true` 时，平滑降级至基线默认实例（杜绝 503 报警）；普通未染色流量坚决隔离不落入金丝雀节点；
+- **3 秒实例缓存 TTL 极速感知**：
+  通过 `AtengGatewayEnvironmentPostProcessor` 默认向 Environment 注入 `spring.cloud.loadbalancer.cache.ttl: 3s`，规避 Spring Cloud 默认 35s 缓存导致的滚动发布下线流量黑洞与节点感知滞后。
+
 ---
 
 ## 维度四：物理排版与代码全真验证
@@ -484,5 +495,48 @@ void testMainConfigRouteHotReloadAndSnapshotGuard() {
             .expectBody()
             .jsonPath("$.code").isEqualTo(200)
             .jsonPath("$.data").isEqualTo("gateway-ok");
+}
+```
+
+### 6. 复合智能负载均衡 HTTP 边界端到端集成测试 (金丝雀染色、同机房亲和、灰度全下线降级与预热)
+```java
+@Test
+@DisplayName("端到端断言：携带灰度标签的外部 HTTP 请求精准命中同机房灰度实例")
+void testHttpBoundaryGrayTagMatchesSameZoneCanaryInstance() {
+    webTestClient.get()
+            .uri("/mock/lb/gray-precision/instance-info")
+            .header(GatewayConstants.X_TRAFFIC_TAG, "v2")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data.instanceId").isEqualTo("srv-gray-az1");
+}
+
+@Test
+@DisplayName("端到端断言：灰度节点全宕时，平滑降级调度至基线默认实例 (HTTP 200，杜绝 503 报警)")
+void testHttpBoundaryGrayAllDownFallsBackToSameZoneBaseline() {
+    webTestClient.get()
+            .uri("/mock/lb/gray-fallback/instance-info")
+            .header(GatewayConstants.X_TRAFFIC_TAG, "v2")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data.instanceId").isEqualTo("srv-base-az1");
+}
+
+@Test
+@DisplayName("端到端断言：普通未染色流量绝对隔离不落入金丝雀节点")
+void testHttpBoundaryUncoloredRequestNeverTouchesCanary() {
+    for (int i = 0; i < 10; i++) {
+        webTestClient.get()
+                .uri("/mock/lb/baseline-isolation/instance-info")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.instanceId").isEqualTo("srv-base-az1");
+    }
 }
 ```
