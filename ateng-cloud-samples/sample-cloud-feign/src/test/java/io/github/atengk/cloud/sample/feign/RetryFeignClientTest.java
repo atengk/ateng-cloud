@@ -63,6 +63,10 @@ public class RetryFeignClientTest {
 
     @BeforeEach
     void setUp() {
+        try {
+            baselineFeignClient.echo("warmup");
+        } catch (Exception ignored) {
+        }
         retryMockController.reset();
     }
 
