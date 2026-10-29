@@ -41,7 +41,17 @@ public enum SeataResultCode implements IResultCode {
     /**
      * TCC 分支事务重复调用已幂等放行
      */
-    TCC_FENCE_DUPLICATE_CALL(5112, "TCC 分支事务重复调用已幂等放行");
+    TCC_FENCE_DUPLICATE_CALL(5112, "TCC 分支事务重复调用已幂等放行"),
+
+    /**
+     * TCC 分支事务记录不存在
+     */
+    TCC_FENCE_RECORD_NOT_EXISTS(5113, "TCC 分支事务记录不存在"),
+
+    /**
+     * TCC 分支事务状态不合法
+     */
+    TCC_FENCE_STATE_ERROR(5114, "TCC 分支事务状态不合法");
 
     private final Integer code;
     private final String msg;

@@ -11,8 +11,14 @@ import io.github.atengk.cloud.seata.interceptor.SeataFeignContextInterceptor;
 import io.github.atengk.cloud.seata.interceptor.SeataWebHandlerInterceptor;
 import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
+import io.github.atengk.cloud.seata.tcc.InMemoryTccFenceRepository;
+import io.github.atengk.cloud.seata.tcc.JdbcTccFenceRepository;
+import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
+import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
+import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
 import org.apache.seata.rm.GlobalLockTemplate;
+import org.apache.seata.rm.fence.SpringFenceConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -54,6 +60,9 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataGlobalLockAspect.class);
             assertThat(context).hasSingleBean(SeataGlobalLockTemplate.class);
             assertThat(context).hasSingleBean(GlobalLockTemplate.class);
+            assertThat(context).hasSingleBean(TccFenceRepository.class);
+            assertThat(context).hasSingleBean(TccFenceBarrier.class);
+            assertThat(context).hasSingleBean(SeataTccFenceTemplate.class);
             assertThat(context).doesNotHaveBean(SeataWebHandlerInterceptor.class);
 
             SeataProperties properties = context.getBean(SeataProperties.class);
@@ -88,6 +97,9 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataGlobalLockAspect.class);
             assertThat(context).hasSingleBean(SeataGlobalLockTemplate.class);
             assertThat(context).hasSingleBean(GlobalLockTemplate.class);
+            assertThat(context).hasSingleBean(TccFenceRepository.class);
+            assertThat(context).hasSingleBean(TccFenceBarrier.class);
+            assertThat(context).hasSingleBean(SeataTccFenceTemplate.class);
         });
     }
 
@@ -142,6 +154,37 @@ class AtengSeataAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(SeataMarker.class);
                     assertThat(context.getBean(SeataMarker.class)).isSameAs(customMarker);
+                });
+    }
+
+    @Test
+    @DisplayName("测试配置 ateng.cloud.seata.tcc.fence-enabled=false 时 TCC Fence 组件条件跳过")
+    void testDisabledTccFence() {
+        nonWebRunner
+                .withPropertyValues("ateng.cloud.seata.tcc.fence-enabled=false")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AtengSeataAutoConfiguration.class);
+                    assertThat(context).doesNotHaveBean(TccFenceRepository.class);
+                    assertThat(context).doesNotHaveBean(TccFenceBarrier.class);
+                    assertThat(context).doesNotHaveBean(SeataTccFenceTemplate.class);
+                });
+    }
+
+    @Test
+    @DisplayName("测试注册 DataSource 与 PlatformTransactionManager 时装配 JdbcTccFenceRepository 与 SpringFenceConfig")
+    void testTccFenceWithDataSource() {
+        javax.sql.DataSource mockDs = org.mockito.Mockito.mock(javax.sql.DataSource.class);
+        org.springframework.transaction.PlatformTransactionManager mockTxManager = org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+
+        nonWebRunner
+                .withBean(javax.sql.DataSource.class, () -> mockDs)
+                .withBean(org.springframework.transaction.PlatformTransactionManager.class, () -> mockTxManager)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(TccFenceRepository.class);
+                    assertThat(context.getBean(TccFenceRepository.class)).isInstanceOf(JdbcTccFenceRepository.class);
+                    assertThat(context).hasSingleBean(TccFenceBarrier.class);
+                    assertThat(context).hasSingleBean(SeataTccFenceTemplate.class);
+                    assertThat(context).hasSingleBean(SpringFenceConfig.class);
                 });
     }
 }

@@ -16,21 +16,32 @@ import io.github.atengk.cloud.seata.interceptor.SeataFeignContextInterceptor;
 import io.github.atengk.cloud.seata.interceptor.SeataWebHandlerInterceptor;
 import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
+import io.github.atengk.cloud.seata.tcc.InMemoryTccFenceRepository;
+import io.github.atengk.cloud.seata.tcc.JdbcTccFenceRepository;
+import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
+import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
+import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
+import org.apache.seata.common.holder.ObjectHolder;
 import org.apache.seata.rm.GlobalLockTemplate;
+import org.apache.seata.rm.fence.SpringFenceConfig;
 import org.apache.seata.spring.annotation.GlobalLock;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import javax.sql.DataSource;
 
 /**
  * 分布式事务增强底座自动装配类
@@ -226,6 +237,81 @@ public class AtengSeataAutoConfiguration {
     public GlobalLockTemplate globalLockTemplate() {
         log.debug("装配 Apache Seata 原生 GlobalLockTemplate 门面组件");
         return new GlobalLockTemplate();
+    }
+
+    /**
+     * 注册基于 JDBC 数据源的 TCC Fence 本地日志仓储
+     *
+     * @param dataSource 数据源
+     * @return JdbcTccFenceRepository 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean(TccFenceRepository.class)
+    @ConditionalOnBean(DataSource.class)
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
+    public TccFenceRepository jdbcTccFenceRepository(DataSource dataSource) {
+        log.debug("装配 JdbcTccFenceRepository 本地数据库防卫仓储");
+        return new JdbcTccFenceRepository(dataSource);
+    }
+
+    /**
+     * 注册内存态自洽 TCC Fence 本地日志仓储（无物理 DataSource 时的保底装配）
+     *
+     * @return InMemoryTccFenceRepository 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean(TccFenceRepository.class)
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
+    public TccFenceRepository inMemoryTccFenceRepository() {
+        log.debug("装配 InMemoryTccFenceRepository 纯内存防卫仓储");
+        return new InMemoryTccFenceRepository();
+    }
+
+    /**
+     * 注册受管 TCC Fence 业务防卫屏障组件
+     *
+     * @param repository TCC Fence 日志仓储
+     * @return TccFenceBarrier 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
+    public TccFenceBarrier tccFenceBarrier(TccFenceRepository repository) {
+        log.debug("装配 TccFenceBarrier 业务防卫屏障组件");
+        return new TccFenceBarrier(repository);
+    }
+
+    /**
+     * 注册编程式 TCC Fence 业务防卫执行模板
+     *
+     * @param barrier TCC Fence 业务防卫屏障
+     * @return SeataTccFenceTemplate 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
+    public SeataTccFenceTemplate seataTccFenceTemplate(TccFenceBarrier barrier) {
+        log.debug("装配 SeataTccFenceTemplate 编程式防卫执行模板");
+        return new SeataTccFenceTemplate(barrier);
+    }
+
+    /**
+     * 注册 Apache Seata 原生 SpringFenceConfig 配置（协同原生 @TwoPhaseBusinessAction 声明式防卫）
+     *
+     * @param dataSource         数据源
+     * @param transactionManager 事务管理器
+     * @return SpringFenceConfig 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean(SpringFenceConfig.class)
+    @ConditionalOnClass(SpringFenceConfig.class)
+    @ConditionalOnBean({DataSource.class, PlatformTransactionManager.class})
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
+    public SpringFenceConfig springFenceConfig(DataSource dataSource, PlatformTransactionManager transactionManager) {
+        log.debug("装配 Apache Seata 原生 SpringFenceConfig 组件");
+        SpringFenceConfig config = new SpringFenceConfig(dataSource, transactionManager);
+        ObjectHolder.INSTANCE.setObject("SpringFenceConfig", config);
+        return config;
     }
 
     /**
