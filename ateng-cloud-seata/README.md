@@ -617,18 +617,18 @@ sequenceDiagram
 
 - **[SampleSeataDistributedTransactionIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDistributedTransactionIntegrationTest.java)**：
   - `shouldCommitDistributedTransactionSuccessfully`：实测订单、库存、账户三节点全链路正向成功提交；
-  - `shouldRollbackDistributedTransactionOnStockInsufficient`：实测库存不足时抛出 `BusinessException` 触发分布式事务原子回滚，账户与订单数据 0 污染；
-  - `shouldRollbackDistributedTransactionOnBalanceInsufficient`：实测账户余额不足时触发全链路原子回滚，库存无感回退；
+  - `shouldRollbackDistributedTransactionOnBusinessException`：实测账户余额不足抛出 `BusinessException` 触发全链路原子回滚，库存与订单数据 0 污染；
+  - `shouldRollbackDistributedTransactionOnStockInsufficient`：实测库存不足时触发分布式事务原子回滚，账户无感回退；
 - **[SampleSeataTccFenceIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceIntegrationTest.java)**：
   - `shouldExecuteNormalTccCommit`：实测 TCC 正常两阶段 Try ➔ Confirm 流程与日志状态推进；
   - `shouldExecuteNormalTccRollback`：实测 TCC 正常两阶段 Try ➔ Cancel 回滚与补偿执行；
-  - `shouldPreventEmptyRollback`：实测一阶段未曾执行时 Cancel 触发空回滚防卫，插入 `SUSPENDED` 并静默放行；
+  - `shouldHandleEmptyRollback`：实测一阶段未曾执行时 Cancel 触发空回滚防卫，插入 `SUSPENDED` 并静默放行；
   - `shouldPreventBusinessHanging`：实测 Cancel 先期到达插旗阻断后，延迟 Try 到达被刚性拦截并抛出 `TccFenceHangingException`，杜绝业务悬挂；
-  - `shouldBeIdempotentOnDuplicateCommitAndRollback`：实测重复提交与重复回滚幂等放行；
+  - `shouldEnsureIdempotentExecution`：实测多次重复提交与重复回滚幂等放行；
 - **[SampleSeataGlobalLockIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataGlobalLockIntegrationTest.java)**：
   - `shouldExecuteDeclarativeGlobalLock`：实测 `@GlobalLock` 声明式切面排他防脏读；
   - `shouldExecuteProgrammaticGlobalLock`：实测 `SeataGlobalLockTemplate` 编程式模板执行；
-  - `shouldSupportConcurrentGlobalLockChecks`：实测高并发竞争下无 `undo_log` 开销的高性能排他校验。
+  - `shouldExecuteConcurrentlyWithoutLeak`：实测高并发竞争下无 `undo_log` 开销的高性能排他校验与标记释放。
 
 ---
 

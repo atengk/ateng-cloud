@@ -99,12 +99,7 @@ public class TccFenceBarrier {
         log.debug("TCC Fence 一阶段 Try 防卫成功插入 TRIED 记录: [{}#{}]", xid, branchId);
 
         // 3. 执行业务一阶段逻辑
-        try {
-            return targetCallback.execute();
-        } catch (Throwable t) {
-            log.warn("TCC Fence 一阶段业务逻辑执行异常: [{}#{}]", xid, branchId, t);
-            throw t;
-        }
+        return targetCallback.execute();
     }
 
     /**
@@ -163,7 +158,14 @@ public class TccFenceBarrier {
             );
         }
 
-        // CAS 更新为 COMMITTED
+        // 先执行业务 Confirm（若业务抛出异常，状态保留为 TRIED，允许 TC 二阶段重试）
+        Boolean result = targetCallback.execute();
+        boolean success = result != null && result;
+        if (!success) {
+            return false;
+        }
+
+        // 业务 Confirm 执行成功后，原子 CAS 更新状态为 COMMITTED
         boolean updated = repository.updateStatus(xid, branchId, TccFenceStatus.TRIED, TccFenceStatus.COMMITTED);
         if (!updated) {
             // 并发推进，再次自检
@@ -180,10 +182,7 @@ public class TccFenceBarrier {
         }
 
         log.debug("TCC Fence Confirm 状态成功转移为 COMMITTED: [{}#{}]", xid, branchId);
-
-        // 执行业务 Confirm
-        Boolean result = targetCallback.execute();
-        return result != null && result;
+        return true;
     }
 
     /**
@@ -248,7 +247,14 @@ public class TccFenceBarrier {
             );
         }
 
-        // CAS 更新为 ROLLBACKED
+        // 先执行业务补偿 Cancel（若业务抛出异常，状态保留为 TRIED，允许 TC 二阶段重试补偿）
+        Boolean result = targetCallback.execute();
+        boolean success = result != null && result;
+        if (!success) {
+            return false;
+        }
+
+        // 业务补偿 Cancel 执行成功后，原子 CAS 更新状态为 ROLLBACKED
         boolean updated = repository.updateStatus(xid, branchId, TccFenceStatus.TRIED, TccFenceStatus.ROLLBACKED);
         if (!updated) {
             TccFenceRecord current = repository.findByXidAndBranchId(xid, branchId).orElse(null);
@@ -264,10 +270,7 @@ public class TccFenceBarrier {
         }
 
         log.debug("TCC Fence Cancel 状态成功转移为 ROLLBACKED: [{}#{}]", xid, branchId);
-
-        // 执行业务补偿 Cancel
-        Boolean result = targetCallback.execute();
-        return result != null && result;
+        return true;
     }
 
     /**

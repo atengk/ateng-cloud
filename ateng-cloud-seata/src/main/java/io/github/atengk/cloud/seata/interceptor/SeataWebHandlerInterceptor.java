@@ -54,14 +54,17 @@ public class SeataWebHandlerInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         String boundXid = (String) request.getAttribute(BIND_XID_ATTRIBUTE);
         if (StringUtils.hasText(boundXid)) {
-            String currentXid = RootContext.getXID();
-            if (boundXid.equals(currentXid)) {
-                String unbindXid = RootContext.unbind();
-                log.debug("Seata Web 请求结束确定性解绑全局事务 XID: [{}] (解绑结果: [{}])", boundXid, unbindXid);
-            } else {
-                log.warn("Seata Web 请求结束时当前 XID [{}] 与入站绑定的 XID [{}] 不一致，仅执行强制安全解绑",
-                        currentXid, boundXid);
+            try {
+                String currentXid = RootContext.getXID();
+                if (boundXid.equals(currentXid)) {
+                    log.debug("Seata Web 请求结束确定性解绑全局事务 XID: [{}]", boundXid);
+                } else {
+                    log.warn("Seata Web 请求结束时当前 XID [{}] 与入站绑定的 XID [{}] 不一致，执行强制安全解绑",
+                            currentXid, boundXid);
+                }
+            } finally {
                 RootContext.unbind();
+                request.removeAttribute(BIND_XID_ATTRIBUTE);
             }
         }
     }

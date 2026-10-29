@@ -86,13 +86,7 @@ public class SeataGlobalLockAspect {
 
             // 1. 尝试解析 org.apache.seata.spring.annotation.GlobalLock
             org.apache.seata.spring.annotation.GlobalLock apacheLock =
-                    AnnotatedElementUtils.findMergedAnnotation(specificMethod, org.apache.seata.spring.annotation.GlobalLock.class);
-            if (apacheLock == null && specificMethod != method) {
-                apacheLock = AnnotatedElementUtils.findMergedAnnotation(method, org.apache.seata.spring.annotation.GlobalLock.class);
-            }
-            if (apacheLock == null) {
-                apacheLock = AnnotatedElementUtils.findMergedAnnotation(targetClass, org.apache.seata.spring.annotation.GlobalLock.class);
-            }
+                    findAnnotation(specificMethod, method, targetClass, org.apache.seata.spring.annotation.GlobalLock.class);
             if (apacheLock != null) {
                 if (apacheLock.lockRetryInterval() > 0) {
                     retryInterval = apacheLock.lockRetryInterval();
@@ -103,13 +97,7 @@ public class SeataGlobalLockAspect {
             } else {
                 // 2. 尝试解析 io.seata.spring.annotation.GlobalLock
                 io.seata.spring.annotation.GlobalLock ioLock =
-                        AnnotatedElementUtils.findMergedAnnotation(specificMethod, io.seata.spring.annotation.GlobalLock.class);
-                if (ioLock == null && specificMethod != method) {
-                    ioLock = AnnotatedElementUtils.findMergedAnnotation(method, io.seata.spring.annotation.GlobalLock.class);
-                }
-                if (ioLock == null) {
-                    ioLock = AnnotatedElementUtils.findMergedAnnotation(targetClass, io.seata.spring.annotation.GlobalLock.class);
-                }
+                        findAnnotation(specificMethod, method, targetClass, io.seata.spring.annotation.GlobalLock.class);
                 if (ioLock != null) {
                     if (ioLock.lockRetryInterval() > 0) {
                         retryInterval = ioLock.lockRetryInterval();
@@ -125,5 +113,16 @@ public class SeataGlobalLockAspect {
         config.setLockRetryInterval(retryInterval);
         config.setLockRetryTimes(retryTimes);
         return config;
+    }
+
+    private <A extends java.lang.annotation.Annotation> A findAnnotation(Method specificMethod, Method method, Class<?> targetClass, Class<A> annotationClass) {
+        A annotation = AnnotatedElementUtils.findMergedAnnotation(specificMethod, annotationClass);
+        if (annotation == null && specificMethod != method) {
+            annotation = AnnotatedElementUtils.findMergedAnnotation(method, annotationClass);
+        }
+        if (annotation == null) {
+            annotation = AnnotatedElementUtils.findMergedAnnotation(targetClass, annotationClass);
+        }
+        return annotation;
     }
 }

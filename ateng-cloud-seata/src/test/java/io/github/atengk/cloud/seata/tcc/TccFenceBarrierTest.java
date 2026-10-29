@@ -245,4 +245,40 @@ class TccFenceBarrierTest {
         });
         assertThat(confirmCount.get()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("场景9：Confirm业务失败时状态保持TRIED不被过早终态化，支持TC二阶段重试成功")
+    void shouldKeepTriedStatusWhenConfirmFailsToSupportTcRetry() throws Throwable {
+        String xid = "xid-2009";
+        Long branchId = 209L;
+        String actionName = "retryAction";
+
+        barrier.prepareFence(xid, branchId, actionName, () -> "OK");
+        assertThat(repository.findByXidAndBranchId(xid, branchId).orElseThrow().getStatus())
+                .isEqualTo(TccFenceStatus.TRIED);
+
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        // 第一次 Confirm 模拟业务抛出异常
+        assertThatThrownBy(() -> barrier.commitFence(xid, branchId, () -> {
+            callCount.incrementAndGet();
+            throw new RuntimeException("DB 瞬时抖动");
+        })).isInstanceOf(RuntimeException.class).hasMessage("DB 瞬时抖动");
+
+        // 强断言：状态依然保持为 TRIED，未被提前推进为 COMMITTED！
+        assertThat(repository.findByXidAndBranchId(xid, branchId).orElseThrow().getStatus())
+                .isEqualTo(TccFenceStatus.TRIED);
+
+        // 第二次 TC 重试 Confirm，业务成功执行
+        boolean success = barrier.commitFence(xid, branchId, () -> {
+            callCount.incrementAndGet();
+            return true;
+        });
+
+        assertThat(success).isTrue();
+        assertThat(callCount.get()).isEqualTo(2);
+        // 业务成功后才推进为 COMMITTED
+        assertThat(repository.findByXidAndBranchId(xid, branchId).orElseThrow().getStatus())
+                .isEqualTo(TccFenceStatus.COMMITTED);
+    }
 }

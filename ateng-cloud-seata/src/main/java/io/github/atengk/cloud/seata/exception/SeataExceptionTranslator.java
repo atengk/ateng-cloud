@@ -4,8 +4,6 @@ import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.seata.code.SeataResultCode;
 import org.apache.seata.core.exception.TransactionException;
 import org.apache.seata.core.exception.TransactionExceptionCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Seata 底层驱动异常因果转译器
@@ -18,8 +16,6 @@ import org.slf4j.LoggerFactory;
  * @since 2026-10-29
  */
 public final class SeataExceptionTranslator {
-
-    private static final Logger log = LoggerFactory.getLogger(SeataExceptionTranslator.class);
 
     private SeataExceptionTranslator() {
     }
@@ -69,7 +65,6 @@ public final class SeataExceptionTranslator {
         if (code == TransactionExceptionCode.LockKeyConflict
                 || code == TransactionExceptionCode.LockKeyConflictFailFast
                 || code == TransactionExceptionCode.FailedLockGlobalTranscation) {
-            log.warn("捕获 Seata 全局锁冲突异常 [{}]: {}", code, te.getMessage());
             return new BusinessException(SeataResultCode.SEATA_LOCK_CONFLICT, "分布式事务全局行锁冲突: " + te.getMessage(), cause);
         }
 
@@ -77,11 +72,9 @@ public final class SeataExceptionTranslator {
                 || code == TransactionExceptionCode.FailedToSendBranchCommitRequest
                 || code == TransactionExceptionCode.FailedToSendBranchRollbackRequest
                 || code == TransactionExceptionCode.NotRaftLeader) {
-            log.error("捕获 Seata TC 协调器通信异常 [{}]: {}", code, te.getMessage());
             return new BusinessException(SeataResultCode.SEATA_TC_UNAVAILABLE, "分布式事务协调器 (TC) 连接异常: " + te.getMessage(), cause);
         }
 
-        log.error("捕获 Seata 分布式全局事务异常 [{}]: {}", code, te.getMessage());
         return new BusinessException(SeataResultCode.SEATA_TRANSACTION_FAILED, "分布式全局事务执行失败: " + te.getMessage(), cause);
     }
 

@@ -44,6 +44,7 @@ class SeataWebHandlerInterceptorTest {
         // 模拟请求生命周期结束
         interceptor.afterCompletion(request, response, new Object(), null);
         assertThat(RootContext.getXID()).isNull();
+        assertThat(request.getAttribute(SeataWebHandlerInterceptor.BIND_XID_ATTRIBUTE)).isNull();
     }
 
     @Test
@@ -81,5 +82,20 @@ class SeataWebHandlerInterceptorTest {
         // 请求结束不应解绑原事务
         interceptor.afterCompletion(request, response, new Object(), null);
         assertThat(RootContext.getXID()).isEqualTo(existingXid);
+    }
+
+    @Test
+    @DisplayName("测试入站绑定后若当前 XID 发生漂移，afterCompletion 依然通过 finally 保证安全解绑与属性清理")
+    void testAfterCompletionDeterministicCleanupWhenXidDrifted() {
+        String boundXid = "192.168.1.100:8091:33333333";
+        String driftedXid = "192.168.1.100:8091:44444444";
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setAttribute(SeataWebHandlerInterceptor.BIND_XID_ATTRIBUTE, boundXid);
+        RootContext.bind(driftedXid);
+
+        interceptor.afterCompletion(request, new MockHttpServletResponse(), new Object(), null);
+
+        assertThat(RootContext.getXID()).isNull();
+        assertThat(request.getAttribute(SeataWebHandlerInterceptor.BIND_XID_ATTRIBUTE)).isNull();
     }
 }

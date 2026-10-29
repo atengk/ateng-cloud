@@ -51,9 +51,7 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
         String sql = "SELECT xid, branch_id, action_name, status, gmt_create, gmt_modified FROM "
                 + tableName + " WHERE xid = ? AND branch_id = ?";
 
-        Connection conn = null;
-        try {
-            conn = DataSourceUtils.getConnection(dataSource);
+        return executeInConnection("查询 TCC Fence 日志", xid, branchId, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setString(1, xid);
                 ps.setLong(2, branchId);
@@ -76,15 +74,8 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
                     }
                 }
             }
-        } catch (SQLException e) {
-            log.error("查询 TCC Fence 日志失败 [{}#{}]", xid, branchId, e);
-            throw new TccFenceException("查询 TCC Fence 日志失败: " + e.getMessage(), xid, branchId);
-        } finally {
-            if (conn != null) {
-                DataSourceUtils.releaseConnection(conn, dataSource);
-            }
-        }
-        return Optional.empty();
+            return Optional.empty();
+        });
     }
 
     @Override
@@ -93,9 +84,7 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
         String sql = "INSERT INTO " + tableName
                 + " (xid, branch_id, action_name, status, gmt_create, gmt_modified) VALUES (?, ?, ?, ?, ?, ?)";
 
-        Connection conn = null;
-        try {
-            conn = DataSourceUtils.getConnection(dataSource);
+        return executeInConnection("插入 TCC Fence 日志", record.getXid(), record.getBranchId(), conn -> {
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setString(1, record.getXid());
                 ps.setLong(2, record.getBranchId());
@@ -106,23 +95,18 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
                 ps.setTimestamp(6, now);
 
                 return ps.executeUpdate() > 0;
+            } catch (SQLException e) {
+                // 捕获主键冲突异常（MySQL 1062, 标准 SQLState 23000 / 23xxx 完整唯一键冲突）
+                String sqlState = e.getSQLState();
+                int errorCode = e.getErrorCode();
+                if (errorCode == 1062 || (sqlState != null && sqlState.startsWith("23"))) {
+                    log.debug("插入 TCC Fence 日志主键冲突 [{}#{}], 状态: [{}]",
+                            record.getXid(), record.getBranchId(), record.getStatus());
+                    return false;
+                }
+                throw e;
             }
-        } catch (SQLException e) {
-            // 捕获主键冲突异常（MySQL 1062, 标准 SQLState 23000 / 23xxx 完整唯一键冲突）
-            String sqlState = e.getSQLState();
-            int errorCode = e.getErrorCode();
-            if (errorCode == 1062 || (sqlState != null && sqlState.startsWith("23"))) {
-                log.debug("插入 TCC Fence 日志主键冲突 [{}#{}], 状态: [{}]",
-                        record.getXid(), record.getBranchId(), record.getStatus());
-                return false;
-            }
-            log.error("插入 TCC Fence 日志异常 [{}#{}]", record.getXid(), record.getBranchId(), e);
-            throw new TccFenceException("插入 TCC Fence 日志失败: " + e.getMessage(), record.getXid(), record.getBranchId());
-        } finally {
-            if (conn != null) {
-                DataSourceUtils.releaseConnection(conn, dataSource);
-            }
-        }
+        });
     }
 
     @Override
@@ -133,9 +117,7 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
         String sql = "UPDATE " + tableName
                 + " SET status = ?, gmt_modified = ? WHERE xid = ? AND branch_id = ? AND status = ?";
 
-        Connection conn = null;
-        try {
-            conn = DataSourceUtils.getConnection(dataSource);
+        return executeInConnection("CAS 更新 TCC Fence 日志状态", xid, branchId, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setInt(1, newStatus.getCode());
                 ps.setTimestamp(2, Timestamp.valueOf(LocalDateTime.now()));
@@ -145,15 +127,7 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
 
                 return ps.executeUpdate() > 0;
             }
-        } catch (SQLException e) {
-            log.error("CAS 更新 TCC Fence 日志状态失败 [{}#{}] 原状态: [{}] -> 新状态: [{}]",
-                    xid, branchId, oldStatus, newStatus, e);
-            throw new TccFenceException("CAS 更新 TCC Fence 日志状态失败: " + e.getMessage(), xid, branchId);
-        } finally {
-            if (conn != null) {
-                DataSourceUtils.releaseConnection(conn, dataSource);
-            }
-        }
+        });
     }
 
     @Override
@@ -163,17 +137,27 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
         }
         String sql = "DELETE FROM " + tableName + " WHERE xid = ? AND branch_id = ?";
 
-        Connection conn = null;
-        try {
-            conn = DataSourceUtils.getConnection(dataSource);
+        return executeInConnection("删除 TCC Fence 日志", xid, branchId, conn -> {
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setString(1, xid);
                 ps.setLong(2, branchId);
                 return ps.executeUpdate() > 0;
             }
+        });
+    }
+
+    @FunctionalInterface
+    private interface SqlCallback<T> {
+        T doInConnection(Connection conn) throws SQLException;
+    }
+
+    private <T> T executeInConnection(String actionDesc, String xid, Long branchId, SqlCallback<T> callback) {
+        Connection conn = null;
+        try {
+            conn = DataSourceUtils.getConnection(dataSource);
+            return callback.doInConnection(conn);
         } catch (SQLException e) {
-            log.error("删除 TCC Fence 日志失败 [{}#{}]", xid, branchId, e);
-            throw new TccFenceException("删除 TCC Fence 日志失败: " + e.getMessage(), xid, branchId);
+            throw new TccFenceException(actionDesc + "失败: " + e.getMessage(), xid, branchId, e);
         } finally {
             if (conn != null) {
                 DataSourceUtils.releaseConnection(conn, dataSource);

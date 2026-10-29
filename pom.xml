@@ -112,6 +112,13 @@
                 <scope>import</scope>
             </dependency>
 
+            <!-- Spring Cloud Alibaba Seata 事务起步依赖统管 -->
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+            </dependency>
+
             <!-- Apache Dubbo 依赖版本统管 (Import 模式) -->
             <dependency>
                 <groupId>org.apache.dubbo</groupId>

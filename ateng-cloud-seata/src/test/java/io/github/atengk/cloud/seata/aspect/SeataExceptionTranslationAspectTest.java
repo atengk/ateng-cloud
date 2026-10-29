@@ -56,8 +56,38 @@ class SeataExceptionTranslationAspectTest {
         }
     }
 
+    @GlobalTransactional
+    static class SampleClassLevelTransactionalServiceImpl implements SampleTransactionalService {
+
+        @Override
+        public String executeSuccess() {
+            return "class-level-ok";
+        }
+
+        @Override
+        public void executeWithBusinessException() {
+            throw new BusinessException(CommonResultCode.BAD_REQUEST, "类级别异常");
+        }
+
+        @Override
+        public void executeWithSeataLockConflict() {
+            throw new RuntimeException("wrapped", new TransactionException(TransactionExceptionCode.LockKeyConflict, "Key conflict"));
+        }
+
+        @Override
+        public void executeLockMethod() {
+        }
+    }
+
     private SampleTransactionalService createProxy() {
         SampleTransactionalServiceImpl target = new SampleTransactionalServiceImpl();
+        AspectJProxyFactory factory = new AspectJProxyFactory(target);
+        factory.addAspect(new SeataExceptionTranslationAspect());
+        return factory.getProxy();
+    }
+
+    private SampleTransactionalService createClassLevelProxy() {
+        SampleClassLevelTransactionalServiceImpl target = new SampleClassLevelTransactionalServiceImpl();
         AspectJProxyFactory factory = new AspectJProxyFactory(target);
         factory.addAspect(new SeataExceptionTranslationAspect());
         return factory.getProxy();
@@ -98,6 +128,20 @@ class SeataExceptionTranslationAspectTest {
     void testGlobalLockMethodTranslation() {
         SampleTransactionalService proxy = createProxy();
         assertThatThrownBy(proxy::executeLockMethod)
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(SeataResultCode.SEATA_LOCK_CONFLICT.getCode());
+                });
+    }
+
+    @Test
+    @DisplayName("测试类级别标注 @GlobalTransactional 时所有方法异常均受切面转译守护")
+    void testClassLevelGlobalTransactionalTranslation() {
+        SampleTransactionalService proxy = createClassLevelProxy();
+        assertThat(proxy.executeSuccess()).isEqualTo("class-level-ok");
+
+        assertThatThrownBy(proxy::executeWithSeataLockConflict)
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> {
                     BusinessException be = (BusinessException) ex;

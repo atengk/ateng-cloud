@@ -99,8 +99,10 @@ class SampleSeataGlobalLockIntegrationTest {
 
         boolean finished = latch.await(5, TimeUnit.SECONDS);
         executor.shutdown();
+        boolean terminated = executor.awaitTermination(5, TimeUnit.SECONDS);
 
         assertThat(finished).isTrue();
+        assertThat(terminated).isTrue();
         assertThat(successCount.get()).isEqualTo(threadCount);
         assertThat(RootContext.requireGlobalLock()).isFalse();
     }

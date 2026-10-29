@@ -23,6 +23,10 @@ public class TccFenceException extends BusinessException {
         this(SeataResultCode.TCC_FENCE_STATE_ERROR, message, xid, branchId, null);
     }
 
+    public TccFenceException(String message, String xid, Long branchId, Throwable cause) {
+        this(SeataResultCode.TCC_FENCE_STATE_ERROR, message, xid, branchId, cause);
+    }
+
     public TccFenceException(IResultCode resultCode, String message) {
         this(resultCode, message, null, null, null);
     }

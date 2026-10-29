@@ -32,6 +32,11 @@ public class SeataDynamicDatasourceGuard {
     private static final Logger log = LoggerFactory.getLogger(SeataDynamicDatasourceGuard.class);
 
     /**
+     * 默认保底主数据源标识
+     */
+    public static final String DEFAULT_DATASOURCE_KEY = "master";
+
+    /**
      * 绑定至 Spring 事务上下文的当前事务数据源标识资源 Key
      */
     public static final String TX_BOUND_DATASOURCE_RESOURCE_KEY = "ATENG_TX_BOUND_DATASOURCE_KEY";
@@ -178,10 +183,10 @@ public class SeataDynamicDatasourceGuard {
             }
         }
 
-        // 若尚未记录，则取当前线程栈顶数据源，栈为空则取默认主库 "master"
+        // 若尚未记录，则取当前线程栈顶数据源，栈为空则取默认主库
         String currentKey = DynamicDataSourceContextHolder.peek();
         if (!StringUtils.hasText(currentKey)) {
-            currentKey = "master";
+            currentKey = DEFAULT_DATASOURCE_KEY;
         }
 
         // 若当前事务同步机制已激活，将初始数据源绑定至事务资源表，并在事务完成时解绑

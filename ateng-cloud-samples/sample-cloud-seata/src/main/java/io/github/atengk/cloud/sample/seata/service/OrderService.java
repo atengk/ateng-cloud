@@ -23,6 +23,11 @@ public class OrderService {
 
     private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
+    /**
+     * 默认商品单价（测试沙箱固定单价 100 元）
+     */
+    public static final int DEFAULT_UNIT_PRICE = 100;
+
     private final JdbcTemplate jdbcTemplate;
     private final StorageService storageService;
     private final AccountService accountService;
@@ -43,7 +48,7 @@ public class OrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createOrder(String userId, String commodityCode, int orderCount) {
-        int orderMoney = orderCount * 100; // 单价 100
+        int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
         log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}], 金额 [{}]",
                 RootContext.getXID(), userId, commodityCode, orderCount, orderMoney);
 
@@ -68,11 +73,20 @@ public class OrderService {
         }, keyHolder);
 
         Number key = keyHolder.getKey();
-        Long orderId = key != null ? key.longValue() : 1L;
+        if (key == null) {
+            throw new IllegalStateException("订单创建失败，未获取到自增主键");
+        }
+        Long orderId = key.longValue();
         log.info("订单创建成功，订单 ID: [{}]", orderId);
         return orderId;
     }
 
+    /**
+     * 查询指定用户的订单总数
+     *
+     * @param userId 用户 ID
+     * @return 订单总数（保底返回 0）
+     */
     public int getOrderCount(String userId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(1) FROM order_tbl WHERE user_id = ?",
@@ -82,6 +96,9 @@ public class OrderService {
         return count != null ? count : 0;
     }
 
+    /**
+     * 清空所有订单数据（测试环境数据隔离清理）
+     */
     public void cleanOrders() {
         jdbcTemplate.update("DELETE FROM order_tbl");
     }
