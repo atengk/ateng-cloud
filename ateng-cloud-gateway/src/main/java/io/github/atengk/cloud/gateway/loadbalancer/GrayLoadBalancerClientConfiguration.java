@@ -62,8 +62,9 @@ public class GrayLoadBalancerClientConfiguration {
     public ServiceInstanceListSupplier serviceInstanceListSupplier(
             ConfigurableApplicationContext context,
             ObjectProvider<AtengGatewayProperties> propertiesProvider) {
-        AtengGatewayTrafficProperties trafficProperties = propertiesProvider.getIfAvailable() != null
-                ? propertiesProvider.getIfAvailable().getTraffic()
+        AtengGatewayProperties gatewayProps = propertiesProvider.getIfAvailable();
+        AtengGatewayTrafficProperties trafficProperties = (gatewayProps != null && gatewayProps.getTraffic() != null)
+                ? gatewayProps.getTraffic()
                 : new AtengGatewayTrafficProperties();
 
         // 1. 底层发现与缓存层：构建 DiscoveryClient 并挂载本地缓存 (默认 TTL=3s)
@@ -89,7 +90,8 @@ public class GrayLoadBalancerClientConfiguration {
             String[] names = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
                     context, ReactiveDiscoveryClient.class);
             return names != null && names.length > 0;
-        } catch (Throwable ignored) {
+        } catch (Throwable ex) {
+            log.trace("[ateng-cloud-gateway] Probing ReactiveDiscoveryClient failed, falling back to false: {}", ex.getMessage());
             return false;
         }
     }
@@ -137,10 +139,9 @@ public class GrayLoadBalancerClientConfiguration {
             ObjectProvider<AtengGatewayProperties> propertiesProvider) {
         LoadBalancerCacheProperties cacheProperties = new LoadBalancerCacheProperties();
         Duration ttl = Duration.ofSeconds(3);
-        if (propertiesProvider.getIfAvailable() != null
-                && propertiesProvider.getIfAvailable().getTraffic() != null
-                && propertiesProvider.getIfAvailable().getTraffic().getCacheTtl() != null) {
-            ttl = propertiesProvider.getIfAvailable().getTraffic().getCacheTtl();
+        AtengGatewayProperties gatewayProps = propertiesProvider.getIfAvailable();
+        if (gatewayProps != null && gatewayProps.getTraffic() != null && gatewayProps.getTraffic().getCacheTtl() != null) {
+            ttl = gatewayProps.getTraffic().getCacheTtl();
         }
         cacheProperties.setTtl(ttl);
         return cacheProperties;

@@ -2,9 +2,11 @@ package io.github.atengk.cloud.nacos.loadbalancer;
 
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.InstanceWeightCalculator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.ReactiveDiscoveryClient;
 import org.springframework.cloud.loadbalancer.core.ReactorLoadBalancer;
@@ -25,9 +27,11 @@ import org.springframework.core.env.Environment;
  */
 public class AtengNacosLoadBalancerClientConfiguration {
 
+    private static final Logger log = LoggerFactory.getLogger(AtengNacosLoadBalancerClientConfiguration.class);
+
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnMissingClass("io.github.atengk.cloud.gateway.loadbalancer.GrayLoadBalancerClientConfiguration")
+    @ConditionalOnProperty(prefix = "ateng.cloud.nacos.loadbalancer", name = "client-supplier-enabled", havingValue = "true", matchIfMissing = true)
     public ServiceInstanceListSupplier nacosServiceInstanceListSupplier(
             ConfigurableApplicationContext context,
             AtengNacosProperties properties) {
@@ -46,7 +50,8 @@ public class AtengNacosLoadBalancerClientConfiguration {
     private boolean hasReactiveDiscoveryClient(ConfigurableApplicationContext context) {
         try {
             return context.getBeanProvider(ReactiveDiscoveryClient.class).getIfAvailable() != null;
-        } catch (Throwable ignored) {
+        } catch (Throwable ex) {
+            log.trace("[ateng-cloud-nacos] Probing ReactiveDiscoveryClient failed, falling back to false: {}", ex.getMessage());
             return false;
         }
     }

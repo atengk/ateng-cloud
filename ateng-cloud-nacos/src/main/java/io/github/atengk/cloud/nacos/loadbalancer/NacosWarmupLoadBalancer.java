@@ -93,11 +93,8 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             return selectRoundRobin(instances);
         }
 
-        boolean warmupEnabled = properties != null && properties.getLoadbalancer() != null
-                && properties.getLoadbalancer().isWarmup();
-        boolean adaptiveEnabled = properties != null && properties.getLoadbalancer() != null
-                && properties.getLoadbalancer().getAdaptiveWeight() != null
-                && properties.getLoadbalancer().getAdaptiveWeight().isEnabled();
+        boolean warmupEnabled = properties != null && properties.isLoadBalancerWarmupEnabled();
+        boolean adaptiveEnabled = properties != null && properties.isAdaptiveWeightEnabled();
         boolean hasCustomCalculator = weightCalculatorProvider != null && weightCalculatorProvider.getIfAvailable() != null;
 
         if (!warmupEnabled && !adaptiveEnabled && !hasCustomCalculator) {
@@ -129,8 +126,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
      */
     private Response<ServiceInstance> selectWarmupWeighted(List<ServiceInstance> instances) {
         long now = System.currentTimeMillis();
-        double floorRatio = (properties != null && properties.getLoadbalancer() != null)
-                ? properties.getLoadbalancer().getWarmupFloorWeightRatio() : 0.10;
+        double floorRatio = (properties != null) ? properties.getWarmupFloorWeightRatio() : 0.10;
 
         int[] weights = new int[instances.size()];
         boolean allEqual = true;
@@ -240,8 +236,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
         }
 
         double weight = baseWeight;
-        boolean warmupEnabled = properties == null || properties.getLoadbalancer() == null
-                || properties.getLoadbalancer().isWarmup();
+        boolean warmupEnabled = properties == null || properties.isLoadBalancerWarmupEnabled();
         if (warmupEnabled) {
             String startupTimeStr = meta.get(DefaultNacosMetadataProvider.KEY_STARTUP_TIME);
             if (StringUtils.hasText(startupTimeStr)) {

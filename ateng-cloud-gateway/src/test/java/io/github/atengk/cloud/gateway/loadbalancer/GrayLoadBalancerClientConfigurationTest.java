@@ -77,7 +77,8 @@ class GrayLoadBalancerClientConfigurationTest {
                 )
                 .withPropertyValues(
                         "spring.cloud.loadbalancer.client.name=order-service",
-                        "spring.cloud.loadbalancer.zone=zone-b"
+                        "spring.cloud.loadbalancer.zone=zone-b",
+                        "ateng.cloud.nacos.loadbalancer.client-supplier-enabled=false"
                 )
                 .run(context -> {
                     // 严格断言：消除互斥抢占，ServiceInstanceListSupplier 依然唯一且由网关复合责任链接管

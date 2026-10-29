@@ -154,6 +154,34 @@ public class AtengNacosProperties {
     }
 
     /**
+     * 判断是否开启了负载均衡启动平滑预热
+     */
+    public boolean isLoadBalancerWarmupEnabled() {
+        return loadbalancer != null && loadbalancer.isWarmup();
+    }
+
+    /**
+     * 判断是否开启了自适应系统资源动态加权
+     */
+    public boolean isAdaptiveWeightEnabled() {
+        return loadbalancer != null && loadbalancer.isAdaptiveWeightEnabled();
+    }
+
+    /**
+     * 获取负载均衡启动平滑预热保底底噪权重比例（默认 0.10 即 10%）
+     */
+    public double getWarmupFloorWeightRatio() {
+        return (loadbalancer != null) ? loadbalancer.getWarmupFloorWeightRatio() : 0.10;
+    }
+
+    /**
+     * 判断是否在客户端子上下文中激活默认的服务实例提供者
+     */
+    public boolean isLoadBalancerClientSupplierEnabled() {
+        return loadbalancer == null || loadbalancer.isClientSupplierEnabled();
+    }
+
+    /**
      * 实例元数据增强属性
      */
     public static class MetadataProperties {
@@ -459,6 +487,11 @@ public class AtengNacosProperties {
         private double warmupFloorWeightRatio = 0.10;
 
         /**
+         * 是否在客户端子上下文中激活默认的服务实例提供者（默认 true；在网关等复合路由场景下可设为 false 让位上层责任链）
+         */
+        private boolean clientSupplierEnabled = true;
+
+        /**
          * 节点自适应资源加权调度配置
          */
         @NestedConfigurationProperty
@@ -496,12 +529,27 @@ public class AtengNacosProperties {
             this.warmupFloorWeightRatio = warmupFloorWeightRatio;
         }
 
+        public boolean isClientSupplierEnabled() {
+            return clientSupplierEnabled;
+        }
+
+        public void setClientSupplierEnabled(boolean clientSupplierEnabled) {
+            this.clientSupplierEnabled = clientSupplierEnabled;
+        }
+
         public AdaptiveWeightProperties getAdaptiveWeight() {
             return adaptiveWeight;
         }
 
         public void setAdaptiveWeight(AdaptiveWeightProperties adaptiveWeight) {
             this.adaptiveWeight = adaptiveWeight;
+        }
+
+        /**
+         * 判断是否激活了节点自适应系统资源动态加权调度
+         */
+        public boolean isAdaptiveWeightEnabled() {
+            return adaptiveWeight != null && adaptiveWeight.isEnabled();
         }
     }
 

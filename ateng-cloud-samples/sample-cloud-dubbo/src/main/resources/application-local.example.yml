@@ -32,3 +32,8 @@ dubbo:
     reference:
       # 置空 direct URL，触发 Dubbo 消费端通过 Nacos 注册中心执行服务发现与负载均衡
       url: ""
+
+ateng:
+  cloud:
+    nacos:
+      drain-timeout: 100ms

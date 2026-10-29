@@ -18,3 +18,8 @@ spring:
         enabled: false
         namespace: YOUR_NAMESPACE
         file-extension: yaml
+
+ateng:
+  cloud:
+    nacos:
+      drain-timeout: 100ms

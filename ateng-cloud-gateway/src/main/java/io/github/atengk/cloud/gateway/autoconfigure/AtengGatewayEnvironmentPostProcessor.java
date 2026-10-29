@@ -42,6 +42,9 @@ public class AtengGatewayEnvironmentPostProcessor implements EnvironmentPostProc
             defaults.put("spring.cloud.loadbalancer.zone", gatewayZone.trim());
         }
 
+        // 网关客户端子上下文由 GrayLoadBalancerClientConfiguration 复合责任链接管，解耦 Nacos 默认独立提供者
+        defaults.put("ateng.cloud.nacos.loadbalancer.client-supplier-enabled", "false");
+
         // 挂载至最低优先级，确保用户的 application.yml 与显式配置绝对优先生效
         environment.getPropertySources().addLast(new MapPropertySource(PROPERTY_SOURCE_NAME, defaults));
     }

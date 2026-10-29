@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.gateway.route;
 
+import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayDynamicRouteProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,21 +53,10 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
     private ApplicationEventPublisher eventPublisher;
 
     /**
-     * 上一份校验通过的有效路由快照 (Last-Known Good Snapshot)
+     * 上一份校验通过的有效路由快照原子引用 (Last-Known Good Snapshot)，初始为 null 表示尚未执行基线采集或首次刷新
      */
-    private final AtomicReference<List<RouteDefinition>> lastKnownGoodRoutes =
-            new AtomicReference<>(Collections.emptyList());
-
-    /**
-     * 上一份有效全局默认过滤器快照
-     */
-    private final AtomicReference<List<FilterDefinition>> lastKnownGoodDefaultFilters =
-            new AtomicReference<>(Collections.emptyList());
-
-    /**
-     * 最近一次成功刷新的路由与默认过滤器哈希指纹，用于幂等去重
-     */
-    private final AtomicReference<Integer> lastRefreshedFingerprint = new AtomicReference<>(null);
+    private final AtomicReference<RouteSnapshot> lastKnownGoodSnapshot =
+            new AtomicReference<>(null);
 
     public GatewayRouteRefreshListener(
             GatewayProperties gatewayProperties,
@@ -95,16 +85,13 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
                     : Collections.emptyList();
             try {
                 GatewayRouteValidator.validateRouteDefinitions(initialRoutes);
-                lastKnownGoodRoutes.set(Collections.unmodifiableList(initialRoutes));
-                lastKnownGoodDefaultFilters.set(Collections.unmodifiableList(initialDefaultFilters));
-                lastRefreshedFingerprint.set(Objects.hash(initialRoutes, initialDefaultFilters));
+                RouteSnapshot snapshot = new RouteSnapshot(initialRoutes, initialDefaultFilters);
+                lastKnownGoodSnapshot.set(snapshot);
                 log.info("[Gateway] 主配置路由基线快照采集完成，初始路由数: {}, 默认过滤器数: {}",
-                        initialRoutes.size(), initialDefaultFilters.size());
+                        snapshot.routes().size(), snapshot.defaultFilters().size());
             } catch (Exception ex) {
                 log.warn("[Gateway] 主配置初始路由存在语法校验警告，安全保留空基线以防快照污染: {}", ex.getMessage());
-                lastKnownGoodRoutes.set(Collections.emptyList());
-                lastKnownGoodDefaultFilters.set(Collections.emptyList());
-                lastRefreshedFingerprint.set(Objects.hash(Collections.emptyList(), Collections.emptyList()));
+                lastKnownGoodSnapshot.set(RouteSnapshot.EMPTY);
             }
         }
     }
@@ -196,26 +183,22 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
             GatewayRouteValidator.validateRouteDefinitions(candidateRoutes);
         } catch (Exception ex) {
             log.error("[Gateway] 主配置路由深度语法或语义校验失败，快照守卫生效，坚决保留上一份有效快照 [{} 条有效路由]: error={}",
-                    lastKnownGoodRoutes.get().size(), ex.getMessage(), ex);
+                    getLastKnownGoodRoutes().size(), ex.getMessage(), ex);
             // 立即防御性回滚受管 GatewayProperties 实例，防止脏数据对外扩散
             restoreLastKnownGoodRoutes();
             return false;
         }
 
         // 4. 指纹去重，防御重复事件引发无效刷新
-        int candidateFingerprint = Objects.hash(candidateRoutes, candidateDefaultFilters);
-        Integer lastFingerprint = lastRefreshedFingerprint.get();
-        if (lastFingerprint != null && lastFingerprint.intValue() == candidateFingerprint
-                && candidateRoutes.equals(lastKnownGoodRoutes.get())
-                && candidateDefaultFilters.equals(lastKnownGoodDefaultFilters.get())) {
-            log.debug("[Gateway] 主配置路由与默认过滤器内容未发生实质变更 (fingerprint={})，跳过重复刷新", candidateFingerprint);
+        RouteSnapshot currentSnapshot = lastKnownGoodSnapshot.get();
+        if (currentSnapshot != null && currentSnapshot.matches(candidateRoutes, candidateDefaultFilters)) {
+            log.debug("[Gateway] 主配置路由与默认过滤器内容未发生实质变更 (fingerprint={})，跳过重复刷新", currentSnapshot.fingerprint());
             return true;
         }
 
         // 5. 原子替换快照并同步至受管 GatewayProperties
-        lastKnownGoodRoutes.set(Collections.unmodifiableList(new ArrayList<>(candidateRoutes)));
-        lastKnownGoodDefaultFilters.set(Collections.unmodifiableList(new ArrayList<>(candidateDefaultFilters)));
-        lastRefreshedFingerprint.set(candidateFingerprint);
+        RouteSnapshot newSnapshot = new RouteSnapshot(candidateRoutes, candidateDefaultFilters);
+        lastKnownGoodSnapshot.set(newSnapshot);
         if (gatewayProperties != null) {
             gatewayProperties.setRoutes(new ArrayList<>(candidateRoutes));
             gatewayProperties.setDefaultFilters(new ArrayList<>(candidateDefaultFilters));
@@ -233,10 +216,11 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
      */
     private void restoreLastKnownGoodRoutes() {
         if (gatewayProperties != null) {
-            gatewayProperties.setRoutes(new ArrayList<>(lastKnownGoodRoutes.get()));
-            gatewayProperties.setDefaultFilters(new ArrayList<>(lastKnownGoodDefaultFilters.get()));
+            RouteSnapshot snapshot = getLastKnownGoodSnapshot();
+            gatewayProperties.setRoutes(new ArrayList<>(snapshot.routes()));
+            gatewayProperties.setDefaultFilters(new ArrayList<>(snapshot.defaultFilters()));
             log.warn("[Gateway] 已将受管 GatewayProperties 强制回滚至上一份有效路由快照 [{} 条路由, {} 个默认过滤器]",
-                    lastKnownGoodRoutes.get().size(), lastKnownGoodDefaultFilters.get().size());
+                    snapshot.routes().size(), snapshot.defaultFilters().size());
         }
     }
 
@@ -251,9 +235,9 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
             return false;
         }
         String lower = key.toLowerCase(Locale.ROOT);
-        return lower.startsWith("spring.cloud.gateway.routes")
-                || lower.startsWith("spring.cloud.gateway.default-filters")
-                || lower.startsWith("spring.cloud.gateway.defaultfilters");
+        return lower.startsWith(GatewayConstants.PREFIX_GATEWAY_ROUTES)
+                || lower.startsWith(GatewayConstants.PREFIX_GATEWAY_DEFAULT_FILTERS)
+                || lower.startsWith(GatewayConstants.PREFIX_GATEWAY_DEFAULT_FILTERS_COMPACT);
     }
 
     private void publishRefreshRoutesEvent() {
@@ -269,6 +253,54 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
      * @return 有效路由快照 (不可修改)
      */
     public List<RouteDefinition> getLastKnownGoodRoutes() {
-        return lastKnownGoodRoutes.get();
+        RouteSnapshot snapshot = lastKnownGoodSnapshot.get();
+        return snapshot != null ? snapshot.routes() : Collections.emptyList();
+    }
+
+    /**
+     * 获取当前校验通过的有效路由快照不可变对象
+     *
+     * @return 有效路由不可变快照对象
+     */
+    public RouteSnapshot getLastKnownGoodSnapshot() {
+        RouteSnapshot snapshot = lastKnownGoodSnapshot.get();
+        return snapshot != null ? snapshot : RouteSnapshot.EMPTY;
+    }
+
+    /**
+     * 路由与默认过滤器不可变快照对象
+     *
+     * @param routes 路由定义不可变列表
+     * @param defaultFilters 默认过滤器定义不可变列表
+     * @param fingerprint 路由与过滤器联合哈希指纹
+     */
+    public record RouteSnapshot(
+            List<RouteDefinition> routes,
+            List<FilterDefinition> defaultFilters,
+            int fingerprint
+    ) {
+        public static final RouteSnapshot EMPTY = new RouteSnapshot(
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Objects.hash(Collections.emptyList(), Collections.emptyList())
+        );
+
+        public RouteSnapshot(List<RouteDefinition> routes, List<FilterDefinition> defaultFilters) {
+            this(
+                    routes != null ? Collections.unmodifiableList(new ArrayList<>(routes)) : Collections.emptyList(),
+                    defaultFilters != null ? Collections.unmodifiableList(new ArrayList<>(defaultFilters)) : Collections.emptyList(),
+                    Objects.hash(routes != null ? routes : Collections.emptyList(),
+                            defaultFilters != null ? defaultFilters : Collections.emptyList())
+            );
+        }
+
+        public boolean matches(List<RouteDefinition> candidateRoutes, List<FilterDefinition> candidateDefaultFilters) {
+            int candidateFingerprint = Objects.hash(
+                    candidateRoutes != null ? candidateRoutes : Collections.emptyList(),
+                    candidateDefaultFilters != null ? candidateDefaultFilters : Collections.emptyList());
+            return this.fingerprint == candidateFingerprint
+                    && Objects.equals(this.routes, candidateRoutes)
+                    && Objects.equals(this.defaultFilters, candidateDefaultFilters);
+        }
     }
 }

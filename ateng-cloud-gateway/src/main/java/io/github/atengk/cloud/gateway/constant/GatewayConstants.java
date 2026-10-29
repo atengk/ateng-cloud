@@ -121,6 +121,23 @@ public final class GatewayConstants {
      */
     public static final String ATTR_START_TIME = "ateng.gateway.startTime";
 
+    // --- 动态路由配置属性前缀常量 ---
+
+    /**
+     * Spring Cloud Gateway 路由列表配置属性前缀
+     */
+    public static final String PREFIX_GATEWAY_ROUTES = "spring.cloud.gateway.routes";
+
+    /**
+     * Spring Cloud Gateway 全局默认过滤器配置属性前缀 (中划线命名)
+     */
+    public static final String PREFIX_GATEWAY_DEFAULT_FILTERS = "spring.cloud.gateway.default-filters";
+
+    /**
+     * Spring Cloud Gateway 全局默认过滤器配置属性前缀 (连写命名兼容)
+     */
+    public static final String PREFIX_GATEWAY_DEFAULT_FILTERS_COMPACT = "spring.cloud.gateway.defaultfilters";
+
     // --- 全局过滤器执行顺序基线 ---
 
     /**

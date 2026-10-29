@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.client.DefaultServiceInstance;
 import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.ReactiveDiscoveryClient;
 import org.springframework.cloud.client.loadbalancer.DefaultRequest;
 import org.springframework.cloud.client.loadbalancer.RequestData;
 import org.springframework.cloud.client.loadbalancer.RequestDataContext;
@@ -18,11 +19,13 @@ import org.springframework.cloud.loadbalancer.cache.LoadBalancerCacheProperties;
 import org.springframework.cloud.loadbalancer.core.ReactorLoadBalancer;
 import org.springframework.cloud.loadbalancer.core.ServiceInstanceListSupplier;
 import org.springframework.cloud.loadbalancer.support.LoadBalancerClientFactory;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -51,6 +54,26 @@ public class SampleGatewayCompositeLoadBalancerIntegrationTest {
 
     @Autowired(required = false)
     private LoadBalancerCacheProperties mainCacheProperties;
+
+    @Autowired(required = false)
+    private ReactiveDiscoveryClient reactiveDiscoveryClient;
+
+    @Autowired(required = false)
+    private Environment environment;
+
+    @Test
+    @DisplayName("双模自适应：激活 local Profile 时验证真实连接 Nacos 并成功获取服务列表")
+    void testRealNacosDiscoveryWhenLocalProfileActive() {
+        if (environment != null && Arrays.asList(environment.getActiveProfiles()).contains("local")) {
+            assertThat(reactiveDiscoveryClient)
+                    .as("激活 local Profile 时 ReactiveDiscoveryClient 必须成功装配")
+                    .isNotNull();
+            List<String> services = reactiveDiscoveryClient.getServices().collectList().block(Duration.ofSeconds(5));
+            assertThat(services)
+                    .as("成功与真实 Nacos 交互并返回服务列表（不为 null）")
+                    .isNotNull();
+        }
+    }
 
     @Test
     @DisplayName("验证主容器与子上下文缓存 TTL 默认显式收敛为 3s")

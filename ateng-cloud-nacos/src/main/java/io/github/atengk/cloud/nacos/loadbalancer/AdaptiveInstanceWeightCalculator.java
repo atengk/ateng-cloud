@@ -36,6 +36,11 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
     private static final String[] CPU_KEYS = {"cpu-usage", "cpu-load", "cpu.usage", "cpu.load", "system-load"};
     private static final String[] MEMORY_KEYS = {"memory-usage", "mem-usage", "memory.usage", "mem.usage"};
 
+    /**
+     * 中度负载阶梯降权过渡基准因子（当负载达到高负载阈值时衰减至 0.50）
+     */
+    private static final double MEDIUM_LOAD_FLOOR_FACTOR = 0.50;
+
     private static final int MAX_CACHE_ENTRIES = 1024;
     private static final long CACHE_EXPIRE_MS = 600_000L; // 10 分钟
 
@@ -68,27 +73,44 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
             return currentWeight;
         }
 
+        String instanceKey = buildInstanceKey(instance);
+        long now = systemTimeProvider.getAsLong();
+        CachedWeightRecord record = getOrUpdateWeightRecord(instanceKey, instance, now, config);
+        if (record == null) {
+            return currentWeight;
+        }
+
+        return currentWeight * record.cachedFactor;
+    }
+
+    private CachedWeightRecord getOrUpdateWeightRecord(String instanceKey, ServiceInstance instance, long now, AdaptiveWeightProperties config) {
+        long sampleIntervalMs = config.getSampleInterval() != null ? config.getSampleInterval().toMillis() : 5000L;
+        CachedWeightRecord existing = instanceWeightCache.get(instanceKey);
+        if (existing != null && (now - existing.lastTime < sampleIntervalMs)) {
+            return existing;
+        }
+
+        Map<String, String> meta = instance.getMetadata();
+        if (meta == null || meta.isEmpty()) {
+            return null;
+        }
+
         Double cpuUsage = parseMetric(meta, CPU_KEYS);
         Double memUsage = parseMetric(meta, MEMORY_KEYS);
 
         if (cpuUsage == null && memUsage == null) {
-            return currentWeight;
+            return null;
         }
 
         double maxLoad = Math.max(cpuUsage != null ? cpuUsage : 0.0, memUsage != null ? memUsage : 0.0);
         double factor = calculateLoadFactor(maxLoad, config);
-
-        // 应用采样周期与阻尼防抖
-        String instanceKey = buildInstanceKey(instance);
-        long now = systemTimeProvider.getAsLong();
-        long sampleIntervalMs = config.getSampleInterval() != null ? config.getSampleInterval().toMillis() : 5000L;
         double dampingRatio = config.getDampingRatio();
 
         evictStaleRecordsIfNecessary(now);
 
-        CachedWeightRecord record = instanceWeightCache.compute(instanceKey, (k, oldRecord) -> {
+        return instanceWeightCache.compute(instanceKey, (k, oldRecord) -> {
             if (oldRecord == null) {
-                return new CachedWeightRecord(now, factor);
+                return new CachedWeightRecord(now, factor, maxLoad);
             }
             // 若仍在采样窗口内，复用缓存中的平滑因子
             if (now - oldRecord.lastTime < sampleIntervalMs) {
@@ -98,14 +120,11 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
             double delta = Math.abs(factor - oldRecord.cachedFactor);
             if (delta < dampingRatio) {
                 // 波动在容忍范围内，保持原有 factor，但刷新 lastTime 开启新的采样窗口
-                return new CachedWeightRecord(now, oldRecord.cachedFactor);
+                return new CachedWeightRecord(now, oldRecord.cachedFactor, maxLoad);
             }
             // 波动超过阈值，更新阻尼状态
-            return new CachedWeightRecord(now, factor);
+            return new CachedWeightRecord(now, factor, maxLoad);
         });
-
-        double effectiveFactor = record != null ? record.cachedFactor : factor;
-        return currentWeight * effectiveFactor;
     }
 
     private void evictStaleRecordsIfNecessary(long now) {
@@ -116,8 +135,12 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
 
     /**
      * 根据系统综合负载计算加权衰减因子 (0.10 ~ 1.0)
+     *
+     * @param load 系统综合负载 (0.0 ~ 1.0)
+     * @param config 自适应配置属性
+     * @return 阻尼权重衰减比例
      */
-    public double calculateLoadFactor(double load, AdaptiveWeightProperties config) {
+    public static double calculateLoadFactor(double load, AdaptiveWeightProperties config) {
         double mediumThreshold = config.getMediumLoadThreshold();
         double highThreshold = config.getHighLoadThreshold();
         double minFloor = config.getMinFloorWeightRatio();
@@ -127,16 +150,16 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
         }
 
         if (load <= highThreshold) {
-            // 中等负载阶梯：从 1.0 平滑线性衰减至 0.50
+            // 中等负载阶梯：从 1.0 平滑线性衰减至 MEDIUM_LOAD_FLOOR_FACTOR
             double range = Math.max(0.001, highThreshold - mediumThreshold);
             double progress = (load - mediumThreshold) / range;
-            return 1.0 - progress * (1.0 - 0.50);
+            return 1.0 - progress * (1.0 - MEDIUM_LOAD_FLOOR_FACTOR);
         }
 
-        // 高度过载阶梯：从 0.50 平滑线性衰减至 minFloor
+        // 高度过载阶梯：从 MEDIUM_LOAD_FLOOR_FACTOR 平滑线性衰减至 minFloor
         double range = Math.max(0.001, 1.0 - highThreshold);
         double progress = Math.min(1.0, (load - highThreshold) / range);
-        double factor = 0.50 - progress * (0.50 - minFloor);
+        double factor = MEDIUM_LOAD_FLOOR_FACTOR - progress * (MEDIUM_LOAD_FLOOR_FACTOR - minFloor);
         return Math.max(minFloor, Math.min(1.0, factor));
     }
 
@@ -152,13 +175,14 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
         if (config == null || !config.isEnabled()) {
             return false;
         }
-        Double cpuUsage = parseMetric(instance.getMetadata(), CPU_KEYS);
-        Double memUsage = parseMetric(instance.getMetadata(), MEMORY_KEYS);
-        if (cpuUsage == null && memUsage == null) {
+
+        String instanceKey = buildInstanceKey(instance);
+        long now = systemTimeProvider.getAsLong();
+        CachedWeightRecord record = getOrUpdateWeightRecord(instanceKey, instance, now, config);
+        if (record == null) {
             return false;
         }
-        double maxLoad = Math.max(cpuUsage != null ? cpuUsage : 0.0, memUsage != null ? memUsage : 0.0);
-        return maxLoad >= config.getHighLoadThreshold();
+        return record.maxLoad >= config.getHighLoadThreshold();
     }
 
     private AdaptiveWeightProperties getAdaptiveConfig() {
@@ -196,15 +220,17 @@ public class AdaptiveInstanceWeightCalculator implements InstanceWeightCalculato
     }
 
     /**
-     * 阻尼权重缓存记录
+     * 阻尼权重与负载缓存记录
      */
     private static class CachedWeightRecord {
         private final long lastTime;
         private final double cachedFactor;
+        private final double maxLoad;
 
-        public CachedWeightRecord(long lastTime, double cachedFactor) {
+        public CachedWeightRecord(long lastTime, double cachedFactor, double maxLoad) {
             this.lastTime = lastTime;
             this.cachedFactor = cachedFactor;
+            this.maxLoad = maxLoad;
         }
     }
 }

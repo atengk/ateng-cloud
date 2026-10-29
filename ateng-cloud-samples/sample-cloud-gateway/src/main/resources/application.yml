@@ -6,6 +6,10 @@ spring:
     name: sample-cloud-gateway
   main:
     web-application-type: reactive
+  config:
+    import:
+      # 弹性探测本地真实配置文件；物理不存在时自动静默忽略，保障 CI 离线自洽
+      - "optional:classpath:application-local.yml"
   cloud:
     nacos:
       discovery:
