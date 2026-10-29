@@ -1,14 +1,24 @@
 package io.github.atengk.cloud.seata.autoconfigure;
 
+import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
+import com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourceProperties;
+import com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourcePropertiesCustomizer;
 import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
 import feign.RequestInterceptor;
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
+import io.github.atengk.cloud.seata.aspect.SeataGlobalLockAspect;
 import io.github.atengk.cloud.seata.constant.SeataConstants;
 import io.github.atengk.cloud.seata.context.SeataAsyncContextSnapshotProvider;
+import io.github.atengk.cloud.seata.datasource.SeataDynamicDataSourceCoordinator;
+import io.github.atengk.cloud.seata.datasource.SeataDynamicDataSourcePropertiesCustomizer;
+import io.github.atengk.cloud.seata.datasource.guard.SeataDynamicDatasourceGuard;
 import io.github.atengk.cloud.seata.interceptor.SeataFeignContextInterceptor;
 import io.github.atengk.cloud.seata.interceptor.SeataWebHandlerInterceptor;
+import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
+import org.apache.seata.rm.GlobalLockTemplate;
+import org.apache.seata.spring.annotation.GlobalLock;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -132,6 +142,90 @@ public class AtengSeataAutoConfiguration {
     public static SeataTenantLineHandlerPostProcessor seataTenantLineHandlerPostProcessor() {
         log.debug("装配 SeataTenantLineHandlerPostProcessor 多租户内部表排除后置处理器");
         return new SeataTenantLineHandlerPostProcessor();
+    }
+
+    /**
+     * 注册 Baomidou dynamic-datasource 属性定制器（自动协同开启原生 Seata 代理）
+     *
+     * @param properties Seata 配置属性
+     * @return SeataDynamicDataSourcePropertiesCustomizer 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(DynamicDataSourceProperties.class)
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public SeataDynamicDataSourcePropertiesCustomizer seataDynamicDataSourcePropertiesCustomizer(SeataProperties properties) {
+        log.debug("装配 SeataDynamicDataSourcePropertiesCustomizer 动态数据源属性定制器");
+        return new SeataDynamicDataSourcePropertiesCustomizer(properties);
+    }
+
+    /**
+     * 注册 Baomidou 动态数据源物理连接池 Seata 代理自检与协同协调器
+     *
+     * @param properties Seata 配置属性
+     * @return SeataDynamicDataSourceCoordinator 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(DynamicRoutingDataSource.class)
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public SeataDynamicDataSourceCoordinator seataDynamicDataSourceCoordinator(SeataProperties properties) {
+        log.debug("装配 SeataDynamicDataSourceCoordinator 动态数据源代理协同协调器");
+        return new SeataDynamicDataSourceCoordinator(properties);
+    }
+
+    /**
+     * 注册协同 Seata 全局分布式事务的动态数据源切源安全守卫
+     *
+     * @param properties Seata 配置属性
+     * @return SeataDynamicDatasourceGuard 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "guard-enabled", havingValue = "true", matchIfMissing = true)
+    public SeataDynamicDatasourceGuard seataDynamicDatasourceGuard(SeataProperties properties) {
+        log.debug("装配 SeataDynamicDatasourceGuard 动态数据源切源安全守卫");
+        return new SeataDynamicDatasourceGuard(properties);
+    }
+
+    /**
+     * 注册高并发轻量防脏读 @GlobalLock 声明式拦截切面
+     *
+     * @param properties Seata 配置属性
+     * @return SeataGlobalLockAspect 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass({ProceedingJoinPoint.class, GlobalLock.class})
+    public SeataGlobalLockAspect seataGlobalLockAspect(SeataProperties properties) {
+        log.debug("装配 SeataGlobalLockAspect 全局排他锁声明式拦截切面");
+        return new SeataGlobalLockAspect(properties);
+    }
+
+    /**
+     * 注册编程式高并发轻量全局锁执行模板
+     *
+     * @param properties Seata 配置属性
+     * @return SeataGlobalLockTemplate 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public SeataGlobalLockTemplate seataGlobalLockTemplate(SeataProperties properties) {
+        log.debug("装配 SeataGlobalLockTemplate 编程式全局锁执行模板");
+        return new SeataGlobalLockTemplate(properties);
+    }
+
+    /**
+     * 注册 Apache Seata 原生 GlobalLockTemplate 门面组件
+     *
+     * @return GlobalLockTemplate 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(GlobalLockTemplate.class)
+    public GlobalLockTemplate globalLockTemplate() {
+        log.debug("装配 Apache Seata 原生 GlobalLockTemplate 门面组件");
+        return new GlobalLockTemplate();
     }
 
     /**

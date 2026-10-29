@@ -1,12 +1,18 @@
 package io.github.atengk.cloud.seata.autoconfigure;
 
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
+import io.github.atengk.cloud.seata.aspect.SeataGlobalLockAspect;
 import io.github.atengk.cloud.seata.autoconfigure.AtengSeataAutoConfiguration.SeataMarker;
 import io.github.atengk.cloud.seata.context.SeataAsyncContextSnapshotProvider;
+import io.github.atengk.cloud.seata.datasource.SeataDynamicDataSourceCoordinator;
+import io.github.atengk.cloud.seata.datasource.SeataDynamicDataSourcePropertiesCustomizer;
+import io.github.atengk.cloud.seata.datasource.guard.SeataDynamicDatasourceGuard;
 import io.github.atengk.cloud.seata.interceptor.SeataFeignContextInterceptor;
 import io.github.atengk.cloud.seata.interceptor.SeataWebHandlerInterceptor;
+import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
+import org.apache.seata.rm.GlobalLockTemplate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -42,6 +48,12 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataExceptionTranslationAspect.class);
             assertThat(context).hasSingleBean(SeataAsyncContextSnapshotProvider.class);
             assertThat(context).hasSingleBean(SeataTenantLineHandlerPostProcessor.class);
+            assertThat(context).hasSingleBean(SeataDynamicDataSourcePropertiesCustomizer.class);
+            assertThat(context).hasSingleBean(SeataDynamicDataSourceCoordinator.class);
+            assertThat(context).hasSingleBean(SeataDynamicDatasourceGuard.class);
+            assertThat(context).hasSingleBean(SeataGlobalLockAspect.class);
+            assertThat(context).hasSingleBean(SeataGlobalLockTemplate.class);
+            assertThat(context).hasSingleBean(GlobalLockTemplate.class);
             assertThat(context).doesNotHaveBean(SeataWebHandlerInterceptor.class);
 
             SeataProperties properties = context.getBean(SeataProperties.class);
@@ -51,6 +63,9 @@ class AtengSeataAutoConfigurationTest {
             assertThat(properties.getLock().getRetryTimes()).isEqualTo(30);
             assertThat(properties.getDegrade().isEnabled()).isFalse();
             assertThat(properties.getTcc().isFenceEnabled()).isTrue();
+            assertThat(properties.getDynamicDatasource().isEnabled()).isTrue();
+            assertThat(properties.getDynamicDatasource().isGuardEnabled()).isTrue();
+            assertThat(properties.getDynamicDatasource().isAutoProxy()).isTrue();
         });
     }
 
@@ -67,7 +82,38 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataExceptionTranslationAspect.class);
             assertThat(context).hasSingleBean(SeataAsyncContextSnapshotProvider.class);
             assertThat(context).hasSingleBean(SeataTenantLineHandlerPostProcessor.class);
+            assertThat(context).hasSingleBean(SeataDynamicDataSourcePropertiesCustomizer.class);
+            assertThat(context).hasSingleBean(SeataDynamicDataSourceCoordinator.class);
+            assertThat(context).hasSingleBean(SeataDynamicDatasourceGuard.class);
+            assertThat(context).hasSingleBean(SeataGlobalLockAspect.class);
+            assertThat(context).hasSingleBean(SeataGlobalLockTemplate.class);
+            assertThat(context).hasSingleBean(GlobalLockTemplate.class);
         });
+    }
+
+    @Test
+    @DisplayName("测试配置 ateng.cloud.seata.dynamic-datasource.enabled=false 时动态数据源定制与协调组件条件跳过")
+    void testDisabledDynamicDatasource() {
+        nonWebRunner
+                .withPropertyValues("ateng.cloud.seata.dynamic-datasource.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AtengSeataAutoConfiguration.class);
+                    assertThat(context).doesNotHaveBean(SeataDynamicDataSourcePropertiesCustomizer.class);
+                    assertThat(context).doesNotHaveBean(SeataDynamicDataSourceCoordinator.class);
+                    assertThat(context).hasSingleBean(SeataDynamicDatasourceGuard.class);
+                });
+    }
+
+    @Test
+    @DisplayName("测试配置 ateng.cloud.seata.dynamic-datasource.guard-enabled=false 时切源守卫条件跳过")
+    void testDisabledDatasourceGuard() {
+        nonWebRunner
+                .withPropertyValues("ateng.cloud.seata.dynamic-datasource.guard-enabled=false")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AtengSeataAutoConfiguration.class);
+                    assertThat(context).doesNotHaveBean(SeataDynamicDatasourceGuard.class);
+                    assertThat(context).hasSingleBean(SeataDynamicDataSourcePropertiesCustomizer.class);
+                });
     }
 
     @Test

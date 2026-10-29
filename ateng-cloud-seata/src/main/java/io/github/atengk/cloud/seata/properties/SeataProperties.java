@@ -44,6 +44,12 @@ public class SeataProperties {
     @NestedConfigurationProperty
     private TccProperties tcc = new TccProperties();
 
+    /**
+     * 动态数据源协同配置
+     */
+    @NestedConfigurationProperty
+    private DynamicDatasourceProperties dynamicDatasource = new DynamicDatasourceProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -82,6 +88,14 @@ public class SeataProperties {
 
     public void setTcc(TccProperties tcc) {
         this.tcc = tcc;
+    }
+
+    public DynamicDatasourceProperties getDynamicDatasource() {
+        return dynamicDatasource;
+    }
+
+    public void setDynamicDatasource(DynamicDatasourceProperties dynamicDatasource) {
+        this.dynamicDatasource = dynamicDatasource;
     }
 
     /**
@@ -222,6 +236,77 @@ public class SeataProperties {
 
         public void setTableName(String tableName) {
             this.tableName = tableName;
+        }
+    }
+
+    /**
+     * Baomidou dynamic-datasource 动态数据源协同与切源守卫配置属性
+     */
+    public static class DynamicDatasourceProperties {
+
+        /**
+         * 是否开启 Baomidou dynamic-datasource 协同增强
+         */
+        private boolean enabled = true;
+
+        /**
+         * 动态数据源 Seata 事务代理模式（AT 或 XA，默认 AT）
+         */
+        private String mode = "AT";
+
+        /**
+         * 是否自动对 DynamicRoutingDataSource 中已注册的物理连接池进行 Seata 代理包装
+         */
+        private boolean autoProxy = true;
+
+        /**
+         * 是否开启切源安全守卫协同（感知 Seata 全局分布式事务并放行合法切源）
+         */
+        private boolean guardEnabled = true;
+
+        /**
+         * 检测到假切源时是否抛出异常阻断执行（默认 true：刚性拦截；若为 false 则降级为 warn 日志告警）
+         */
+        private boolean failOnFalseSwitch = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getMode() {
+            return mode;
+        }
+
+        public void setMode(String mode) {
+            this.mode = mode;
+        }
+
+        public boolean isAutoProxy() {
+            return autoProxy;
+        }
+
+        public void setAutoProxy(boolean autoProxy) {
+            this.autoProxy = autoProxy;
+        }
+
+        public boolean isGuardEnabled() {
+            return guardEnabled;
+        }
+
+        public void setGuardEnabled(boolean guardEnabled) {
+            this.guardEnabled = guardEnabled;
+        }
+
+        public boolean isFailOnFalseSwitch() {
+            return failOnFalseSwitch;
+        }
+
+        public void setFailOnFalseSwitch(boolean failOnFalseSwitch) {
+            this.failOnFalseSwitch = failOnFalseSwitch;
         }
     }
 }
