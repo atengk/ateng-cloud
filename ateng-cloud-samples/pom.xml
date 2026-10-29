@@ -21,6 +21,7 @@
         <module>sample-cloud-feign</module>
         <module>sample-cloud-dubbo</module>
         <module>sample-cloud-gateway</module>
+        <module>sample-cloud-sentinel</module>
         <module>sample-cloud-smoke-test</module>
     </modules>
 

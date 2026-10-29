@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: sample-cloud-sentinel
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+    sentinel:
+      transport:
+        port: 8719
+        dashboard: ""
+      eager: true
+
+ateng:
+  cloud:
+    sentinel:
+      enabled: true
+      block-handler:
+        enabled: true
+        http-status-align: true
