@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.nacos.loadbalancer;
 
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.spi.InstanceWeightCalculator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.client.DefaultServiceInstance;
@@ -218,6 +219,152 @@ class NacosWarmupLoadBalancerTest {
         }
         assertThat(counts.get("inst-drained-1")).isEqualTo(10);
         assertThat(counts.get("inst-drained-2")).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("自定义 InstanceWeightCalculator SPI 注入与权重调谐测试")
+    void testCustomInstanceWeightCalculatorIntegration() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        InstanceWeightCalculator customCalculator = (inst, w) -> "inst-vip".equals(inst.getInstanceId()) ? w * 3.0 : w;
+
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())),
+                properties,
+                new SimpleObjectProvider<>(customCalculator));
+
+        ServiceInstance normalInst = createInstance("inst-normal", "192.168.1.10", 8080, 0, "60s", 1.0);
+        ServiceInstance vipInst = createInstance("inst-vip", "192.168.1.20", 8080, 0, "60s", 1.0);
+
+        assertThat(lb.calculateEffectiveWeight(normalInst, System.currentTimeMillis(), 0.10)).isEqualTo(1.0);
+        assertThat(lb.calculateEffectiveWeight(vipInst, System.currentTimeMillis(), 0.10)).isEqualTo(3.0);
+    }
+
+    @Test
+    @DisplayName("自适应动态资源加权：高负载节点被显著降权，健康节点获得更多调度")
+    void testAdaptiveWeightCalculationReducesOverloadedSelection() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        properties.getLoadbalancer().getAdaptiveWeight().setEnabled(true);
+        AdaptiveInstanceWeightCalculator adaptiveCalculator = new AdaptiveInstanceWeightCalculator(properties);
+
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())),
+                properties,
+                new SimpleObjectProvider<>(adaptiveCalculator));
+
+        // 节点 1：健康节点 (CPU 40%，无降权，权重 1.0)
+        ServiceInstance instHealthy = createInstanceWithLoad("inst-healthy", "192.168.1.10", 8080, "40%");
+        // 节点 2：重度过载节点 (CPU 95%，严重降权至约 0.23)
+        ServiceInstance instOverloaded = createInstanceWithLoad("inst-overloaded", "192.168.1.20", 8080, "95%");
+
+        List<ServiceInstance> instances = List.of(instHealthy, instOverloaded);
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (int i = 0; i < 50; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(instances);
+            assertThat(resp.hasServer()).isTrue();
+            counts.put(resp.getServer().getInstanceId(), counts.getOrDefault(resp.getServer().getInstanceId(), 0) + 1);
+        }
+
+        // 健康节点权重远高于过载节点 (约 1.0 : 0.23，比例约 4:1)
+        assertThat(counts.get("inst-healthy")).isGreaterThan(counts.get("inst-overloaded") * 2);
+    }
+
+    @Test
+    @DisplayName("全集群过载熔断防线：全体候选节点均严重过载时安全回退均匀轮询")
+    void testAllOverloadedInstancesFallbackToUniformRoundRobin() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        properties.getLoadbalancer().getAdaptiveWeight().setEnabled(true);
+        AdaptiveInstanceWeightCalculator adaptiveCalculator = new AdaptiveInstanceWeightCalculator(properties);
+
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())),
+                properties,
+                new SimpleObjectProvider<>(adaptiveCalculator));
+
+        // 两个节点均处于严重过载状态 (> 85%)
+        ServiceInstance instOverloaded1 = createInstanceWithLoad("inst-hot-1", "192.168.1.10", 8080, "92%");
+        ServiceInstance instOverloaded2 = createInstanceWithLoad("inst-hot-2", "192.168.1.20", 8080, "96%");
+
+        List<ServiceInstance> instances = List.of(instOverloaded1, instOverloaded2);
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (int i = 0; i < 20; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(instances);
+            assertThat(resp.hasServer()).isTrue();
+            counts.put(resp.getServer().getInstanceId(), counts.getOrDefault(resp.getServer().getInstanceId(), 0) + 1);
+        }
+
+        // 触发全集群过载熔断，严格各均分 10 次
+        assertThat(counts.get("inst-hot-1")).isEqualTo(10);
+        assertThat(counts.get("inst-hot-2")).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("预热关闭时跳过启动衰减，但自适应 SPI 仍正常介入调谐")
+    void testWarmupDisabledPreservesFullWeightWithSpiCalculator() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        properties.getLoadbalancer().setWarmup(false); // 关闭预热
+
+        InstanceWeightCalculator customCalculator = (inst, w) -> w * 2.0;
+
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())),
+                properties,
+                new SimpleObjectProvider<>(customCalculator));
+
+        long now = System.currentTimeMillis();
+        // 刚启动 1 秒的实例
+        ServiceInstance justStarted = createInstance("inst-new", "192.168.1.10", 8080, now - 1000L, "60s", 1.0);
+
+        // 如果预热开启，此时权重会被大幅折算；预热关闭时应保留 1.0，并经 SPI 翻倍为 2.0
+        double effectiveWeight = lb.calculateEffectiveWeight(justStarted, now, 0.10);
+        assertThat(effectiveWeight).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("自定义 SPI 实现 isInstanceOverloaded 亦能无缝触发全集群过载熔断兜底")
+    void testCustomSpiOverloadTriggersCircuitBreaker() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        InstanceWeightCalculator customOverloadCalculator = new InstanceWeightCalculator() {
+            @Override
+            public double calculateWeight(ServiceInstance instance, double currentWeight) {
+                return currentWeight * 0.1;
+            }
+
+            @Override
+            public boolean isInstanceOverloaded(ServiceInstance instance) {
+                // 自定义逻辑：只要带有 overloaded=true 标记即判定为过载
+                return "true".equals(instance.getMetadata().get("overloaded"));
+            }
+        };
+
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())),
+                properties,
+                new SimpleObjectProvider<>(customOverloadCalculator));
+
+        ServiceInstance inst1 = new DefaultServiceInstance("hot-1", "order-service", "192.168.1.10", 8080, false, Map.of("overloaded", "true", "nacos.weight", "1.0"));
+        ServiceInstance inst2 = new DefaultServiceInstance("hot-2", "order-service", "192.168.1.20", 8080, false, Map.of("overloaded", "true", "nacos.weight", "1.0"));
+
+        List<ServiceInstance> instances = List.of(inst1, inst2);
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (int i = 0; i < 20; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(instances);
+            assertThat(resp.hasServer()).isTrue();
+            counts.put(resp.getServer().getInstanceId(), counts.getOrDefault(resp.getServer().getInstanceId(), 0) + 1);
+        }
+
+        // 自定义 SPI 过载判定生效，安全回退均匀轮询
+        assertThat(counts.get("hot-1")).isEqualTo(10);
+        assertThat(counts.get("hot-2")).isEqualTo(10);
+    }
+
+    private ServiceInstance createInstanceWithLoad(String id, String host, int port, String cpuUsage) {
+        Map<String, String> metadata = new HashMap<>();
+        metadata.put("cpu-usage", cpuUsage);
+        metadata.put("nacos.weight", "1.0");
+        return new DefaultServiceInstance(id, "order-service", host, port, false, metadata);
     }
 
     private ServiceInstance createInstance(String id, String host, int port, long startupTime, String warmupDuration, double baseWeight) {

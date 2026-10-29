@@ -29,6 +29,8 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `AtengNacosLoadBalancerClientConfiguration` | 负载均衡配置 | 针对微服务客户端注入同机房亲和与平滑预热选择器 | `@LoadBalancerClients` 默认规范配置 |
 | `ZonePreferenceServiceInstanceListSupplier` | 负载均衡提供者 | 实现同机房（Zone Affinity）优先路由，本区无实例时平滑降级全量 | 装饰底层 `ServiceInstanceListSupplier` |
 | `NacosWarmupLoadBalancer` | 负载均衡器 | 基于节点启动时间的 60s 线性平滑加权预热 LoadBalancer | 标配保底底噪权重，杜绝冷启动雪崩 |
+| `InstanceWeightCalculator` | 扩展点 SPI | 候选实例有效权重介入与动态调谐扩展点 | `@FunctionalInterface` 标配 `@ConditionalOnMissingBean` |
+| `AdaptiveInstanceWeightCalculator` | 动态加权器 | 基于节点 CPU/内存系统负载的自适应阶梯阻尼平滑降权计算器 | 条件装配于 `adaptive-weight.enabled=true` |
 | `NacosMetricsManager` | 监控管理器 | 向 Micrometer / Prometheus 导出 7 组核心运行、长连接、预热与热更度量标尺 | 条件装配于 `MeterRegistry`，支持平滑降级 |
 | `NacosMetadataProvider` | 核心门面接口 | 收集全量元数据快照并支持填充至注册目标 | 默认实现为 `DefaultNacosMetadataProvider` |
 | `NacosMetadataCustomizer` | 扩展点 SPI | 业务按需增量改写或注入自定义实例元数据 | `@FunctionalInterface`，支持 `Ordered` 排序 |
@@ -97,6 +99,12 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `ateng.cloud.nacos.loadbalancer.zone-affinity` | `boolean` | `true` | 是否开启同机房可用区（Zone Affinity）优先调度 |
 | `ateng.cloud.nacos.loadbalancer.warmup` | `boolean` | `true` | 是否开启平滑启动预热（Startup Preheating）动态权重调度 |
 | `ateng.cloud.nacos.loadbalancer.warmup-floor-weight-ratio` | `double` | `0.10` | 启动预热期间保底底噪权重比例（默认 10%，防止冷启动完全饥饿） |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.enabled` | `boolean` | `false` | 是否激活基于节点系统资源指标（CPU/内存负载）的自适应动态加权调度 |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.min-floor-weight-ratio` | `double` | `0.10` | 过载保底底噪权重比例（默认 10%，杜绝节点权重直接归零导致调度饥饿） |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.medium-load-threshold` | `double` | `0.70` | 中等负载阈值（超过该阈值开始平滑轻度降权） |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.high-load-threshold` | `double` | `0.85` | 高负载过载阈值（超过该阈值开始重度降权） |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.damping-ratio` | `double` | `0.15` | 权重调谐阶梯阻尼防抖比例（波动未超该阈值时保持平稳，避免频繁震荡） |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.sample-interval` | `Duration` | `5s` | 动态权重调谐采样评估周期（收敛高频计算开销） |
 | `ateng.cloud.nacos.metrics.enabled` | `boolean` | `true` | 是否导出 Nacos 治理与热更 Micrometer 监控指标 |
 | `ateng.cloud.nacos.metadata.startup-time` | `boolean` | `true` | 是否自动注入 JVM 启动毫秒时间戳 |
 | `ateng.cloud.nacos.metadata.warmup-duration` | `Duration` | `60s` | 平滑启动预热窗口时长（供负载均衡动态升权） |
@@ -517,6 +525,36 @@ curl http://localhost:8080/actuator/nacosService
 }
 ```
 
+### 5. 动态介入候选实例有效权重 (`InstanceWeightCalculator` SPI)
+
+当需要基于业务规则（如 VIP 租户路由分、自定义健康指标）动态干预候选实例的权重时，可注册自定义 `InstanceWeightCalculator` Bean：
+
+```java
+@Configuration(proxyBeanMethods = false)
+public class CustomWeightCalculatorConfiguration {
+
+    @Bean
+    public InstanceWeightCalculator customInstanceWeightCalculator() {
+        return new InstanceWeightCalculator() {
+            @Override
+            public double calculateWeight(ServiceInstance instance, double currentWeight) {
+                // 业务可根据节点特定元数据自定义干预实例权重
+                if ("vip-service-node".equals(instance.getInstanceId())) {
+                    return currentWeight * 1.5;
+                }
+                return currentWeight;
+            }
+
+            @Override
+            public boolean isInstanceOverloaded(ServiceInstance instance) {
+                // 自定义判断节点是否过载（用于全集群过载熔断回退均匀轮询）
+                return "true".equals(instance.getMetadata().get("overloaded"));
+            }
+        };
+    }
+}
+```
+
 ---
 
 ## 维度三：核心生产边界与非功能语义
@@ -604,6 +642,18 @@ sequenceDiagram
 
 - 在容器化环境（Docker / Kubernetes）中，当开启安全只读根文件系统（`readOnlyRootFilesystem: true`）且未挂载专用数据卷时，Nacos 客户端无法落盘缓存快照（Failover Snapshot），一旦遭遇网络隔离将导致本地容灾直接失效；
 - `NacosHealthChecker` 在启动诊断阶段主动对本地快照目录执行创建与写入权限探针，若检测到只读不可写状态，立即输出格式化 `WARN` 引导告警，提示运维在 Pod Spec 中挂载 `emptyDir` 或存储卷。
+
+### 10. 节点系统资源自适应加权与全集群过载熔断 (Adaptive Resource Weighting)
+
+- **自适应降权机制**：
+  当开启 `ateng.cloud.nacos.loadbalancer.adaptive-weight.enabled=true` 时，`AdaptiveInstanceWeightCalculator` 自动感知下游微服务实例元数据中的 CPU（`cpu-usage`、`cpu-load`）与内存（`memory-usage`）负载指标：
+  - 负载 $\le 70\%$（`medium-load-threshold`）：健康节点，维持 100% 原始调度权重；
+  - 负载处于 $70\% \sim 85\%$：中度过载，权重按线性阻尼曲线平滑衰减至 50%；
+  - 负载 $> 85\%$（`high-load-threshold`）：重度过载，权重快速平滑衰减至保底底噪（默认 10%，`min-floor-weight-ratio`）；
+- **阻尼防抖防震荡**：
+  采样周期收敛为 5s~10s，且仅当负载波动超过 $\pm 15\%$（`damping-ratio`）阶梯门槛时才触发调谐，彻底消除微小波动引发的调度频繁摇摆；
+- **全集群过载熔断兜底**：
+  当全体可用实例均处于重度过载状态时，负载均衡器触发全集群过载熔断保护，自动安全回退为均匀轮询，坚决杜绝因算法过度敏感导致全网节点自我孤立引发 503 报警。
 
 ---
 

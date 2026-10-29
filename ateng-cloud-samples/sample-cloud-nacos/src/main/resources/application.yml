@@ -43,6 +43,17 @@ ateng:
         version: 1.0.0
         custom:
           team: core-platform
+      loadbalancer:
+        zone-affinity: true
+        warmup: true
+        warmup-floor-weight-ratio: 0.10
+        adaptive-weight:
+          enabled: true
+          min-floor-weight-ratio: 0.10
+          medium-load-threshold: 0.70
+          high-load-threshold: 0.85
+          damping-ratio: 0.15
+          sample-interval: 5s
 
 demo:
   config:

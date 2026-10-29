@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import reactor.core.publisher.Flux;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 
@@ -476,5 +477,37 @@ class SampleCloudNacosApplicationTest {
         if (healthChecker != null) {
             org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> healthChecker.afterSingletonsInstantiated());
         }
+    }
+
+    @Test
+    @DisplayName("测试基于节点系统负载指标的自适应动态加权端点演练与阻尼防抖")
+    void testAdaptiveWeightCalculationEndpoint() throws Exception {
+        // 1. 模拟健康负载节点 (8080 端口，CPU 40%)，权重无折损，保持 1.0
+        mockMvc.perform(get("/api/nacos/loadbalancer/calculate-weight?currentWeight=1.0&cpuUsage=0.40&port=8080")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data", is(1.0)));
+
+        // 2. 模拟高负载过载节点 (8081 端口，CPU 95%)，权重被显著降权 (降至约 0.23)
+        String respContent = mockMvc.perform(get("/api/nacos/loadbalancer/calculate-weight?currentWeight=1.0&cpuUsage=0.95&port=8081")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        Number weightNumber = com.jayway.jsonpath.JsonPath.read(respContent, "$.data");
+        double weight = weightNumber.doubleValue();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                weight < 0.35 && weight >= 0.10,
+                "高负载实例有效权重应被平滑降权至 0.10~0.35 之间，实际: " + weight
+        );
+
+        // 3. 验证阻尼防抖：对已评估为健康的 8080 节点在 5 秒采样窗口内突发指标变动，依然平稳复用缓存权重 1.0
+        mockMvc.perform(get("/api/nacos/loadbalancer/calculate-weight?currentWeight=1.0&cpuUsage=0.95&port=8080")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data", is(1.0)));
     }
 }

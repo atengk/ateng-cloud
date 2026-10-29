@@ -458,6 +458,12 @@ public class AtengNacosProperties {
          */
         private double warmupFloorWeightRatio = 0.10;
 
+        /**
+         * 节点自适应资源加权调度配置
+         */
+        @NestedConfigurationProperty
+        private AdaptiveWeightProperties adaptiveWeight = new AdaptiveWeightProperties();
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -488,6 +494,98 @@ public class AtengNacosProperties {
 
         public void setWarmupFloorWeightRatio(double warmupFloorWeightRatio) {
             this.warmupFloorWeightRatio = warmupFloorWeightRatio;
+        }
+
+        public AdaptiveWeightProperties getAdaptiveWeight() {
+            return adaptiveWeight;
+        }
+
+        public void setAdaptiveWeight(AdaptiveWeightProperties adaptiveWeight) {
+            this.adaptiveWeight = adaptiveWeight;
+        }
+    }
+
+    /**
+     * 节点自适应系统资源动态加权配置
+     */
+    public static class AdaptiveWeightProperties {
+
+        /**
+         * 是否激活基于节点系统资源指标（CPU/内存负载）的自适应动态加权调度
+         */
+        private boolean enabled = false;
+
+        /**
+         * 过载保底底噪权重比例（默认 0.10 即 10%，杜绝节点权重直接归零导致调度饥饿）
+         */
+        private double minFloorWeightRatio = 0.10;
+
+        /**
+         * 中等负载阈值（0.0 ~ 1.0，默认 0.70 即 70%，超过该阈值开始平滑轻度降权）
+         */
+        private double mediumLoadThreshold = 0.70;
+
+        /**
+         * 高负载过载阈值（0.0 ~ 1.0，默认 0.85 即 85%，超过该阈值开始重度降权）
+         */
+        private double highLoadThreshold = 0.85;
+
+        /**
+         * 权重调谐阶梯阻尼防抖比例（默认 0.15 即 15%，波动未超该阈值时保持平稳，避免频繁震荡）
+         */
+        private double dampingRatio = 0.15;
+
+        /**
+         * 动态权重调谐采样评估周期（默认 5s，收敛高频计算开销）
+         */
+        private Duration sampleInterval = Duration.ofSeconds(5);
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public double getMinFloorWeightRatio() {
+            return minFloorWeightRatio;
+        }
+
+        public void setMinFloorWeightRatio(double minFloorWeightRatio) {
+            this.minFloorWeightRatio = minFloorWeightRatio;
+        }
+
+        public double getMediumLoadThreshold() {
+            return mediumLoadThreshold;
+        }
+
+        public void setMediumLoadThreshold(double mediumLoadThreshold) {
+            this.mediumLoadThreshold = mediumLoadThreshold;
+        }
+
+        public double getHighLoadThreshold() {
+            return highLoadThreshold;
+        }
+
+        public void setHighLoadThreshold(double highLoadThreshold) {
+            this.highLoadThreshold = highLoadThreshold;
+        }
+
+        public double getDampingRatio() {
+            return dampingRatio;
+        }
+
+        public void setDampingRatio(double dampingRatio) {
+            this.dampingRatio = dampingRatio;
+        }
+
+        public Duration getSampleInterval() {
+            return sampleInterval;
+        }
+
+        public void setSampleInterval(Duration sampleInterval) {
+            this.sampleInterval = sampleInterval;
         }
     }
 }

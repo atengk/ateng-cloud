@@ -1,6 +1,8 @@
 package io.github.atengk.cloud.nacos.loadbalancer;
 
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import io.github.atengk.cloud.nacos.spi.InstanceWeightCalculator;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.ReactiveDiscoveryClient;
@@ -52,10 +54,12 @@ public class AtengNacosLoadBalancerClientConfiguration {
     public ReactorLoadBalancer<ServiceInstance> nacosWarmupLoadBalancer(
             Environment environment,
             LoadBalancerClientFactory loadBalancerClientFactory,
-            AtengNacosProperties properties) {
+            AtengNacosProperties properties,
+            ObjectProvider<InstanceWeightCalculator> weightCalculatorProvider) {
         String name = environment.getProperty(LoadBalancerClientFactory.PROPERTY_NAME);
         return new NacosWarmupLoadBalancer(name,
                 loadBalancerClientFactory.getLazyProvider(name, ServiceInstanceListSupplier.class),
-                properties);
+                properties,
+                weightCalculatorProvider);
     }
 }
