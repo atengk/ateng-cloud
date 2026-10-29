@@ -35,6 +35,12 @@ public class AtengSentinelProperties {
     @NestedConfigurationProperty
     private OriginParserProperties originParser = new OriginParserProperties();
 
+    /**
+     * @SentinelResource 切面异常兜底配置
+     */
+    @NestedConfigurationProperty
+    private BlockAdviceProperties blockAdvice = new BlockAdviceProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -65,6 +71,14 @@ public class AtengSentinelProperties {
 
     public void setOriginParser(OriginParserProperties originParser) {
         this.originParser = originParser;
+    }
+
+    public BlockAdviceProperties getBlockAdvice() {
+        return blockAdvice;
+    }
+
+    public void setBlockAdvice(BlockAdviceProperties blockAdvice) {
+        this.blockAdvice = blockAdvice;
     }
 
     /**
@@ -148,6 +162,25 @@ public class AtengSentinelProperties {
 
         public void setHeaderName(String headerName) {
             this.headerName = headerName;
+        }
+    }
+
+    /**
+     * @SentinelResource 切面异常兜底配置
+     */
+    public static class BlockAdviceProperties {
+
+        /**
+         * 是否启用 @SentinelResource 切面未捕获异常统一兜底转译
+         */
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

@@ -3,9 +3,11 @@ package io.github.atengk.cloud.sentinel.autoconfigure;
 import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.BlockExceptionHandler;
 import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOriginParser;
 import com.alibaba.csp.sentinel.adapter.web.common.UrlCleaner;
+import io.github.atengk.cloud.sentinel.advice.SentinelBlockExceptionAdvice;
 import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
 import io.github.atengk.cloud.sentinel.handler.AtengBlockExceptionHandler;
 import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
+import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -38,6 +40,8 @@ class AtengSentinelAutoConfigurationTest {
 
             assertThat(context).hasSingleBean(AtengRequestOriginParser.class);
             assertThat(context).hasSingleBean(RequestOriginParser.class);
+
+            assertThat(context).hasSingleBean(SentinelBlockExceptionAdvice.class);
         });
     }
 
@@ -49,6 +53,7 @@ class AtengSentinelAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(AtengBlockExceptionHandler.class);
                     assertThat(context).doesNotHaveBean(AtengUrlCleaner.class);
                     assertThat(context).doesNotHaveBean(AtengRequestOriginParser.class);
+                    assertThat(context).doesNotHaveBean(SentinelBlockExceptionAdvice.class);
                 });
     }
 
@@ -58,11 +63,13 @@ class AtengSentinelAutoConfigurationTest {
         contextRunner.withPropertyValues(
                 "ateng.cloud.sentinel.block-handler.enabled=false",
                 "ateng.cloud.sentinel.url-clean.enabled=false",
-                "ateng.cloud.sentinel.origin-parser.enabled=false"
+                "ateng.cloud.sentinel.origin-parser.enabled=false",
+                "ateng.cloud.sentinel.block-advice.enabled=false"
         ).run(context -> {
             assertThat(context).doesNotHaveBean(AtengBlockExceptionHandler.class);
             assertThat(context).doesNotHaveBean(AtengUrlCleaner.class);
             assertThat(context).doesNotHaveBean(AtengRequestOriginParser.class);
+            assertThat(context).doesNotHaveBean(SentinelBlockExceptionAdvice.class);
         });
     }
 
@@ -79,6 +86,9 @@ class AtengSentinelAutoConfigurationTest {
 
                     assertThat(context).hasSingleBean(RequestOriginParser.class);
                     assertThat(context).doesNotHaveBean(AtengRequestOriginParser.class);
+
+                    assertThat(context).hasSingleBean(SentinelBlockExceptionAdvice.class);
+                    assertThat(context).getBean(SentinelBlockExceptionAdvice.class).isSameAs(context.getBean("customBlockAdvice"));
                 });
     }
 
@@ -97,6 +107,11 @@ class AtengSentinelAutoConfigurationTest {
         @Bean
         public RequestOriginParser customOriginParser() {
             return request -> "custom-origin";
+        }
+
+        @Bean
+        public SentinelBlockExceptionAdvice customBlockAdvice() {
+            return new SentinelBlockExceptionAdvice(new AtengSentinelProperties());
         }
     }
 }
