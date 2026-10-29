@@ -8,6 +8,7 @@
 - [Gateway](./ateng-cloud-gateway/CONTEXT.md) — WebFlux 纯响应式网关、Sa-Token 集中鉴权、零信任 Same-Token 签发、动态路由与文档聚合
 - [Sentinel](./ateng-cloud-sentinel/CONTEXT.md) — 流量防卫、熔断降级、受管降级工厂、路径防爆清洗与 Nacos 5 大规则全家桶持久化
 - [Traffic](./ateng-cloud-traffic/CONTEXT.md) — 全链路流量染色、泳道隔离、三层复合调度责任链与 Nacos 动态切流热更
+- [Seata](./ateng-cloud-seata/CONTEXT.md) — 分布式事务增强、AT/TCC 双核驱动、TCC 防悬挂业务屏障、XID 全链路透传与假切源守卫协同
 
 ## Relationships
 
@@ -17,4 +18,5 @@
 - **Feign → Cross-Service RPC**: 承载微服务间声明式 HTTP 同步调用，消费 Nacos 实例路由并透明透传四维上下文
 - **Dubbo → Cross-Service RPC**: 承载微服务间高性能二进制/Triple RPC 通信，与 Feign 正交共存，透明透传四维上下文与灰度标签
 - **Traffic → All Microservices & Gateway**: 统管全域流量染色上下文（TrafficContextHolder）与动态分流规则，为 Spring Cloud LoadBalancer 供给三层灰度责任链并守护跨跳泳道穿透
+- **Seata → All Microservices & Feign/Dubbo**: 为跨服务与跨库强一致性业务提供分布式事务协调，通过 Feign/Dubbo 对称透传 XID，与动态数据源假切源守卫无缝协同
 - **Boot Base → Cloud Ecosystem**: `ateng-cloud` 单向消费 `ateng-boot-bom` 作为通用单体基础设施底座

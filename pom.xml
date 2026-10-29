@@ -42,6 +42,7 @@
         <module>ateng-cloud-gateway</module>
         <module>ateng-cloud-sentinel</module>
         <module>ateng-cloud-traffic</module>
+        <module>ateng-cloud-seata</module>
         <module>ateng-cloud-all</module>
     </modules>
 
@@ -155,6 +156,11 @@
             <dependency>
                 <groupId>io.github.atengk</groupId>
                 <artifactId>ateng-cloud-traffic</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.atengk</groupId>
+                <artifactId>ateng-cloud-seata</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
