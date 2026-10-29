@@ -8,6 +8,8 @@ import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
+import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -38,9 +40,12 @@ public class AtengTrafficAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
-    public FilterRegistrationBean<TrafficContextFilter> trafficContextFilter(AtengTrafficProperties properties) {
+    public FilterRegistrationBean<TrafficContextFilter> trafficContextFilter(
+            AtengTrafficProperties properties,
+            ObjectProvider<TrafficRuleMatcher> ruleMatcherProvider,
+            ObjectProvider<TrafficRuleProvider> ruleProvider) {
         FilterRegistrationBean<TrafficContextFilter> registration = new FilterRegistrationBean<>(
-                new TrafficContextFilter(properties)
+                new TrafficContextFilter(properties, ruleMatcherProvider.getIfAvailable(), ruleProvider.getIfAvailable())
         );
         registration.setOrder(properties.getFilterOrder());
         registration.addUrlPatterns("/*");

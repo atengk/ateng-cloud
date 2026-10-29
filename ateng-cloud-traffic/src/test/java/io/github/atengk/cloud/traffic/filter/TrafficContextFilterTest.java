@@ -3,6 +3,12 @@ package io.github.atengk.cloud.traffic.filter;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
+import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
+import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
+import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
+import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
+import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import jakarta.servlet.ServletException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -163,5 +169,81 @@ class TrafficContextFilterTest {
         // 强断言：异常抛出后，线程上下文与 MDC 依然被无条件清理
         assertThat(TrafficContextHolder.getTag()).isNull();
         assertThat(MDC.get(TrafficConstants.MDC_TRAFFIC_TAG)).isNull();
+    }
+
+    @Test
+    @DisplayName("测试通过动态规则决策引擎为无标签请求自动染色")
+    void testDynamicRuleMatchingStaining() throws ServletException, IOException {
+        TrafficRule rule = TrafficRule.builder()
+                .id("rule-device-ios")
+                .targetTag("canary-ios")
+                .conditions(java.util.List.of(
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Device-Type")
+                                .operator(TrafficMatchOperator.EXACT)
+                                .expectedValue("iOS")
+                                .build()
+                ))
+                .build();
+
+        TrafficRuleProvider provider = () -> java.util.List.of(rule);
+        TrafficRuleMatcher matcher = new TrafficRuleMatcher();
+        TrafficContextFilter filterWithRules = new TrafficContextFilter(properties, matcher, provider);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        request.addHeader("X-Device-Type", "iOS");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>();
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filterWithRules.doFilter(request, response, filterChain);
+
+        assertThat(tagInsideChain.get()).isEqualTo("canary-ios");
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试显式 Header 标签优先级高于动态规则匹配")
+    void testExplicitHeaderPrecedenceOverDynamicRules() throws ServletException, IOException {
+        TrafficRule rule = TrafficRule.builder()
+                .id("rule-device-ios")
+                .targetTag("canary-ios")
+                .conditions(java.util.List.of(
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Device-Type")
+                                .operator(TrafficMatchOperator.EXACT)
+                                .expectedValue("iOS")
+                                .build()
+                ))
+                .build();
+
+        TrafficRuleProvider provider = () -> java.util.List.of(rule);
+        TrafficRuleMatcher matcher = new TrafficRuleMatcher();
+        TrafficContextFilter filterWithRules = new TrafficContextFilter(properties, matcher, provider);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        request.addHeader(TrafficConstants.HEADER_TRAFFIC_TAG, "explicit-override-tag");
+        request.addHeader("X-Device-Type", "iOS");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>();
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filterWithRules.doFilter(request, response, filterChain);
+
+        assertThat(tagInsideChain.get()).isEqualTo("explicit-override-tag");
     }
 }

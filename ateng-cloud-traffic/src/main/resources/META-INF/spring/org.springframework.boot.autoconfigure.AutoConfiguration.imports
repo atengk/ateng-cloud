@@ -1,2 +1,3 @@
 io.github.atengk.cloud.traffic.autoconfigure.AtengTrafficAutoConfiguration
 io.github.atengk.cloud.traffic.autoconfigure.AtengTrafficLoadBalancerAutoConfiguration
+io.github.atengk.cloud.traffic.autoconfigure.AtengTrafficNacosAutoConfiguration

@@ -3,6 +3,10 @@ package io.github.atengk.cloud.traffic.filter;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.rule.matcher.ServletTrafficEvaluationContext;
+import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
+import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
+import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,6 +17,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Servlet 入站流量染色与全生命周期清理过滤器
@@ -31,9 +36,19 @@ public class TrafficContextFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(TrafficContextFilter.class);
 
     private final AtengTrafficProperties properties;
+    private final TrafficRuleMatcher ruleMatcher;
+    private final TrafficRuleProvider ruleProvider;
 
     public TrafficContextFilter(AtengTrafficProperties properties) {
+        this(properties, null, null);
+    }
+
+    public TrafficContextFilter(AtengTrafficProperties properties,
+                                TrafficRuleMatcher ruleMatcher,
+                                TrafficRuleProvider ruleProvider) {
         this.properties = properties != null ? properties : new AtengTrafficProperties();
+        this.ruleMatcher = ruleMatcher;
+        this.ruleProvider = ruleProvider;
     }
 
     @Override
@@ -82,6 +97,22 @@ public class TrafficContextFilter extends OncePerRequestFilter {
         tag = request.getParameter(paramName);
         if (StringUtils.hasText(tag)) {
             return tag;
+        }
+
+        // 3. 动态流量分流规则匹配判定 (由 Nacos 动态推送或静态规则提供)
+        if (ruleMatcher != null && ruleProvider != null) {
+            List<TrafficRule> rules = ruleProvider.getRules();
+            if (rules != null && !rules.isEmpty()) {
+                ServletTrafficEvaluationContext context = ServletTrafficEvaluationContext.from(request);
+                String matchedTag = ruleMatcher.matchTag(rules, context);
+                if (StringUtils.hasText(matchedTag)) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("[TrafficFilter] 入站请求通过动态流量规则成功染色: tag={}, uri={}",
+                                matchedTag.trim(), request.getRequestURI());
+                    }
+                    return matchedTag.trim();
+                }
+            }
         }
 
         return null;

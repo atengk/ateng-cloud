@@ -2,6 +2,7 @@ package io.github.atengk.cloud.traffic.properties;
 
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.core.Ordered;
 
 /**
@@ -47,6 +48,12 @@ public class AtengTrafficProperties {
      * 入站流量染色过滤器执行顺序 (默认最高优先级后移 50，位于链路追踪 Filter 之后)
      */
     private int filterOrder = Ordered.HIGHEST_PRECEDENCE + 50;
+
+    /**
+     * Nacos 动态流量规则分级监听配置
+     */
+    @NestedConfigurationProperty
+    private TrafficNacosProperties nacos = new TrafficNacosProperties();
 
     public boolean isEnabled() {
         return enabled;
@@ -102,5 +109,13 @@ public class AtengTrafficProperties {
 
     public void setFilterOrder(int filterOrder) {
         this.filterOrder = filterOrder;
+    }
+
+    public TrafficNacosProperties getNacos() {
+        return nacos;
+    }
+
+    public void setNacos(TrafficNacosProperties nacos) {
+        this.nacos = nacos;
     }
 }
