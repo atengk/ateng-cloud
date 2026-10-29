@@ -35,6 +35,20 @@
             <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
         </dependency>
 
+        <!-- Spring Cloud OpenFeign (编译期可选，微服务 Feign 通信时自动激活 XID 透传拦截器) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Jakarta Servlet API 规范 -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
