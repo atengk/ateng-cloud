@@ -2,9 +2,11 @@ package io.github.atengk.cloud.seata.autoconfigure;
 
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
 import io.github.atengk.cloud.seata.autoconfigure.AtengSeataAutoConfiguration.SeataMarker;
+import io.github.atengk.cloud.seata.context.SeataAsyncContextSnapshotProvider;
 import io.github.atengk.cloud.seata.interceptor.SeataFeignContextInterceptor;
 import io.github.atengk.cloud.seata.interceptor.SeataWebHandlerInterceptor;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
+import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -38,6 +40,8 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataProperties.class);
             assertThat(context).hasSingleBean(SeataFeignContextInterceptor.class);
             assertThat(context).hasSingleBean(SeataExceptionTranslationAspect.class);
+            assertThat(context).hasSingleBean(SeataAsyncContextSnapshotProvider.class);
+            assertThat(context).hasSingleBean(SeataTenantLineHandlerPostProcessor.class);
             assertThat(context).doesNotHaveBean(SeataWebHandlerInterceptor.class);
 
             SeataProperties properties = context.getBean(SeataProperties.class);
@@ -61,6 +65,8 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataWebHandlerInterceptor.class);
             assertThat(context).hasSingleBean(SeataWebMvcConfigurer.class);
             assertThat(context).hasSingleBean(SeataExceptionTranslationAspect.class);
+            assertThat(context).hasSingleBean(SeataAsyncContextSnapshotProvider.class);
+            assertThat(context).hasSingleBean(SeataTenantLineHandlerPostProcessor.class);
         });
     }
 
@@ -74,6 +80,8 @@ class AtengSeataAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(SeataMarker.class);
                     assertThat(context).doesNotHaveBean(SeataFeignContextInterceptor.class);
                     assertThat(context).doesNotHaveBean(SeataWebHandlerInterceptor.class);
+                    assertThat(context).doesNotHaveBean(SeataAsyncContextSnapshotProvider.class);
+                    assertThat(context).doesNotHaveBean(SeataTenantLineHandlerPostProcessor.class);
                 });
     }
 

@@ -1,11 +1,14 @@
 package io.github.atengk.cloud.seata.autoconfigure;
 
+import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
 import feign.RequestInterceptor;
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
 import io.github.atengk.cloud.seata.constant.SeataConstants;
+import io.github.atengk.cloud.seata.context.SeataAsyncContextSnapshotProvider;
 import io.github.atengk.cloud.seata.interceptor.SeataFeignContextInterceptor;
 import io.github.atengk.cloud.seata.interceptor.SeataWebHandlerInterceptor;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
+import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -104,6 +107,31 @@ public class AtengSeataAutoConfiguration {
     public SeataExceptionTranslationAspect seataExceptionTranslationAspect() {
         log.debug("装配 SeataExceptionTranslationAspect 异常因果转译切面");
         return new SeataExceptionTranslationAspect();
+    }
+
+    /**
+     * 注册 Seata 异步线程池快照提供者 Bean (同时已通过 SPI 注册至 AsyncContext)
+     *
+     * @return SeataAsyncContextSnapshotProvider 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public SeataAsyncContextSnapshotProvider seataAsyncContextSnapshotProvider() {
+        log.debug("装配 SeataAsyncContextSnapshotProvider 异步线程池 XID 快照透传组件");
+        return new SeataAsyncContextSnapshotProvider();
+    }
+
+    /**
+     * 注册 MyBatis-Plus 多租户内部表自动排除后置处理器（当存在 TenantLineHandler 时生效）
+     *
+     * @return SeataTenantLineHandlerPostProcessor 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(TenantLineHandler.class)
+    public static SeataTenantLineHandlerPostProcessor seataTenantLineHandlerPostProcessor() {
+        log.debug("装配 SeataTenantLineHandlerPostProcessor 多租户内部表排除后置处理器");
+        return new SeataTenantLineHandlerPostProcessor();
     }
 
     /**
