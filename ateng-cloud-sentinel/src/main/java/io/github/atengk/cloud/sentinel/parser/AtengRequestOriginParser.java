@@ -2,6 +2,7 @@ package io.github.atengk.cloud.sentinel.parser;
 
 import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOriginParser;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
+import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.util.StringUtils;
 
@@ -24,8 +25,6 @@ public class AtengRequestOriginParser implements RequestOriginParser {
 
     private static final String DEFAULT_ORIGIN = "default";
     private static final String GATEWAY_CALLER_HEADER = "X-Gateway-Caller";
-    private static final String X_FORWARDED_FOR = "X-Forwarded-For";
-    private static final String X_REAL_IP = "X-Real-IP";
 
     private final AtengSentinelProperties properties;
 
@@ -55,26 +54,12 @@ public class AtengRequestOriginParser implements RequestOriginParser {
         }
 
         // 3. 提取真实客户端 IP
-        String clientIp = resolveClientIp(request);
-        if (StringUtils.hasText(clientIp)) {
+        String clientIp = SentinelServletUtil.resolveClientIp(request);
+        if (StringUtils.hasText(clientIp) && !"unknown".equalsIgnoreCase(clientIp)) {
             return clientIp;
         }
 
         // 4. 兜底默认来源
         return DEFAULT_ORIGIN;
-    }
-
-    private String resolveClientIp(HttpServletRequest request) {
-        String ip = request.getHeader(X_FORWARDED_FOR);
-        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
-            int index = ip.indexOf(',');
-            return index != -1 ? ip.substring(0, index).trim() : ip.trim();
-        }
-        ip = request.getHeader(X_REAL_IP);
-        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
-            return ip.trim();
-        }
-        String remoteAddr = request.getRemoteAddr();
-        return StringUtils.hasText(remoteAddr) ? remoteAddr.trim() : null;
     }
 }

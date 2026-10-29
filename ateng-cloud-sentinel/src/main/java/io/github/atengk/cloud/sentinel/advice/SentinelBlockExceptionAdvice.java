@@ -9,6 +9,7 @@ import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
+import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,7 +76,7 @@ public class SentinelBlockExceptionAdvice {
         HttpStatus httpStatus = align ? HttpStatus.valueOf(targetStatus) : HttpStatus.OK;
 
         String path = request != null ? request.getRequestURI() : "unknown";
-        String clientIp = resolveClientIp(request);
+        String clientIp = SentinelServletUtil.resolveClientIp(request);
         String resource = resolveResource(ex);
 
         log.warn("Sentinel @SentinelResource block triggered: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
@@ -148,23 +149,5 @@ public class SentinelBlockExceptionAdvice {
             return 503;
         }
         return 429;
-    }
-
-    /**
-     * 解析客户端 IP
-     */
-    private String resolveClientIp(HttpServletRequest request) {
-        if (request == null) {
-            return "unknown";
-        }
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        String realIp = request.getHeader("X-Real-IP");
-        if (realIp != null && !realIp.isBlank()) {
-            return realIp.trim();
-        }
-        return request.getRemoteAddr() != null ? request.getRemoteAddr() : "unknown";
     }
 }

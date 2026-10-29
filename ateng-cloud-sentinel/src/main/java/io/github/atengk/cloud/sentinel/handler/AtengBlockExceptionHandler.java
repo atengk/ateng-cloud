@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
+import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -63,7 +64,7 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
 
         Result<Void> result = Result.fail(resultCode.getCode(), resultCode.getMsg());
 
-        String clientIp = resolveClientIp(request);
+        String clientIp = SentinelServletUtil.resolveClientIp(request);
         log.warn("Sentinel block triggered: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
                 resourceName, resultCode.name(), response.getStatus(), request.getRequestURI(), clientIp);
 
@@ -97,21 +98,5 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
             return HttpStatus.SERVICE_UNAVAILABLE;
         }
         return HttpStatus.TOO_MANY_REQUESTS;
-    }
-
-    /**
-     * 辅助解析客户端真实 IP (防范多层代理)
-     */
-    private String resolveClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
-            int index = ip.indexOf(',');
-            return index != -1 ? ip.substring(0, index).trim() : ip.trim();
-        }
-        ip = request.getHeader("X-Real-IP");
-        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
-            return ip.trim();
-        }
-        return request.getRemoteAddr();
     }
 }
