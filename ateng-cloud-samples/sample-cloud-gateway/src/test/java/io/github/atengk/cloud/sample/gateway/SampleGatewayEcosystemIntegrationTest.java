@@ -89,6 +89,31 @@ public class SampleGatewayEcosystemIntegrationTest {
     }
 
     @Test
+    @DisplayName("测试 Header 优先级高于 Query 参数染色标签")
+    void testTrafficTagHeaderPrecedenceOverQuery() {
+        webTestClient.get()
+                .uri("/api/mock/echo-headers?traffic_tag=query-fallback")
+                .header(GatewayConstants.X_TRAFFIC_TAG, "header-priority")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data['x-traffic-tag']").isEqualTo("header-priority");
+    }
+
+    @Test
+    @DisplayName("测试无染色标签请求下游不接收 x-traffic-tag 标头")
+    void testNoTrafficTagPassthrough() {
+        webTestClient.get()
+                .uri("/api/mock/echo-headers")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data['x-traffic-tag']").doesNotExist();
+    }
+
+    @Test
     @DisplayName("测试金丝雀灰度分流与无损平滑降级机制")
     void testGrayRoutingAndFallback() {
         AtengGatewayTrafficProperties properties = new AtengGatewayTrafficProperties();

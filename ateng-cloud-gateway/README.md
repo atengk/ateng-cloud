@@ -21,9 +21,11 @@
 | `GatewayClientIpFilter` | 全局过滤器 | `HIGHEST_PRECEDENCE + 4` | 依据可信代理跳数（`trusted-proxy-count`）从右往左安全倒推解析真实公网客户端 IP 并挂载至上下文 | `security.client-ip-enabled=true` |
 | `GatewayIpFilter` | 全局过滤器 | `HIGHEST_PRECEDENCE + 5` | 支持 CIDR 子网与 IPv4/IPv6 精准黑白名单网络边缘安全防卫，黑名单直接阻断 | `security.ip-filter-enabled=true` |
 | `OpenApiGuardFilter` | 响应式 WebFilter | `HIGHEST_PRECEDENCE + 6` | 拦截微服务契约文档路径，提供 DISABLED（404 熔断）、BASIC（认证挑战）、SA_TOKEN（权限鉴权）与 PUBLIC 四模守卫 | `openapi.enabled=true` |
-| `GatewayTrafficTagFilter` | 全局过滤器 | `HIGHEST_PRECEDENCE + 7` | 优先解析 Header（`X-Traffic-Tag`），兜底解析 Query（`traffic_tag`），向下游透明透传灰度染色标签 | `traffic.enabled=true` |
 | `SaTokenGatewayFilter` | 全局过滤器 | `ORDER_SA_TOKEN (-100)` | 反应式集中登录认证、白名单放行，校验通过向下游注入 `Same-Token` 内部受信凭据与 `X-User-Id` | `security.sa-token-enabled=true` |
 | `GatewayTenantFilter` | 全局过滤器 | `ORDER_TENANT (-90)` | 解析租户标头并挂载上下文，防范未授权多租户跨越攻击 | `tenant.enabled=true` |
+| `GatewayTrafficTagFilter` | 全局过滤器 | `ORDER_TRAFFIC_TAG (-80)` | 依托 `TrafficTagResolver` 决议流量染色标签；清洗剥离未授权伪造标头，向下游透传权威标签 | `traffic.enabled=true` |
+| `TrafficTagResolver` | 扩展点 SPI | 依赖注入扩展 | 进站流量染色标签决议器扩展点，支持基于会话、租户或业务规则动态染色打标 | `@ConditionalOnMissingBean` 标配守卫 |
+| `DefaultTrafficTagResolver` | SPI 默认实现 | 依赖注入扩展 | 默认染色解析器：优先读取标头（`X-Traffic-Tag`），兜底读取 Query 参数（`traffic_tag`） | 条件装配于 `traffic.enabled=true` |
 | `GatewaySignGuardFilter` | 全局过滤器 | `ORDER_SA_TOKEN - 1` | 开放接口 API 签名防篡改、时间戳时钟防偏（5分钟窗口）与 Nonce 防重放校验 | `sign.enabled=true`（默认关闭） |
 | `GatewayRateLimitResponseFilter`| 全局过滤器 | `Ordered.LOWEST_PRECEDENCE - 10` | 拦截分布式限流产生的 HTTP 429 状态，格式化为标准 Result JSON 响应体并附加 `Retry-After: 1` 标头 | `rate-limiter.enabled=true` |
 | `GatewayAccessLogFilter` | 全局过滤器 | `LOWEST_PRECEDENCE` | 基于 Reactor `doFinally` 零阻塞异步度量往返耗时，结构化输出核心审计指标，慢请求打印 WARN 告警 | `access-log.enabled=true`（默认关闭） |
@@ -288,6 +290,32 @@ spring:
                 redis-rate-limiter.burstCapacity: 20
 ```
 
+### 4. 自定义流量染色决议器 (`TrafficTagResolver` SPI)
+
+当需要结合登录用户身份、租户 ID 或自定义业务规则对入站请求动态打标，或强制过滤未授权外部伪造染色标头时，可通过注册自定义 `TrafficTagResolver` Bean 优雅接管：
+
+```java
+@Configuration(proxyBeanMethods = false)
+public class CustomTrafficTagResolverConfiguration {
+
+    @Bean
+    public TrafficTagResolver customTrafficTagResolver() {
+        return exchange -> {
+            if (exchange == null || exchange.getRequest() == null) {
+                return null;
+            }
+            // 1. 业务自定义规则：根据用户等级或租户执行动态染色
+            String userTier = exchange.getRequest().getHeaders().getFirst("X-User-Tier");
+            if ("VIP".equalsIgnoreCase(userTier)) {
+                return "vip-lane";
+            }
+            // 2. 非 VIP 请求返回 null，网关将自动物理剥离其可能私自伪造的 X-Traffic-Tag 标头
+            return null;
+        };
+    }
+}
+```
+
 ---
 
 ## 维度三：核心生产边界与非功能语义
@@ -316,8 +344,8 @@ spring:
 - **Spring Boot 3 原生事件驱动**：基于 Nacos 配置监听器，当监听到路由 JSON 发生变化时，先经反序列化与严格语法校验，通过发布 `RefreshRoutesEvent` 原子热替换内存路由表，整个过程零停机零丢包；
 - **Last-Known Good 快照容错机制**：若运维人员在 Nacos 中误配了破损的 JSON 格式或非法谓词，网关抛出告警并坚决保留上一份内存有效路由快照继续提供服务，杜绝因错误配置导致全网路由全灭。
 
-### 5. 金丝雀灰度无损降级回退 (Canary Gray & Fallback)
-- **流量染色解析与穿透**：`GatewayTrafficTagFilter` 优先解析 Header（`X-Traffic-Tag`），兜底解析 Query（`traffic_tag`），挂载至上下文并向下游微服务透明传递；
+### 5. 金丝雀灰度染色与无损降级回退 (Canary Gray & Fallback)
+- **权威染色解析与伪造清洗**：`GatewayTrafficTagFilter` 依托 `TrafficTagResolver` SPI 决议权威染色标签，挂载至上下文（`ATTR_TRAFFIC_TAG`）并向下游微服务透明传递；若未决议出标签，自动物理剥离外部伪造的 `X-Traffic-Tag`，杜绝未授权链路穿透；
 - **平滑容灾降级**：`GrayServiceInstanceListSupplier` 精准匹配实例 `metadata.tag`。当灰度实例全部下线或未配置对应标签时，在 `fallback-to-default=true` 下自动降级调度至基线默认实例，杜绝 503 报警。
 
 ### 6. 分布式限流 429 统一转译与 Retry-After

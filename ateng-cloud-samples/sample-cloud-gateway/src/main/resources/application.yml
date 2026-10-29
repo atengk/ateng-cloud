@@ -62,6 +62,8 @@ spring:
 
 ateng:
   cloud:
+    nacos:
+      drain-timeout: 20ms
     gateway:
       enabled: true
       max-in-memory-size: 2MB

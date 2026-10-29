@@ -154,11 +154,6 @@ public final class GatewayConstants {
     public static final int ORDER_IP_FILTER = Ordered.HIGHEST_PRECEDENCE + 4;
 
     /**
-     * 全链路灰度染色标签解析过滤器执行顺序
-     */
-    public static final int ORDER_TRAFFIC_TAG = Ordered.HIGHEST_PRECEDENCE + 5;
-
-    /**
      * Sa-Token 反应式集中鉴权过滤器执行顺序
      */
     public static final int ORDER_SA_TOKEN = -100;
@@ -167,6 +162,11 @@ public final class GatewayConstants {
      * 多租户入站解析与防跨越过滤器执行顺序 (紧随鉴权之后)
      */
     public static final int ORDER_TENANT = -90;
+
+    /**
+     * 全链路灰度染色标签解析过滤器执行顺序 (置于集中鉴权与多租户解析之后，确保决议器可基于受信任身份与租户执行动态染色)
+     */
+    public static final int ORDER_TRAFFIC_TAG = ORDER_TENANT + 10;
 
 
     /**

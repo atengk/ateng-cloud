@@ -46,7 +46,7 @@ public class GatewayTrafficTagFilter implements GlobalFilter, Ordered {
         // 1. 依托 TrafficTagResolver SPI 决议流量染色标签
         String trafficTag = trafficTagResolver != null ? trafficTagResolver.resolveTag(exchange) : null;
 
-        // 2. 若存在有效标签，挂载至上下文并向下游透传
+        // 2. 若存在有效标签，挂载至上下文并向下游透传；否则清理上下文并剥离伪造标头
         if (StringUtils.hasText(trafficTag)) {
             String trimmedTag = trafficTag.trim();
             exchange.getAttributes().put(GatewayConstants.ATTR_TRAFFIC_TAG, trimmedTag);
@@ -55,6 +55,15 @@ public class GatewayTrafficTagFilter implements GlobalFilter, Ordered {
                     .header(GatewayConstants.X_TRAFFIC_TAG, trimmedTag)
                     .build();
             return chain.filter(exchange.mutate().request(mutatedRequest).build());
+        } else {
+            // 未决议出权威标签：若入站请求携带伪造或陈旧的染色标头，强制物理剥离清洗，防止伪造链路穿透
+            exchange.getAttributes().remove(GatewayConstants.ATTR_TRAFFIC_TAG);
+            if (exchange.getRequest().getHeaders().containsKey(GatewayConstants.X_TRAFFIC_TAG)) {
+                ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                        .headers(headers -> headers.remove(GatewayConstants.X_TRAFFIC_TAG))
+                        .build();
+                return chain.filter(exchange.mutate().request(mutatedRequest).build());
+            }
         }
 
         return chain.filter(exchange);
