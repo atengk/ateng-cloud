@@ -1,0 +1,30 @@
+# 本地真实测试环境配置模板 (双模实测使用)
+# 复制此文件为 application-local.yml 填入真实凭据即可直连真实 Seata TC 与 MySQL 实测
+# 注意: application-local.yml 已被全局 .gitignore 忽略，严禁提交到代码仓库
+
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: true
+        server-addr: YOUR_NACOS_SERVER_ADDR
+        namespace: YOUR_NACOS_NAMESPACE
+      config:
+        enabled: true
+        server-addr: YOUR_NACOS_SERVER_ADDR
+        namespace: YOUR_NACOS_NAMESPACE
+
+  datasource:
+    url: jdbc:mysql://YOUR_MYSQL_HOST:3306/ateng_seata?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: YOUR_MYSQL_USERNAME
+    password: YOUR_MYSQL_PASSWORD
+
+seata:
+  enabled: true
+  tx-service-group: default_tx_group
+  service:
+    vgroup-mapping:
+      default_tx_group: default
+    grouplist:
+      default: YOUR_SEATA_TC_SERVER_ADDR

@@ -1,10 +1,5 @@
 package io.github.atengk.cloud.seata.autoconfigure;
 
-import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
-import com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourceProperties;
-import com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourcePropertiesCustomizer;
-import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
-import feign.RequestInterceptor;
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
 import io.github.atengk.cloud.seata.aspect.SeataGlobalLockAspect;
 import io.github.atengk.cloud.seata.constant.SeataConstants;
@@ -37,9 +32,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.web.servlet.HandlerInterceptor;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import javax.sql.DataSource;
 
@@ -76,45 +70,41 @@ public class AtengSeataAutoConfiguration {
     }
 
     /**
-     * 注册 Feign 客户端 XID 透传拦截器（当引入 OpenFeign 时生效）
-     *
-     * @return SeataFeignContextInterceptor 实例
+     * Feign 跨进程 XID 透传拦截器装配配置
      */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnClass(RequestInterceptor.class)
-    public SeataFeignContextInterceptor seataFeignContextInterceptor() {
-        log.debug("装配 SeataFeignContextInterceptor 跨进程 XID 透传拦截器");
-        return new SeataFeignContextInterceptor();
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "feign.RequestInterceptor")
+    public static class SeataFeignConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public SeataFeignContextInterceptor seataFeignContextInterceptor() {
+            log.debug("装配 SeataFeignContextInterceptor 跨进程 XID 透传拦截器");
+            return new SeataFeignContextInterceptor();
+        }
     }
 
     /**
-     * 注册 WebMVC 入站 XID 上下文生命周期拦截器
-     *
-     * @return SeataWebHandlerInterceptor 实例
+     * WebMVC 入站 XID 上下文生命周期拦截器装配配置
      */
-    @Bean
-    @ConditionalOnMissingBean
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
-    @ConditionalOnClass(HandlerInterceptor.class)
-    public SeataWebHandlerInterceptor seataWebHandlerInterceptor() {
-        log.debug("装配 SeataWebHandlerInterceptor Web 入站 XID 生命周期拦截器");
-        return new SeataWebHandlerInterceptor();
-    }
+    @ConditionalOnClass(name = "org.springframework.web.servlet.config.annotation.WebMvcConfigurer")
+    public static class SeataWebMvcConfiguration {
 
-    /**
-     * 注册 WebMvcConfigurer 将 XID 拦截器挂载至请求过滤链
-     *
-     * @param seataWebHandlerInterceptor 入站拦截器
-     * @return SeataWebMvcConfigurer 实例
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
-    @ConditionalOnClass(WebMvcConfigurer.class)
-    public SeataWebMvcConfigurer seataWebMvcConfigurer(SeataWebHandlerInterceptor seataWebHandlerInterceptor) {
-        log.debug("装配 SeataWebMvcConfigurer WebMVC 拦截器注册配置");
-        return new SeataWebMvcConfigurer(seataWebHandlerInterceptor);
+        @Bean
+        @ConditionalOnMissingBean
+        public SeataWebHandlerInterceptor seataWebHandlerInterceptor() {
+            log.debug("装配 SeataWebHandlerInterceptor Web 入站 XID 生命周期拦截器");
+            return new SeataWebHandlerInterceptor();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public SeataWebMvcConfigurer seataWebMvcConfigurer(SeataWebHandlerInterceptor seataWebHandlerInterceptor) {
+            log.debug("装配 SeataWebMvcConfigurer WebMVC 拦截器注册配置");
+            return new SeataWebMvcConfigurer(seataWebHandlerInterceptor);
+        }
     }
 
     /**
@@ -143,46 +133,42 @@ public class AtengSeataAutoConfiguration {
     }
 
     /**
-     * 注册 MyBatis-Plus 多租户内部表自动排除后置处理器（当存在 TenantLineHandler 时生效）
-     *
-     * @return SeataTenantLineHandlerPostProcessor 实例
+     * MyBatis-Plus 多租户内部表自动排除配置
      */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnClass(TenantLineHandler.class)
-    public static SeataTenantLineHandlerPostProcessor seataTenantLineHandlerPostProcessor() {
-        log.debug("装配 SeataTenantLineHandlerPostProcessor 多租户内部表排除后置处理器");
-        return new SeataTenantLineHandlerPostProcessor();
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler")
+    public static class SeataTenantConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        public static SeataTenantLineHandlerPostProcessor seataTenantLineHandlerPostProcessor() {
+            log.debug("装配 SeataTenantLineHandlerPostProcessor 多租户内部表排除后置处理器");
+            return new SeataTenantLineHandlerPostProcessor();
+        }
     }
 
     /**
-     * 注册 Baomidou dynamic-datasource 属性定制器（自动协同开启原生 Seata 代理）
-     *
-     * @param properties Seata 配置属性
-     * @return SeataDynamicDataSourcePropertiesCustomizer 实例
+     * Baomidou dynamic-datasource 属性与连接池协同配置
      */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnClass(DynamicDataSourceProperties.class)
-    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public SeataDynamicDataSourcePropertiesCustomizer seataDynamicDataSourcePropertiesCustomizer(SeataProperties properties) {
-        log.debug("装配 SeataDynamicDataSourcePropertiesCustomizer 动态数据源属性定制器");
-        return new SeataDynamicDataSourcePropertiesCustomizer(properties);
-    }
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourcePropertiesCustomizer")
+    public static class SeataDynamicDataSourceConfiguration {
 
-    /**
-     * 注册 Baomidou 动态数据源物理连接池 Seata 代理自检与协同协调器
-     *
-     * @param properties Seata 配置属性
-     * @return SeataDynamicDataSourceCoordinator 实例
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnClass(DynamicRoutingDataSource.class)
-    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public SeataDynamicDataSourceCoordinator seataDynamicDataSourceCoordinator(SeataProperties properties) {
-        log.debug("装配 SeataDynamicDataSourceCoordinator 动态数据源代理协同协调器");
-        return new SeataDynamicDataSourceCoordinator(properties);
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "enabled", havingValue = "true", matchIfMissing = true)
+        public SeataDynamicDataSourcePropertiesCustomizer seataDynamicDataSourcePropertiesCustomizer(SeataProperties properties) {
+            log.debug("装配 SeataDynamicDataSourcePropertiesCustomizer 动态数据源属性定制器");
+            return new SeataDynamicDataSourcePropertiesCustomizer(properties);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "enabled", havingValue = "true", matchIfMissing = true)
+        public SeataDynamicDataSourceCoordinator seataDynamicDataSourceCoordinator(SeataProperties properties) {
+            log.debug("装配 SeataDynamicDataSourceCoordinator 动态数据源代理协同协调器");
+            return new SeataDynamicDataSourceCoordinator(properties);
+        }
     }
 
     /**

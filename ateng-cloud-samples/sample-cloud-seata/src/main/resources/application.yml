@@ -1,0 +1,57 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: sample-cloud-seata
+  config:
+    import:
+      - optional:classpath:application-local.yml
+
+  # 纯离线单测模式：严禁外部 Nacos 强依赖
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+
+  # H2 纯内存数据库配置（MySQL 兼容模式，零外部中间件）
+  datasource:
+    url: jdbc:h2:mem:sample_seata_db;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+# Apache Seata 客户端属性（离线自洽模式）
+seata:
+  enabled: false
+  tx-service-group: default_tx_group
+  service:
+    vgroup-mapping:
+      default_tx_group: default
+    grouplist:
+      default: 127.0.0.1:8091
+
+# ateng-cloud-seata 生产基础设施配置
+ateng:
+  cloud:
+    seata:
+      enabled: true
+      tx-service-group: default_tx_group
+      default-timeout: 30s
+      lock:
+        retry-interval: 50ms
+        retry-times: 30
+      degrade:
+        enabled: false
+      tcc:
+        fence-enabled: true
+      dynamic-datasource:
+        enabled: false
+        guard-enabled: false
