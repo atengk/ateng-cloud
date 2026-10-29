@@ -2,6 +2,7 @@ package io.github.atengk.cloud.sample.sentinel.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,5 +28,15 @@ public class SampleSentinelController {
             throw new IllegalStateException("Simulated business exception for degrade");
         }
         return Result.success("degrade-pass");
+    }
+
+    @GetMapping("/users/{id}")
+    public Result<String> getUserById(@PathVariable("id") Long id) {
+        return Result.success("user-" + id);
+    }
+
+    @GetMapping("/admin/secure")
+    public Result<String> adminSecure() {
+        return Result.success("admin-ok");
     }
 }

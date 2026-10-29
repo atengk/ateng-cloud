@@ -1,9 +1,13 @@
 package io.github.atengk.cloud.sentinel.autoconfigure;
 
 import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.BlockExceptionHandler;
+import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOriginParser;
+import com.alibaba.csp.sentinel.adapter.web.common.UrlCleaner;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
 import io.github.atengk.cloud.sentinel.handler.AtengBlockExceptionHandler;
+import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -35,5 +39,25 @@ public class AtengSentinelAutoConfiguration {
             ObjectProvider<ObjectMapper> objectMapperProvider,
             AtengSentinelProperties properties) {
         return new AtengBlockExceptionHandler(objectMapperProvider.getIfAvailable(ObjectMapper::new), properties);
+    }
+
+    /**
+     * 注册 RESTful URL 路径归一化清洗器 (防范 Sentinel 资源树 OOM)
+     */
+    @Bean
+    @ConditionalOnMissingBean(UrlCleaner.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.url-clean", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public AtengUrlCleaner atengUrlCleaner() {
+        return new AtengUrlCleaner();
+    }
+
+    /**
+     * 注册多级请求调用源解析器
+     */
+    @Bean
+    @ConditionalOnMissingBean(RequestOriginParser.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.origin-parser", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public AtengRequestOriginParser atengRequestOriginParser(AtengSentinelProperties properties) {
+        return new AtengRequestOriginParser(properties);
     }
 }
