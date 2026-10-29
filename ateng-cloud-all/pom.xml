@@ -41,6 +41,12 @@
             <artifactId>ateng-cloud-sentinel</artifactId>
         </dependency>
 
+        <!-- Traffic 全链路流量染色、泳道隔离与金丝雀灰度底座 -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-traffic</artifactId>
+        </dependency>
+
         <!-- Spring Cloud Gateway 响应式微服务网关底座 (可选依赖，遵循 Reactive vs Servlet 物理隔离铁律) -->
         <dependency>
             <groupId>io.github.atengk</groupId>
