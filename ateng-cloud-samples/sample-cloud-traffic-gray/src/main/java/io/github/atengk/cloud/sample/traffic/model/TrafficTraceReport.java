@@ -55,6 +55,13 @@ public class TrafficTraceReport implements Serializable {
         this.visitedNodes.add(node);
     }
 
+    public void prependVisitedNode(String node) {
+        if (this.visitedNodes == null) {
+            this.visitedNodes = new ArrayList<>();
+        }
+        this.visitedNodes.add(0, node);
+    }
+
     public String getTrafficTag() {
         return trafficTag;
     }

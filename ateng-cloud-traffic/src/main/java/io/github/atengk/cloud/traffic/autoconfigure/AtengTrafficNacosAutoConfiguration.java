@@ -4,6 +4,7 @@ import com.alibaba.nacos.api.config.ConfigService;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.traffic.nacos.NacosTrafficRuleListener;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -41,7 +42,7 @@ public class AtengTrafficNacosAutoConfiguration {
      * @return NacosTrafficRuleListener
      */
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(TrafficRuleProvider.class)
     public NacosTrafficRuleListener nacosTrafficRuleListener(
             ObjectProvider<NacosTemplate> nacosTemplateProvider,
             AtengTrafficProperties properties,

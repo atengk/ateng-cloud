@@ -149,6 +149,26 @@ class TrafficTagServiceInstanceListSupplierTest {
     }
 
     @Test
+    @DisplayName("测试金融级严格隔离模式在下游全量实例集为空时依然立即阻断抛出 TrafficRoutingException")
+    void testStrictLaneIsolationWhenInstancesEmpty() {
+        properties.setStrictLane(true);
+        TrafficTagServiceInstanceListSupplier supplier = createSupplier(Collections.emptyList());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplier.filterByTag(Collections.emptyList(), "canary"))
+                .isInstanceOf(TrafficRoutingException.class)
+                .satisfies(ex -> {
+                    TrafficRoutingException routingEx = (TrafficRoutingException) ex;
+                    assertThat(routingEx.getCode()).isEqualTo(TrafficResultCode.STRICT_LANE_BLOCK.getCode());
+                    assertThat(routingEx.getTag()).isEqualTo("canary");
+                    assertThat(routingEx.getServiceId()).isEqualTo("user-service");
+                });
+
+        // 当 tag 为空且 instances 为空时，返回空列表不阻断
+        List<ServiceInstance> emptyResult = supplier.filterByTag(Collections.emptyList(), null);
+        assertThat(emptyResult).isEmpty();
+    }
+
+    @Test
     @DisplayName("测试集群全量节点均带标签时，未染色请求保底返回全量")
     void testNoBaselineInstancesFallbackToAll() {
         List<ServiceInstance> allTaggedInstances = List.of(grayInstance1, v3Instance);

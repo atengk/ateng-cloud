@@ -20,16 +20,16 @@ public class TrafficContextSnapshotProvider implements AsyncContextSnapshotProvi
 
     @Override
     public void apply(Object snapshot) {
-        if (snapshot instanceof TrafficContext context) {
-            TrafficContextHolder.setContext(context);
-        } else {
-            TrafficContextHolder.clear();
-        }
+        applyOrClear(snapshot);
     }
 
     @Override
     public void restore(Object previous) {
-        if (previous instanceof TrafficContext context) {
+        applyOrClear(previous);
+    }
+
+    private void applyOrClear(Object contextSnapshot) {
+        if (contextSnapshot instanceof TrafficContext context) {
             TrafficContextHolder.setContext(context);
         } else {
             TrafficContextHolder.clear();

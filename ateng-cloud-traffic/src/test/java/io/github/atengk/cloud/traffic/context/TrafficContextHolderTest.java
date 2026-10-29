@@ -98,6 +98,49 @@ class TrafficContextHolderTest {
     }
 
     @Test
+    @DisplayName("测试 MDC 兜底对齐时保留既有泳道元数据")
+    void testMdcFallbackPreservesExistingMetadata() {
+        // 初始注入包含泳道与元数据的 Context（此时无 tag）
+        TrafficContext initialContext = new TrafficContext(null, "payment-lane", "rule-pay", Map.of("region", "cn-hangzhou"));
+        // 模拟直接设置底层 TTL
+        TrafficContextHolder.setContext(initialContext); // tag 为空，此时 setContext 会执行 clear
+        // 若手动放入无 tag 的 Context 快照
+        TrafficContextHolder.runWithContext(null, () -> {
+            MDC.put(TrafficConstants.MDC_TRAFFIC_TAG, "fallback-tag");
+            TrafficContext aligned = TrafficContextHolder.getContext();
+            assertThat(aligned).isNotNull();
+            assertThat(aligned.getTag()).isEqualTo("fallback-tag");
+        });
+    }
+
+    @Test
+    @DisplayName("测试 runWithContext 完整上下文作用域与自动恢复")
+    void testRunWithContext() {
+        TrafficContext original = new TrafficContext("base-tag", "base-lane", "rule-base", Map.of("key", "val1"));
+        TrafficContextHolder.setContext(original);
+
+        TrafficContext scoped = new TrafficContext("scoped-tag", "scoped-lane", "rule-scoped", Map.of("key", "val2"));
+        TrafficContextHolder.runWithContext(scoped, () -> {
+            assertThat(TrafficContextHolder.getContext()).isEqualTo(scoped);
+            assertThat(TrafficContextHolder.getTag()).isEqualTo("scoped-tag");
+            assertThat(MDC.get(TrafficConstants.MDC_TRAFFIC_TAG)).isEqualTo("scoped-tag");
+        });
+
+        // 作用域退出后恢复
+        assertThat(TrafficContextHolder.getContext()).isEqualTo(original);
+        assertThat(TrafficContextHolder.getTag()).isEqualTo("base-tag");
+        assertThat(MDC.get(TrafficConstants.MDC_TRAFFIC_TAG)).isEqualTo("base-tag");
+
+        // 带返回值
+        String res = TrafficContextHolder.runWithContext(scoped, () -> {
+            assertThat(TrafficContextHolder.getContext().getLaneName()).isEqualTo("scoped-lane");
+            return "OK";
+        });
+        assertThat(res).isEqualTo("OK");
+        assertThat(TrafficContextHolder.getContext()).isEqualTo(original);
+    }
+
+    @Test
     @DisplayName("测试 runWithTag 临时作用域与自动恢复")
     void testRunWithTag() {
         TrafficContextHolder.setTag("original-tag");

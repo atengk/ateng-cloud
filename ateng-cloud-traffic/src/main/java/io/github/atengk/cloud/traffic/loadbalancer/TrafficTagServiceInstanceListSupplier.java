@@ -28,7 +28,7 @@ import java.util.Map;
  * 2. 精准匹配服务实例元数据中的灰度标签（{@code metadata.tag}）；
  * 3. 携带灰度标签流量严格调度至对应灰度节点，未染色流量调度至基线默认实例；
  * 4. 容灾平滑降级：在 {@code fallbackToDefault=true} 下，当目标灰度节点全下线或不存在时自动降级至基线默认实例；
- * 5. 金融级强隔离：在 {@code strictLane=true} 下，未命中目标灰度节点时直接阻断返回空列表（Fail-Fast）。</p>
+ * 5. 金融级强隔离：在 {@code strictLane=true} 下，未命中目标灰度节点时直接阻断抛出 {@link TrafficRoutingException} (Fail-Fast)。</p>
  *
  * @author Ateng
  * @since 2026-10-29
@@ -65,16 +65,23 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
      * @return 过滤或降级后的可用服务实例列表
      */
     public List<ServiceInstance> filterByTag(List<ServiceInstance> instances, String tag) {
+        // 1. 若配置关闭了流量灰度治理，直接放行全量可用实例
+        if (!properties.isEnabled()) {
+            return instances != null ? instances : Collections.emptyList();
+        }
+
+        // 2. 若下游全量可用实例列表为空
         if (instances == null || instances.isEmpty()) {
+            if (StringUtils.hasText(tag) && properties.isStrictLane()) {
+                String trimmedTag = tag.trim();
+                log.warn("[TrafficLoadBalancer] 目标服务无可用实例且开启严格隔离模式，直接阻断抛出异常 [serviceId={}, tag={}]",
+                        getServiceId(), trimmedTag);
+                throw new TrafficRoutingException(getServiceId(), trimmedTag);
+            }
             return Collections.emptyList();
         }
 
-        // 1. 若配置关闭了流量灰度治理，直接放行全量可用实例
-        if (!properties.isEnabled()) {
-            return instances;
-        }
-
-        // 2. 若请求携带了灰度染色标签
+        // 3. 若请求携带了灰度染色标签
         if (StringUtils.hasText(tag)) {
             String trimmedTag = tag.trim();
             List<ServiceInstance> taggedInstances = instances.stream()
@@ -107,7 +114,7 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
             }
         }
 
-        // 3. 未携带灰度标签的普通基线流量，优先路由至基线实例
+        // 4. 未携带灰度标签的普通基线流量，优先路由至基线实例
         return filterBaselineInstances(instances);
     }
 
@@ -142,7 +149,7 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
         String tag = extractInstanceTag(instance);
         return !StringUtils.hasText(tag)
                 || TrafficConstants.DEFAULT_TAG.equalsIgnoreCase(tag)
-                || "baseline".equalsIgnoreCase(tag);
+                || TrafficConstants.TAG_BASELINE.equalsIgnoreCase(tag);
     }
 
     /**
@@ -155,13 +162,13 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
         Map<String, String> meta = instance.getMetadata();
         String tag = meta.get(TrafficConstants.METADATA_TAG);
         if (!StringUtils.hasText(tag)) {
-            tag = meta.get("traffic-tag");
+            tag = meta.get(TrafficConstants.METADATA_TAG_HYPHEN);
         }
         if (!StringUtils.hasText(tag)) {
-            tag = meta.get("traffic.tag");
+            tag = meta.get(TrafficConstants.METADATA_TAG_DOT);
         }
         if (!StringUtils.hasText(tag)) {
-            tag = meta.get("gray");
+            tag = meta.get(TrafficConstants.METADATA_GRAY);
         }
         return tag != null ? tag.trim() : null;
     }
@@ -183,22 +190,9 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
                 return s.trim();
             }
             if (context instanceof RequestDataContext dataContext) {
-                RequestData clientRequest = dataContext.getClientRequest();
-                if (clientRequest != null) {
-                    if (clientRequest.getHeaders() != null) {
-                        String headerName = StringUtils.hasText(properties.getHeaderName())
-                                ? properties.getHeaderName() : TrafficConstants.HEADER_TRAFFIC_TAG;
-                        String headerTag = clientRequest.getHeaders().getFirst(headerName);
-                        if (StringUtils.hasText(headerTag)) {
-                            return headerTag.trim();
-                        }
-                    }
-                    if (clientRequest.getAttributes() != null) {
-                        Object attrTag = clientRequest.getAttributes().get(TrafficConstants.HEADER_TRAFFIC_TAG);
-                        if (attrTag instanceof String s && StringUtils.hasText(s)) {
-                            return s.trim();
-                        }
-                    }
+                String extractedTag = extractTagFromRequestData(dataContext.getClientRequest());
+                if (StringUtils.hasText(extractedTag)) {
+                    return extractedTag;
                 }
             }
         }
@@ -209,6 +203,30 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
             return mdcTag.trim();
         }
 
+        return null;
+    }
+
+    /**
+     * 从 RequestData 中安全解包提取流量染色标头或属性
+     */
+    private String extractTagFromRequestData(RequestData clientRequest) {
+        if (clientRequest == null) {
+            return null;
+        }
+        if (clientRequest.getHeaders() != null) {
+            String headerName = StringUtils.hasText(properties.getHeaderName())
+                    ? properties.getHeaderName() : TrafficConstants.HEADER_TRAFFIC_TAG;
+            String headerTag = clientRequest.getHeaders().getFirst(headerName);
+            if (StringUtils.hasText(headerTag)) {
+                return headerTag.trim();
+            }
+        }
+        if (clientRequest.getAttributes() != null) {
+            Object attrTag = clientRequest.getAttributes().get(TrafficConstants.HEADER_TRAFFIC_TAG);
+            if (attrTag instanceof String s && StringUtils.hasText(s)) {
+                return s.trim();
+            }
+        }
         return null;
     }
 }

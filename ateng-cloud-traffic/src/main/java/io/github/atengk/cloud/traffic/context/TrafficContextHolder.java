@@ -68,7 +68,13 @@ public final class TrafficContextHolder {
         // MDC 兜底对齐
         String mdcTag = MDC.get(TrafficConstants.MDC_TRAFFIC_TAG);
         if (StringUtils.hasText(mdcTag)) {
-            TrafficContext fallbackContext = TrafficContext.of(mdcTag);
+            String trimmedTag = mdcTag.trim();
+            TrafficContext fallbackContext;
+            if (context != null) {
+                fallbackContext = new TrafficContext(trimmedTag, context.getLaneName(), context.getMatchedRule(), context.getMetadata());
+            } else {
+                fallbackContext = TrafficContext.of(trimmedTag);
+            }
             CONTEXT_HOLDER.set(fallbackContext);
             return fallbackContext;
         }
@@ -101,17 +107,32 @@ public final class TrafficContextHolder {
     }
 
     /**
-     * 在指定的流量标签作用域下安全执行代码块，执行完毕后自动恢复先前的上下文
+     * 在指定的流量上下文作用域下安全执行代码块，执行完毕后自动恢复先前的上下文
      *
-     * @param tag      作用域生效的流量标签
+     * @param context  作用域生效的完整流量上下文
      * @param runnable 执行任务
      */
-    public static void runWithTag(String tag, Runnable runnable) {
+    public static void runWithContext(TrafficContext context, Runnable runnable) {
+        runWithContext(context, () -> {
+            runnable.run();
+            return null;
+        });
+    }
+
+    /**
+     * 在指定的流量上下文作用域下安全执行带返回值的函数，执行完毕后自动恢复先前的上下文
+     *
+     * @param context  作用域生效的完整流量上下文
+     * @param supplier 执行函数
+     * @param <T>      返回值类型
+     * @return 函数返回值
+     */
+    public static <T> T runWithContext(TrafficContext context, Supplier<T> supplier) {
         TrafficContext previous = CONTEXT_HOLDER.get();
         String previousMdc = MDC.get(TrafficConstants.MDC_TRAFFIC_TAG);
         try {
-            setTag(tag);
-            runnable.run();
+            setContext(context);
+            return supplier.get();
         } finally {
             if (previous != null) {
                 setContext(previous);
@@ -125,6 +146,16 @@ public final class TrafficContextHolder {
     }
 
     /**
+     * 在指定的流量标签作用域下安全执行代码块，执行完毕后自动恢复先前的上下文
+     *
+     * @param tag      作用域生效的流量标签
+     * @param runnable 执行任务
+     */
+    public static void runWithTag(String tag, Runnable runnable) {
+        runWithContext(StringUtils.hasText(tag) ? TrafficContext.of(tag.trim()) : null, runnable);
+    }
+
+    /**
      * 在指定的流量标签作用域下安全执行带返回值的函数，执行完毕后自动恢复先前的上下文
      *
      * @param tag      作用域生效的流量标签
@@ -133,20 +164,6 @@ public final class TrafficContextHolder {
      * @return 函数返回值
      */
     public static <T> T runWithTag(String tag, Supplier<T> supplier) {
-        TrafficContext previous = CONTEXT_HOLDER.get();
-        String previousMdc = MDC.get(TrafficConstants.MDC_TRAFFIC_TAG);
-        try {
-            setTag(tag);
-            return supplier.get();
-        } finally {
-            if (previous != null) {
-                setContext(previous);
-            } else {
-                clear();
-            }
-            if (previousMdc != null) {
-                MDC.put(TrafficConstants.MDC_TRAFFIC_TAG, previousMdc);
-            }
-        }
+        return runWithContext(StringUtils.hasText(tag) ? TrafficContext.of(tag.trim()) : null, supplier);
     }
 }

@@ -32,9 +32,29 @@ public final class TrafficConstants {
     public static final String METADATA_TAG = "tag";
 
     /**
+     * 兼容性服务实例元数据灰度标签键名：连字符格式
+     */
+    public static final String METADATA_TAG_HYPHEN = "traffic-tag";
+
+    /**
+     * 兼容性服务实例元数据灰度标签键名：点分格式
+     */
+    public static final String METADATA_TAG_DOT = "traffic.tag";
+
+    /**
+     * 兼容性服务实例元数据灰度标签键名：简写格式
+     */
+    public static final String METADATA_GRAY = "gray";
+
+    /**
      * 默认基线稳定泳道标签
      */
     public static final String DEFAULT_TAG = "default";
+
+    /**
+     * 兼容性基线稳定泳道别名
+     */
+    public static final String TAG_BASELINE = "baseline";
 
     /**
      * 配置属性前缀

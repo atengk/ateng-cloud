@@ -64,16 +64,7 @@ public class TrafficPredicateMatcher {
      * 精确匹配
      */
     private boolean matchExact(TrafficCondition condition, String actualValue) {
-        String expected = condition.getExpectedValue();
-        if (actualValue == null) {
-            return expected == null;
-        }
-        if (expected == null) {
-            return false;
-        }
-        return condition.isCaseSensitive()
-                ? actualValue.equals(expected)
-                : actualValue.equalsIgnoreCase(expected);
+        return equalsString(actualValue, condition.getExpectedValue(), condition.isCaseSensitive());
     }
 
     /**
@@ -90,7 +81,7 @@ public class TrafficPredicateMatcher {
         // 1. 优先匹配 expectedValues 集合
         if (expectedValues != null && !expectedValues.isEmpty()) {
             for (String expected : expectedValues) {
-                if (expected != null && (caseSensitive ? actualValue.equals(expected) : actualValue.equalsIgnoreCase(expected))) {
+                if (equalsString(actualValue, expected, caseSensitive)) {
                     return true;
                 }
             }
@@ -101,14 +92,26 @@ public class TrafficPredicateMatcher {
         if (expectedValue != null && !expectedValue.isBlank()) {
             String[] split = expectedValue.split(",");
             for (String item : split) {
-                String trimmed = item.trim();
-                if (caseSensitive ? actualValue.equals(trimmed) : actualValue.equalsIgnoreCase(trimmed)) {
+                if (equalsString(actualValue, item.trim(), caseSensitive)) {
                     return true;
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * 辅助字符串判等，依据 caseSensitive 执行区分大小写或忽略大小写比较
+     */
+    private boolean equalsString(String actual, String expected, boolean caseSensitive) {
+        if (actual == null) {
+            return expected == null;
+        }
+        if (expected == null) {
+            return false;
+        }
+        return caseSensitive ? actual.equals(expected) : actual.equalsIgnoreCase(expected);
     }
 
     /**

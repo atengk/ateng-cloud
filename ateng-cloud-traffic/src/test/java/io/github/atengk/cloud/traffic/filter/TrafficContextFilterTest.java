@@ -196,6 +196,37 @@ class TrafficContextFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         AtomicReference<String> tagInsideChain = new AtomicReference<>();
+        AtomicReference<String> ruleInsideChain = new AtomicReference<>();
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+                if (TrafficContextHolder.getContext() != null) {
+                    ruleInsideChain.set(TrafficContextHolder.getContext().getMatchedRule());
+                }
+            }
+        };
+
+        filterWithRules.doFilter(request, response, filterChain);
+
+        assertThat(tagInsideChain.get()).isEqualTo("canary-ios");
+        assertThat(ruleInsideChain.get()).isEqualTo("rule-device-ios");
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试禁用状态下主动清理工作线程残留的脏上下文")
+    void testDisabledFilterCleansResidualContext() throws ServletException, IOException {
+        properties.setEnabled(false);
+        filter = new TrafficContextFilter(properties);
+
+        // 模拟前序请求遗留的脏上下文
+        TrafficContextHolder.setTag("dirty-residual-tag");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>("initial");
         MockFilterChain filterChain = new MockFilterChain() {
             @Override
             public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
@@ -203,9 +234,34 @@ class TrafficContextFilterTest {
             }
         };
 
-        filterWithRules.doFilter(request, response, filterChain);
+        filter.doFilter(request, response, filterChain);
 
-        assertThat(tagInsideChain.get()).isEqualTo("canary-ios");
+        // 链条内部与执行完毕后均应当已被清理为 null
+        assertThat(tagInsideChain.get()).isNull();
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试未染色普通请求主动清理线程残留的脏上下文")
+    void testUnstainedRequestClearsResidualContext() throws ServletException, IOException {
+        // 模拟工作线程复用带来的脏上下文
+        TrafficContextHolder.setTag("stale-worker-tag");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>("initial");
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        // 链条内部与退出时均被清除
+        assertThat(tagInsideChain.get()).isNull();
         assertThat(TrafficContextHolder.getTag()).isNull();
     }
 

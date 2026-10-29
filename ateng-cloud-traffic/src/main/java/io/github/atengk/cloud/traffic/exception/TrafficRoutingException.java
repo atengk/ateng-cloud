@@ -18,14 +18,23 @@ public class TrafficRoutingException extends BusinessException {
     private final String tag;
 
     public TrafficRoutingException(String serviceId, String tag) {
+        this(serviceId, tag, null);
+    }
+
+    public TrafficRoutingException(String serviceId, String tag, Throwable cause) {
         super(TrafficResultCode.STRICT_LANE_BLOCK,
-                String.format("严格泳道隔离阻断: 目标服务 '%s' 无匹配灰度标签 '%s' 的可用实例 (strict-lane enabled)", serviceId, tag));
+                String.format("严格泳道隔离阻断: 目标服务 '%s' 无匹配灰度标签 '%s' 的可用实例 (strict-lane enabled)", serviceId, tag),
+                cause);
         this.serviceId = serviceId;
         this.tag = tag;
     }
 
     public TrafficRoutingException(IResultCode resultCode, String serviceId, String tag, String message) {
-        super(resultCode, message);
+        this(resultCode, serviceId, tag, message, null);
+    }
+
+    public TrafficRoutingException(IResultCode resultCode, String serviceId, String tag, String message, Throwable cause) {
+        super(resultCode, message, cause);
         this.serviceId = serviceId;
         this.tag = tag;
     }

@@ -16,7 +16,8 @@ import java.util.Map;
  * <p>核心治理语义：
  * 1. 预设 {@code spring.cloud.loadbalancer.cache.ttl=3s}（从原生 35 秒收敛至 3 秒，消除灰度切流时的实例缓存盲区）；
  * 2. 预设 {@code ateng.cloud.nacos.loadbalancer.client-supplier-enabled=false}，将客户端子上下文完全交付三层复合责任链接管；
- * 3. 挂载至最低优先级，确保业务在 {@code application.yml} 中的显式声明拥有最高优先级并平滑生效。</p>
+ * 3. 挂载至最低优先级，确保业务在 {@code application.yml} 中的显式声明拥有最高优先级并平滑生效；
+ * 4. 采用 {@code EnvironmentPostProcessor.imports} 与 {@code spring.factories} 双通道注册，防御测试框架与子上下文兼容性。</p>
  *
  * @author Ateng
  * @since 2026-10-29

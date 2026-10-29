@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.sample.traffic;
 
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.core.util.JsonUtil;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.sample.traffic.model.TrafficTraceReport;
@@ -27,6 +28,7 @@ import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -85,6 +87,19 @@ class SampleCloudTrafficIntegrationTest {
     @Autowired(required = false)
     private NacosTrafficRuleListener nacosRuleListener;
 
+    private static final ParameterizedTypeReference<Result<TrafficTraceReport>> RESULT_TYPE_REF =
+            new ParameterizedTypeReference<>() {};
+
+    private TrafficTraceReport extractReport(ResponseEntity<Result<TrafficTraceReport>> response) {
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Result<TrafficTraceReport> result = response.getBody();
+        assertThat(result).isNotNull();
+        assertThat(result.isSuccess()).isTrue();
+        TrafficTraceReport report = result.getData();
+        assertThat(report).isNotNull();
+        return report;
+    }
+
     @BeforeEach
     void setUp() {
         TrafficContextHolder.clear();
@@ -129,14 +144,14 @@ class SampleCloudTrafficIntegrationTest {
     @Test
     @DisplayName("场景 1: 未染色普通请求全链路调度至基线实例")
     void testBaselineRouting() {
-        ResponseEntity<TrafficTraceReport> response = restTemplate.getForEntity(
+        ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
-                TrafficTraceReport.class
+                HttpMethod.GET,
+                null,
+                RESULT_TYPE_REF
         );
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        TrafficTraceReport report = response.getBody();
-        assertThat(report).isNotNull();
+        TrafficTraceReport report = extractReport(response);
         assertThat(report.getTrafficTag()).isNull();
 
         // 验证全链路均路由到 default 基线节点
@@ -155,16 +170,14 @@ class SampleCloudTrafficIntegrationTest {
         headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-        ResponseEntity<TrafficTraceReport> response = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 entity,
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        TrafficTraceReport report = response.getBody();
-        assertThat(report).isNotNull();
+        TrafficTraceReport report = extractReport(response);
         assertThat(report.getTrafficTag()).isEqualTo("v2");
 
         // 核心断言：
@@ -182,14 +195,14 @@ class SampleCloudTrafficIntegrationTest {
     @Test
     @DisplayName("场景 3: URL Query 参数 traffic_tag 染色透传")
     void testQueryParamStaining() {
-        ResponseEntity<TrafficTraceReport> response = restTemplate.getForEntity(
+        ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch?traffic_tag=v2",
-                TrafficTraceReport.class
+                HttpMethod.GET,
+                null,
+                RESULT_TYPE_REF
         );
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        TrafficTraceReport report = response.getBody();
-        assertThat(report).isNotNull();
+        TrafficTraceReport report = extractReport(response);
         assertThat(report.getTrafficTag()).isEqualTo("v2");
 
         assertThat(report.getVisitedNodes()).containsExactly(
@@ -224,16 +237,14 @@ class SampleCloudTrafficIntegrationTest {
         // 1. VIP 用户发起请求 (无 X-Traffic-Tag 标头)
         HttpHeaders vipHeaders = new HttpHeaders();
         vipHeaders.set("X-User-Id", "vip_canary_001");
-        ResponseEntity<TrafficTraceReport> vipResponse = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> vipResponse = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 new HttpEntity<>(vipHeaders),
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
 
-        assertThat(vipResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-        TrafficTraceReport vipReport = vipResponse.getBody();
-        assertThat(vipReport).isNotNull();
+        TrafficTraceReport vipReport = extractReport(vipResponse);
         assertThat(vipReport.getTrafficTag()).isEqualTo("v2");
         assertThat(vipReport.getVisitedNodes()).contains(
                 "ServiceA[inst=inst-a-gray, tag=v2]",
@@ -243,16 +254,14 @@ class SampleCloudTrafficIntegrationTest {
         // 2. 普通用户发起请求
         HttpHeaders normalHeaders = new HttpHeaders();
         normalHeaders.set("X-User-Id", "normal_user_888");
-        ResponseEntity<TrafficTraceReport> normalResponse = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> normalResponse = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 new HttpEntity<>(normalHeaders),
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
 
-        assertThat(normalResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-        TrafficTraceReport normalReport = normalResponse.getBody();
-        assertThat(normalReport).isNotNull();
+        TrafficTraceReport normalReport = extractReport(normalResponse);
         assertThat(normalReport.getTrafficTag()).isNull();
         assertThat(normalReport.getVisitedNodes()).contains(
                 "ServiceA[inst=inst-a-base, tag=default]",
@@ -284,15 +293,13 @@ class SampleCloudTrafficIntegrationTest {
 
         String firstObservedTag = null;
         for (int i = 0; i < 5; i++) {
-            ResponseEntity<TrafficTraceReport> response = restTemplate.exchange(
+            ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
                     "http://localhost:" + port + "/gateway/dispatch",
                     HttpMethod.GET,
                     entity,
-                    TrafficTraceReport.class
+                    RESULT_TYPE_REF
             );
-            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-            TrafficTraceReport report = response.getBody();
-            assertThat(report).isNotNull();
+            TrafficTraceReport report = extractReport(response);
 
             if (firstObservedTag == null) {
                 firstObservedTag = report.getTrafficTag() != null ? report.getTrafficTag() : "baseline";
@@ -314,17 +321,15 @@ class SampleCloudTrafficIntegrationTest {
         headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-        ResponseEntity<TrafficTraceReport> response = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 entity,
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
 
         // 强断言：Service A 灰度实例全下线时，必须平滑回退至基线，返回 200 OK，绝不抛出 503 报警
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        TrafficTraceReport report = response.getBody();
-        assertThat(report).isNotNull();
+        TrafficTraceReport report = extractReport(response);
         assertThat(report.getVisitedNodes()).contains(
                 "ServiceA[inst=inst-a-base, tag=default]"
         );
@@ -348,7 +353,10 @@ class SampleCloudTrafficIntegrationTest {
         );
 
         // 强断言：严格隔离模式下未命中灰度实例，直接触发 Fail-Fast (阻断调度并由全局异常拦截返回 STRICT_LANE_BLOCK 4210 业务错误)，严禁脏写基线
-        assertThat(response.getStatusCode().isError() || (response.getBody() != null && response.getBody().contains("4210"))).isTrue();
+        assertThat(response.getStatusCode().value()).isIn(200, 503);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody()).contains("4210");
+        assertThat(response.getBody()).contains("严格泳道隔离阻断");
     }
 
     @Test
@@ -363,13 +371,14 @@ class SampleCloudTrafficIntegrationTest {
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
         // 1. 未配置热更规则前，请求走基线
-        ResponseEntity<TrafficTraceReport> resp1 = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> resp1 = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 entity,
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
-        assertThat(resp1.getBody().getTrafficTag()).isNull();
+        TrafficTraceReport report1 = extractReport(resp1);
+        assertThat(report1.getTrafficTag()).isNull();
 
         // 2. 模拟 Nacos 推送新规则：X-Hot-Channel == wechat ➔ 染色为 v2
         TrafficRule hotRule = TrafficRule.builder()
@@ -386,27 +395,29 @@ class SampleCloudTrafficIntegrationTest {
         nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(hotRule)));
 
         // 3. 再次发起相同请求，无需重启秒级即时生效命中 v2
-        ResponseEntity<TrafficTraceReport> resp2 = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> resp2 = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 entity,
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
-        assertThat(resp2.getBody().getTrafficTag()).isEqualTo("v2");
-        assertThat(resp2.getBody().getVisitedNodes()).contains(
+        TrafficTraceReport report2 = extractReport(resp2);
+        assertThat(report2.getTrafficTag()).isEqualTo("v2");
+        assertThat(report2.getVisitedNodes()).contains(
                 "ServiceA[inst=inst-a-gray, tag=v2]",
                 "ServiceC[inst=inst-c-gray, tag=v2]"
         );
 
         // 4. 清除规则，秒级回退
         nacosRuleListener.receiveAppConfig("[]");
-        ResponseEntity<TrafficTraceReport> resp3 = restTemplate.exchange(
+        ResponseEntity<Result<TrafficTraceReport>> resp3 = restTemplate.exchange(
                 "http://localhost:" + port + "/gateway/dispatch",
                 HttpMethod.GET,
                 entity,
-                TrafficTraceReport.class
+                RESULT_TYPE_REF
         );
-        assertThat(resp3.getBody().getTrafficTag()).isNull();
+        TrafficTraceReport report3 = extractReport(resp3);
+        assertThat(report3.getTrafficTag()).isNull();
     }
 
     /**

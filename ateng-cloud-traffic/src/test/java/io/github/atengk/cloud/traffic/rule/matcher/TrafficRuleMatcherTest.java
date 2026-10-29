@@ -247,4 +247,16 @@ class TrafficRuleMatcherTest {
         TrafficEvaluationContext context = SimpleTrafficEvaluationContext.builder().build();
         assertThat(matcher.matches(rule, context)).isTrue();
     }
+
+    @Test
+    @DisplayName("提取字段值与哈希键时的防卫性判空测试")
+    void testExtractFieldValueAndHashKeyNullDefenses() {
+        // context 为 null 时安全返回 null 杜绝 NPE
+        assertThat(matcher.extractFieldValue(TrafficFieldSource.HEADER, "X-Tag", null)).isNull();
+        assertThat(matcher.extractFieldValue(null, null, null)).isNull();
+
+        TrafficRule rule = TrafficRule.builder().id("r1").build();
+        assertThat(matcher.extractHashKey(rule, null)).isNull();
+        assertThat(matcher.extractHashKey(null, SimpleTrafficEvaluationContext.builder().build())).isNull();
+    }
 }

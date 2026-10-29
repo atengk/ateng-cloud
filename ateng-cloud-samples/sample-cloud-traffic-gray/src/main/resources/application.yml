@@ -4,6 +4,9 @@ server:
 spring:
   application:
     name: sample-cloud-traffic-gray
+  config:
+    import:
+      - optional:classpath:application-local.yml
   cloud:
     nacos:
       discovery:

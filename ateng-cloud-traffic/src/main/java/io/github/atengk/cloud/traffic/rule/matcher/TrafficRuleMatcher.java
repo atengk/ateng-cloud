@@ -194,6 +194,9 @@ public class TrafficRuleMatcher {
      * @return 实际值
      */
     public String extractFieldValue(TrafficFieldSource source, String fieldName, TrafficEvaluationContext context) {
+        if (context == null) {
+            return null;
+        }
         if (source == null) {
             source = TrafficFieldSource.HEADER;
         }
@@ -216,6 +219,9 @@ public class TrafficRuleMatcher {
      * @return 哈希种子键
      */
     public String extractHashKey(TrafficRule rule, TrafficEvaluationContext context) {
+        if (rule == null || context == null) {
+            return null;
+        }
         TrafficFieldSource source = rule.getHashKeySource();
         if (source == null) {
             source = TrafficFieldSource.USER_ID;

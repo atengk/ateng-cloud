@@ -41,4 +41,26 @@ class TrafficRoutingExceptionTest {
         assertThat(ex.getTag()).isEqualTo("beta");
         assertThat(ex.getMessage()).isEqualTo("自定义路由失败说明");
     }
+
+    @Test
+    @DisplayName("测试因果异常链传递构造")
+    void testCausalExceptionCreation() {
+        RuntimeException rootCause = new RuntimeException("connection timeout to registry");
+        TrafficRoutingException ex = new TrafficRoutingException("inventory-service", "canary-v3", rootCause);
+
+        assertThat(ex.getCode()).isEqualTo(TrafficResultCode.STRICT_LANE_BLOCK.getCode());
+        assertThat(ex.getServiceId()).isEqualTo("inventory-service");
+        assertThat(ex.getTag()).isEqualTo("canary-v3");
+        assertThat(ex.getCause()).isSameAs(rootCause);
+
+        TrafficRoutingException customEx = new TrafficRoutingException(
+                TrafficResultCode.TRAFFIC_ROUTING_ERROR,
+                "inventory-service",
+                "canary-v3",
+                "自定义因果异常",
+                rootCause
+        );
+        assertThat(customEx.getCode()).isEqualTo(TrafficResultCode.TRAFFIC_ROUTING_ERROR.getCode());
+        assertThat(customEx.getCause()).isSameAs(rootCause);
+    }
 }

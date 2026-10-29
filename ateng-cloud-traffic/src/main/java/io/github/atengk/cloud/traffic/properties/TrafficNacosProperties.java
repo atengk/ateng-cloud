@@ -1,5 +1,7 @@
 package io.github.atengk.cloud.traffic.properties;
 
+import io.github.atengk.cloud.traffic.rule.model.TrafficRuleMergeStrategy;
+
 import java.io.Serializable;
 
 /**
@@ -40,7 +42,7 @@ public class TrafficNacosProperties implements Serializable {
     /**
      * 规则合并策略: OVERWRITE (应用规则覆盖全局规则), MERGE (应用规则与全局规则合并按优先级排序)
      */
-    private String mergeStrategy = "OVERWRITE";
+    private TrafficRuleMergeStrategy mergeStrategy = TrafficRuleMergeStrategy.OVERWRITE;
 
     public boolean isEnabled() {
         return enabled;
@@ -82,11 +84,15 @@ public class TrafficNacosProperties implements Serializable {
         this.preferAppRule = preferAppRule;
     }
 
-    public String getMergeStrategy() {
+    public TrafficRuleMergeStrategy getMergeStrategy() {
         return mergeStrategy;
     }
 
+    public void setMergeStrategy(TrafficRuleMergeStrategy mergeStrategy) {
+        this.mergeStrategy = mergeStrategy != null ? mergeStrategy : TrafficRuleMergeStrategy.OVERWRITE;
+    }
+
     public void setMergeStrategy(String mergeStrategy) {
-        this.mergeStrategy = mergeStrategy;
+        this.mergeStrategy = TrafficRuleMergeStrategy.fromString(mergeStrategy);
     }
 }

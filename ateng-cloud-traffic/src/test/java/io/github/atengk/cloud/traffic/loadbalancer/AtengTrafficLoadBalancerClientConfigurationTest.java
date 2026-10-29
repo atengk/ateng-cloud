@@ -51,6 +51,15 @@ class AtengTrafficLoadBalancerClientConfigurationTest {
         });
     }
 
+    @Test
+    @DisplayName("测试客户端子上下文从环境或配置属性正确读取自定义缓存 TTL")
+    void testCustomCacheTtlBinding() {
+        contextRunner.withPropertyValues("ateng.cloud.traffic.cache-ttl=10s").run(context -> {
+            LoadBalancerCacheProperties cacheProps = context.getBean(LoadBalancerCacheProperties.class);
+            assertThat(cacheProps.getTtl()).isEqualTo(Duration.ofSeconds(10));
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestDiscoveryConfig {
 

@@ -7,6 +7,7 @@ import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.properties.TrafficNacosProperties;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
+import io.github.atengk.cloud.traffic.rule.model.TrafficRuleMergeStrategy;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -225,13 +226,15 @@ public class NacosTrafficRuleListener implements TrafficRuleProvider, Initializi
     private void recomputeActiveRules() {
         TrafficNacosProperties nacosProps = properties.getNacos();
         boolean preferAppRule = nacosProps == null || nacosProps.isPreferAppRule();
-        String mergeStrategy = nacosProps != null ? nacosProps.getMergeStrategy() : "OVERWRITE";
+        TrafficRuleMergeStrategy mergeStrategy = nacosProps != null && nacosProps.getMergeStrategy() != null
+                ? nacosProps.getMergeStrategy()
+                : TrafficRuleMergeStrategy.OVERWRITE;
 
         List<TrafficRule> currentAppRules = appRules.get();
         List<TrafficRule> currentGlobalRules = globalRules.get();
 
         List<TrafficRule> merged;
-        if ("MERGE".equalsIgnoreCase(mergeStrategy)) {
+        if (mergeStrategy == TrafficRuleMergeStrategy.MERGE) {
             // 合并应用规则与全局规则并按优先级升序排序
             List<TrafficRule> combined = new ArrayList<>(currentAppRules.size() + currentGlobalRules.size());
             combined.addAll(currentAppRules);

@@ -5,6 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.core.Ordered;
 
+import java.time.Duration;
+
 /**
  * 全链路流量治理与金丝雀灰度配置属性
  *
@@ -48,6 +50,11 @@ public class AtengTrafficProperties {
      * 入站流量染色过滤器执行顺序 (默认最高优先级后移 50，位于链路追踪 Filter 之后)
      */
     private int filterOrder = Ordered.HIGHEST_PRECEDENCE + 50;
+
+    /**
+     * 客户端负载均衡本地服务实例缓存时效 (默认 3 秒，收敛 Spring 默认 35 秒盲区)
+     */
+    private Duration cacheTtl = Duration.ofSeconds(3);
 
     /**
      * Nacos 动态流量规则分级监听配置
@@ -109,6 +116,14 @@ public class AtengTrafficProperties {
 
     public void setFilterOrder(int filterOrder) {
         this.filterOrder = filterOrder;
+    }
+
+    public Duration getCacheTtl() {
+        return cacheTtl;
+    }
+
+    public void setCacheTtl(Duration cacheTtl) {
+        this.cacheTtl = cacheTtl;
     }
 
     public TrafficNacosProperties getNacos() {

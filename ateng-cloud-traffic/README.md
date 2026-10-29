@@ -44,12 +44,13 @@
 | `ateng.cloud.traffic.strict-lane` | `boolean` | `false` | 是否开启金融级严格隔离模式（未命中灰度实例直接阻断抛出 4210 异常） |
 | `ateng.cloud.traffic.lane-continuity` | `boolean` | `true` | 是否开启跨跳泳道穿透保持语义（中间节点降级后，下游节点依然优先重回灰度泳道） |
 | `ateng.cloud.traffic.filter-order` | `int` | `HIGHEST_PRECEDENCE + 50` | 入站流量染色过滤器执行顺序（位于链路追踪 Filter 之后） |
-| `ateng.cloud.traffic.cache-ttl` | `String` | `"3s"` | 客户端负载均衡本地实例缓存收敛时效（消除灰度切流时的盲区） |
+| `ateng.cloud.traffic.cache-ttl` | `Duration` | `3s` | 客户端负载均衡本地实例缓存收敛时效（消除灰度切流时的盲区） |
 | `ateng.cloud.traffic.nacos.enabled` | `boolean` | `true` | 是否启用 Nacos 动态流量分流规则监听 |
 | `ateng.cloud.traffic.nacos.group` | `String` | `"DEFAULT_GROUP"` | Nacos 动态规则配置分组 GroupId |
 | `ateng.cloud.traffic.nacos.global-data-id` | `String` | `"traffic-rules.json"` | 全局公共流量分流规则 DataId |
 | `ateng.cloud.traffic.nacos.app-data-id` | `String` | `null` | 应用专属流量分流规则 DataId（缺省时平滑回退至 `${spring.application.name}-traffic-rules.json`） |
-| `ateng.cloud.traffic.nacos.prefer-app-rule` | `boolean` | `true` | 当应用规则与全局规则并存时的冲突合并策略（true 为 OVERWRITE 优先覆盖，false 为 MERGE 合并） |
+| `ateng.cloud.traffic.nacos.prefer-app-rule` | `boolean` | `true` | 是否优先加载应用专属规则（true 时若专属规则存在则优先应用，缺省时平滑回退至全局规则） |
+| `ateng.cloud.traffic.nacos.merge-strategy` | `TrafficRuleMergeStrategy` | `OVERWRITE` | 规则合并策略: OVERWRITE (应用规则覆盖全局规则), MERGE (应用规则与全局规则合并按优先级排序) |
 
 ---
 
@@ -151,6 +152,7 @@ package io.github.atengk.cloud.sample.traffic.controller;
 
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.traffic.model.TrafficTraceReport;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import org.slf4j.Logger;
@@ -175,37 +177,30 @@ public class SampleTrafficController {
      * 网关调度入口：接收外部入站请求，自动提取标签并调度至下游 Service A
      */
     @GetMapping("/gateway/dispatch")
-    public TrafficTraceReport gatewayDispatch(
-            @RequestHeader(value = "X-Target-Instance", required = false) String targetInstanceHeader) {
+    public Result<TrafficTraceReport> gatewayDispatch() {
         String currentTag = TrafficContextHolder.getTag();
         log.info("[Gateway] 收到请求 [tag='{}']", currentTag);
 
         // 调用下游 Service A (出站自动透传 X-Traffic-Tag)
-        TrafficTraceReport report = restTemplate.getForObject("http://service-a/service-a/process", TrafficTraceReport.class);
-        if (report == null) {
-            report = new TrafficTraceReport(currentTag, UserContextHolder.getUserId(), TenantContextHolder.getTenantId());
-        }
-        report.getVisitedNodes().add(0, "Gateway[tag=" + (currentTag != null ? currentTag : "none") + "]");
-        return report;
+        TrafficTraceReport report = invokeDownstream("http://service-a/service-a/process", currentTag);
+        report.prependVisitedNode("Gateway[tag=" + (currentTag != null ? currentTag : "none") + "]");
+        return Result.success(report);
     }
 
     /**
      * Service A 业务节点：处理业务并调用 Service B
      */
     @GetMapping("/service-a/process")
-    public TrafficTraceReport serviceAProcess(
+    public Result<TrafficTraceReport> serviceAProcess(
             @RequestHeader(value = "X-Selected-Instance-Id", required = false) String instanceId,
             @RequestHeader(value = "X-Selected-Instance-Tag", required = false) String instanceTag) {
         String currentTag = TrafficContextHolder.getTag();
         log.info("[ServiceA] 处理请求 [tag='{}', instanceId='{}']", currentTag, instanceId);
 
         // 调用下游 Service B
-        TrafficTraceReport report = restTemplate.getForObject("http://service-b/service-b/process", TrafficTraceReport.class);
-        if (report == null) {
-            report = new TrafficTraceReport(currentTag, UserContextHolder.getUserId(), TenantContextHolder.getTenantId());
-        }
-        report.getVisitedNodes().add(0, "ServiceA[inst=" + instanceId + ", tag=" + instanceTag + "]");
-        return report;
+        TrafficTraceReport report = invokeDownstream("http://service-b/service-b/process", currentTag);
+        report.prependVisitedNode("ServiceA[inst=" + instanceId + ", tag=" + instanceTag + "]");
+        return Result.success(report);
     }
 }
 ```
@@ -226,12 +221,14 @@ import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
 import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
 
 @Configuration
+@ConditionalOnProperty(prefix = "ateng.cloud.traffic.sample", name = "custom-rule-provider-enabled", havingValue = "true")
 public class CustomTrafficRuleConfiguration {
 
     @Bean

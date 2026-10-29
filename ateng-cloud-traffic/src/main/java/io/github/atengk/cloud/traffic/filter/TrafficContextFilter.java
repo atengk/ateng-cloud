@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.traffic.filter;
 
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
+import io.github.atengk.cloud.traffic.context.TrafficContext;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.rule.matcher.ServletTrafficEvaluationContext;
@@ -61,21 +62,23 @@ public class TrafficContextFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        if (!properties.isEnabled()) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        String tag = resolveTrafficTag(request);
-        if (StringUtils.hasText(tag)) {
-            String trimmedTag = tag.trim();
-            TrafficContextHolder.setTag(trimmedTag);
-            if (log.isDebugEnabled()) {
-                log.debug("[TrafficFilter] 入站请求已绑定流量染色标签: tag={}, uri={}", trimmedTag, request.getRequestURI());
-            }
-        }
-
         try {
+            if (properties.isEnabled()) {
+                TrafficContext context = resolveTrafficContext(request);
+                if (context != null && context.hasTag()) {
+                    TrafficContextHolder.setContext(context);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[TrafficFilter] 入站请求已绑定流量染色标签: tag={}, uri={}",
+                                context.getTag(), request.getRequestURI());
+                    }
+                } else {
+                    // 无标请求主动清理，消除工作线程复用残留
+                    TrafficContextHolder.clear();
+                }
+            } else {
+                // 功能禁用时主动清理，消除工作线程复用残留
+                TrafficContextHolder.clear();
+            }
             filterChain.doFilter(request, response);
         } finally {
             TrafficContextHolder.clear();
@@ -83,18 +86,18 @@ public class TrafficContextFilter extends OncePerRequestFilter {
     }
 
     /**
-     * 解析当前 HTTP 请求中的流量染色标记
+     * 解析当前 HTTP 请求中的流量染色上下文
      *
      * @param request HTTP 请求
-     * @return 流量标签，未解析出时返回 null
+     * @return 流量上下文快照，未解析出有效标签时返回 null
      */
-    private String resolveTrafficTag(HttpServletRequest request) {
+    private TrafficContext resolveTrafficContext(HttpServletRequest request) {
         // 1. 优先读取 Header
         String headerName = StringUtils.hasText(properties.getHeaderName())
                 ? properties.getHeaderName() : TrafficConstants.HEADER_TRAFFIC_TAG;
         String tag = request.getHeader(headerName);
         if (StringUtils.hasText(tag)) {
-            return tag;
+            return TrafficContext.of(tag.trim());
         }
 
         // 2. 备选读取 URL Query 参数
@@ -102,7 +105,7 @@ public class TrafficContextFilter extends OncePerRequestFilter {
                 ? properties.getParamName() : TrafficConstants.PARAM_TRAFFIC_TAG;
         tag = request.getParameter(paramName);
         if (StringUtils.hasText(tag)) {
-            return tag;
+            return TrafficContext.of(tag.trim());
         }
 
         // 3. 动态流量分流规则匹配判定 (由 Nacos 动态推送或静态规则提供)
@@ -112,13 +115,14 @@ public class TrafficContextFilter extends OncePerRequestFilter {
             List<TrafficRule> rules = ruleProvider.getRules();
             if (rules != null && !rules.isEmpty()) {
                 ServletTrafficEvaluationContext context = ServletTrafficEvaluationContext.from(request);
-                String matchedTag = ruleMatcher.matchTag(rules, context);
-                if (StringUtils.hasText(matchedTag)) {
+                TrafficRule matchedRule = ruleMatcher.matchRule(rules, context);
+                if (matchedRule != null && StringUtils.hasText(matchedRule.getTargetTag())) {
+                    String matchedTag = matchedRule.getTargetTag().trim();
                     if (log.isDebugEnabled()) {
-                        log.debug("[TrafficFilter] 入站请求通过动态流量规则成功染色: tag={}, uri={}",
-                                matchedTag.trim(), request.getRequestURI());
+                        log.debug("[TrafficFilter] 入站请求通过动态流量规则成功染色: tag={}, ruleId={}, uri={}",
+                                matchedTag, matchedRule.getId(), request.getRequestURI());
                     }
-                    return matchedTag.trim();
+                    return TrafficContext.of(matchedTag, null, matchedRule.getId());
                 }
             }
         }

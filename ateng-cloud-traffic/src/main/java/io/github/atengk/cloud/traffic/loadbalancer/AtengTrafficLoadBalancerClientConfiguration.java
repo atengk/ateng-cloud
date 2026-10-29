@@ -139,9 +139,39 @@ public class AtengTrafficLoadBalancerClientConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public LoadBalancerCacheProperties loadBalancerCacheProperties() {
+    public LoadBalancerCacheProperties loadBalancerCacheProperties(
+            ObjectProvider<AtengTrafficProperties> propertiesProvider,
+            Environment environment) {
         LoadBalancerCacheProperties cacheProperties = new LoadBalancerCacheProperties();
-        cacheProperties.setTtl(Duration.ofSeconds(3));
+        Duration ttl = null;
+        if (environment != null) {
+            String envTtl = environment.getProperty("ateng.cloud.traffic.cache-ttl");
+            if (StringUtils.hasText(envTtl)) {
+                try {
+                    ttl = org.springframework.boot.convert.DurationStyle.detectAndParse(envTtl.trim());
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (ttl == null) {
+            AtengTrafficProperties trafficProperties = propertiesProvider.getIfAvailable();
+            if (trafficProperties != null && trafficProperties.getCacheTtl() != null) {
+                ttl = trafficProperties.getCacheTtl();
+            }
+        }
+        if (ttl == null && environment != null) {
+            String lbTtl = environment.getProperty("spring.cloud.loadbalancer.cache.ttl");
+            if (StringUtils.hasText(lbTtl)) {
+                try {
+                    ttl = org.springframework.boot.convert.DurationStyle.detectAndParse(lbTtl.trim());
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (ttl == null) {
+            ttl = Duration.ofSeconds(3);
+        }
+        cacheProperties.setTtl(ttl);
         return cacheProperties;
     }
 

@@ -8,6 +8,7 @@ import io.github.atengk.cloud.traffic.properties.TrafficNacosProperties;
 import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
+import io.github.atengk.cloud.traffic.rule.model.TrafficRuleMergeStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -156,7 +157,8 @@ class NacosTrafficRuleListenerTest {
     @Test
     @DisplayName("MERGE 合并策略测试 (应用规则与全局规则共存并按 priority 排序)")
     void testMergeStrategy() {
-        properties.getNacos().setMergeStrategy("MERGE");
+        properties.getNacos().setMergeStrategy(TrafficRuleMergeStrategy.MERGE);
+        assertThat(properties.getNacos().getMergeStrategy()).isEqualTo(TrafficRuleMergeStrategy.MERGE);
 
         when(nacosTemplateProvider.getIfAvailable()).thenReturn(nacosTemplate);
         when(nacosTemplate.isConfigAvailable()).thenReturn(true);
