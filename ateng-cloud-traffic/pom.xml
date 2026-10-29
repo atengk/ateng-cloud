@@ -56,6 +56,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- ateng-cloud-nacos 动态配置中心与服务注册发现 (编译期可选依赖，无 Nacos 时平滑退化) -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-nacos</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
