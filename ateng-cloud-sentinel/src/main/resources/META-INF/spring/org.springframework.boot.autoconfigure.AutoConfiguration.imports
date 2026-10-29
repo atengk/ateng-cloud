@@ -1,1 +1,2 @@
 io.github.atengk.cloud.sentinel.autoconfigure.AtengSentinelAutoConfiguration
+io.github.atengk.cloud.sentinel.autoconfigure.AtengSentinelNacosRuleAutoConfiguration
