@@ -4,6 +4,7 @@ import io.github.atengk.boot.core.constant.MessageHeaderConstants;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
+import io.github.atengk.cloud.dubbo.support.DubboSeataPropagationSupport;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
 import org.apache.dubbo.rpc.BaseFilter;
@@ -58,11 +59,12 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             handleConsumer(invocation);
             return invoker.invoke(invocation);
         } else {
-            handleProvider(invocation);
+            boolean boundXid = false;
             try {
+                boundXid = handleProvider(invocation);
                 return invoker.invoke(invocation);
             } finally {
-                cleanContexts();
+                cleanContexts(boundXid);
             }
         }
     }
@@ -110,9 +112,13 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             trafficTag = MDC.get("traffic-tag");
         }
         setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficTag);
+
+        // 6. 提取并注入 Seata 全局分布式事务 XID
+        String xid = DubboSeataPropagationSupport.getXID();
+        setAttachmentIfValid(invocation, DubboSeataPropagationSupport.TX_XID, xid);
     }
 
-    private void handleProvider(Invocation invocation) {
+    private boolean handleProvider(Invocation invocation) {
         // 1. 还原分布式调用链 Trace ID
         String traceId = getAttachment(invocation, MessageHeaderConstants.TRACE_ID);
         if (!StringUtils.hasText(traceId)) {
@@ -150,9 +156,17 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             MDC.put(TRAFFIC_TAG, trafficTag);
             MDC.put("trafficTag", trafficTag);
         }
+
+        // 6. 还原 Seata 分布式事务 XID 并执行安全绑定
+        String xid = getAttachment(invocation, DubboSeataPropagationSupport.TX_XID);
+        if (!StringUtils.hasText(xid)) {
+            xid = getAttachment(invocation, DubboSeataPropagationSupport.TX_XID_LOWERCASE);
+        }
+        return DubboSeataPropagationSupport.bind(xid);
     }
 
-    private void cleanContexts() {
+    private void cleanContexts(boolean boundXid) {
+        DubboSeataPropagationSupport.unbind(boundXid);
         UserContextHolder.clear();
         TenantContextHolder.clear();
         MDC.clear();
@@ -186,14 +200,14 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
     @Override
     public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
         if (!isConsumerSide(invoker)) {
-            cleanContexts();
+            cleanContexts(false);
         }
     }
 
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         if (!isConsumerSide(invoker)) {
-            cleanContexts();
+            cleanContexts(false);
         }
     }
 }

@@ -60,6 +60,11 @@
                 <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
                 <version>${spring-cloud-alibaba.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.apache.seata</groupId>
+                <artifactId>seata-core</artifactId>
+                <version>${seata.version}</version>
+            </dependency>
 
             <!-- Apache Dubbo 依赖版本统管 -->
             <dependency>

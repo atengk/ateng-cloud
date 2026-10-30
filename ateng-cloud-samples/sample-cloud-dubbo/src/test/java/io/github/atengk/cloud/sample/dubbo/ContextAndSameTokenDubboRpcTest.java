@@ -9,6 +9,7 @@ import io.github.atengk.cloud.dubbo.filter.DubboSameTokenFilter;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import org.apache.dubbo.config.annotation.DubboReference;
 import org.apache.dubbo.rpc.RpcContext;
+import org.apache.seata.core.context.RootContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,9 @@ public class ContextAndSameTokenDubboRpcTest {
 
     @AfterEach
     void tearDown() {
+        if (RootContext.inGlobalTransaction()) {
+            RootContext.unbind();
+        }
         UserContextHolder.clear();
         TenantContextHolder.clear();
         MDC.clear();
@@ -52,16 +56,17 @@ public class ContextAndSameTokenDubboRpcTest {
     }
 
     @Test
-    @DisplayName("端到端验证四维上下文与灰度染色标记跨进程透明透传并由服务端正确还原")
+    @DisplayName("端到端验证四维上下文、灰度染色标记与 Seata XID 跨进程透明透传并由服务端正确还原")
     void testFourDimensionalContextPropagation() {
         assertNotNull(userRpcService, "UserRpcService 引用不可为空");
 
-        // 1. 在消费端线程设置四维上下文快照及流量染色标记
+        // 1. 在消费端线程设置四维上下文快照、流量染色标记与 Seata 全局事务 XID
         MDC.put("traceId", "dubbo-trace-99998888");
         UserContextHolder.setUserId("user-ateng-admin");
         TenantContextHolder.setTenantId("tenant-enterprise-001");
         TenantContextHolder.setIgnoreTenant(true);
         MDC.put(DubboContextPropagationFilter.TRAFFIC_TAG, "gray-canary-v2");
+        RootContext.bind("192.168.1.50:8091:8877665544");
 
         // 2. 发起 RPC 调用获取服务端上下文镜像
         Map<String, String> providerContext = userRpcService.getProviderContext();
@@ -73,6 +78,8 @@ public class ContextAndSameTokenDubboRpcTest {
         assertEquals("tenant-enterprise-001", providerContext.get("tenantId"), "Tenant ID 跨进程透传不匹配");
         assertEquals("true", providerContext.get("ignoreTenant"), "IgnoreTenant 跨进程透传不匹配");
         assertEquals("gray-canary-v2", providerContext.get("trafficTag"), "TrafficTag 跨进程染色透传不匹配");
+        assertEquals("192.168.1.50:8091:8877665544", providerContext.get("xid"), "Seata XID 跨进程透传不匹配");
+        assertEquals("192.168.1.50:8091:8877665544", RootContext.getXID(), "消费端当前线程 XID 应保持不变");
     }
 
     @Test
@@ -84,12 +91,14 @@ public class ContextAndSameTokenDubboRpcTest {
         UserContextHolder.setUserId("dirty-user-before");
         TenantContextHolder.setTenantId("dirty-tenant-before");
         MDC.put("traceId", "dirty-trace-before");
+        RootContext.bind("dirty-xid-before");
         userRpcService.getProviderContext();
 
         // 2. 清空消费端上下文后再次发起调用
         UserContextHolder.clear();
         TenantContextHolder.clear();
         MDC.clear();
+        RootContext.unbind();
         Map<String, String> cleanContext = userRpcService.getProviderContext();
 
         // 3. 强断言服务端未发生上下文残留脏读
@@ -97,7 +106,30 @@ public class ContextAndSameTokenDubboRpcTest {
         assertNull(cleanContext.get("userId"), "服务端线程池发生 userId 上下文残留污染");
         assertNull(cleanContext.get("tenantId"), "服务端线程池发生 tenantId 上下文残留污染");
         assertNull(cleanContext.get("traceId"), "服务端线程池发生 traceId 上下文残留污染");
+        assertNull(cleanContext.get("xid"), "服务端线程池发生 Seata XID 事务上下文残留污染");
         assertEquals("false", cleanContext.get("ignoreTenant"), "服务端线程池发生 ignoreTenant 上下文残留污染");
+    }
+
+    @Test
+    @DisplayName("端到端验证 Seata 全局分布式事务 XID 双向透明穿透与确定性对称解绑")
+    void testSeataDistributedTransactionPropagationAndSymmetricRelease() {
+        assertNotNull(userRpcService, "UserRpcService 引用不可为空");
+
+        String testXid = "10.20.30.40:8091:202610310001";
+        RootContext.bind(testXid);
+
+        try {
+            Map<String, String> providerContext = userRpcService.getProviderContext();
+            assertNotNull(providerContext);
+            assertEquals(testXid, providerContext.get("xid"), "服务端应正确从 Attachment 提取并绑定 XID");
+            assertEquals(testXid, RootContext.getXID(), "消费端当前 XID 应保持不变");
+        } finally {
+            RootContext.unbind();
+        }
+
+        // 再次调用，确认服务端已完成对称解绑，不存在残留
+        Map<String, String> postContext = userRpcService.getProviderContext();
+        assertNull(postContext.get("xid"), "服务端在请求完成后必须对称解绑 XID");
     }
 
     @Test

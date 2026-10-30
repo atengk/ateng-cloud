@@ -66,6 +66,7 @@ public class UserRpcServiceImpl implements UserRpcService {
         map.put("tenantId", io.github.atengk.boot.core.context.TenantContextHolder.getTenantId());
         map.put("ignoreTenant", String.valueOf(io.github.atengk.boot.core.context.TenantContextHolder.isIgnoreTenant()));
         map.put("trafficTag", org.slf4j.MDC.get("X-Traffic-Tag"));
+        map.put("xid", io.github.atengk.cloud.dubbo.support.DubboSeataPropagationSupport.getXID());
         return map;
     }
 

@@ -59,6 +59,7 @@
         <spring-cloud.version>2023.0.6</spring-cloud.version>
         <spring-cloud-alibaba.version>2023.0.3.4</spring-cloud-alibaba.version>
         <dubbo.version>3.3.6</dubbo.version>
+        <seata.version>2.5.0</seata.version>
         <sa-token.version>1.46.0</sa-token.version>
         <transmittable-thread-local.version>2.14.5</transmittable-thread-local.version>
 
@@ -117,6 +118,11 @@
                 <groupId>com.alibaba.cloud</groupId>
                 <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
                 <version>${spring-cloud-alibaba.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.seata</groupId>
+                <artifactId>seata-core</artifactId>
+                <version>${seata.version}</version>
             </dependency>
 
             <!-- Apache Dubbo 依赖版本统管 (Import 模式) -->
