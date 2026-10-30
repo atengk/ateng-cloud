@@ -101,10 +101,15 @@ public class NacosServiceEndpoint {
                 recordMap.put("durationMs", lastRecord.getDurationMs());
                 if (lastRecord.getError() != null) {
                     recordMap.put("error", lastRecord.getError());
+                    recordMap.put("errorMessage", lastRecord.getError());
+                } else {
+                    recordMap.put("errorMessage", null);
                 }
                 configInfo.put("lastRefresh", recordMap);
+                result.put("lastRefresh", recordMap);
             } else {
                 configInfo.put("lastRefresh", null);
+                result.put("lastRefresh", null);
             }
             result.put("config", configInfo);
         }

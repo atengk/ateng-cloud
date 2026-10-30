@@ -4,6 +4,7 @@ import com.alibaba.cloud.nacos.refresh.NacosConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.event.ConfigChangeItem;
 import io.github.atengk.cloud.nacos.event.ConfigChangeType;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
+import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.metrics.NacosMetricsManager;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
@@ -237,6 +238,7 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             if (listenerErrors) {
                 anyError = true;
                 errorMessage = "One or more NacosConfigChangeListener failed";
+                publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, null, traceId);
             }
 
             // 6. 发布 Spring 原生强类型事件，支持 @EventListener 响应
@@ -245,6 +247,7 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 anyError = true;
                 if (errorMessage == null) {
                     errorMessage = "SafeConfigRefreshEvent publication encountered errors";
+                    publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, null, traceId);
                 }
             }
 
@@ -252,8 +255,11 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             return event;
         } catch (Throwable t) {
             anyError = true;
-            errorMessage = t.getMessage();
-            throw t;
+            errorMessage = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
+            log.error("[ateng-cloud-nacos] 配置安全热更新执行异常 [TraceId: '{}', DataId: '{}', Group: '{}']: {}",
+                    traceId, dataId, effectiveGroup, errorMessage, t);
+            publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, t, traceId);
+            return new SafeConfigRefreshEvent(this, dataId, effectiveGroup, changedKeys, Collections.emptyMap(), traceId);
         } finally {
             long durationMs = System.currentTimeMillis() - startTime;
             this.lastRefreshRecord = new RefreshRecord(traceId, System.currentTimeMillis(), changedKeys.size(), changedKeys, !anyError, errorMessage, durationMs);
@@ -292,8 +298,25 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 rebinder.rebind();
                 log.debug("[ateng-cloud-nacos] ConfigurationPropertiesRebinder 已完成所有 @ConfigurationProperties 属性增量重绑");
             } catch (Exception ex) {
-                log.warn("[ateng-cloud-nacos] 执行 ConfigurationPropertiesRebinder.rebind() 时捕获异常: {}", ex.getMessage());
+                log.error("[ateng-cloud-nacos] 执行 ConfigurationPropertiesRebinder.rebind() 时捕获异常: {}", ex.getMessage(), ex);
+                throw new IllegalStateException("ConfigurationProperties rebinding failed: " + ex.getMessage(), ex);
             }
+        }
+    }
+
+    private void publishFailureEvent(String dataId, String group, Set<String> changedKeys,
+                                     String errorMessage, @Nullable Throwable cause, String traceId) {
+        if (eventPublisher == null) {
+            return;
+        }
+        try {
+            SafeConfigRefreshFailureEvent failureEvent = new SafeConfigRefreshFailureEvent(
+                    this, dataId, group, changedKeys, errorMessage, cause, traceId);
+            eventPublisher.publishEvent(failureEvent);
+            log.info("[ateng-cloud-nacos] 已广播配置安全热更失败领域事件 SafeConfigRefreshFailureEvent [TraceId: '{}', Error: '{}']",
+                    traceId, errorMessage);
+        } catch (Throwable t) {
+            log.error("[ateng-cloud-nacos] 发布 SafeConfigRefreshFailureEvent 异常: {}", t.getMessage(), t);
         }
     }
 

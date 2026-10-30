@@ -19,6 +19,7 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `SingletonImmutabilityGuard` | 架构守卫 | `BeanFactoryPostProcessor` 容器启动扫描，严禁业务单例标注 `@RefreshScope` | 标配开启，违规直接 Fail-Fast 阻断应用启动 |
 | `NacosConfigRefreshEngine` | 热更引擎 | 严格收敛于 `@ConfigurationProperties` 增量热绑，广播变更事件与链路追踪 | 驱动配置安全热更，维持 MDC 与异常隔离 |
 | `SafeConfigRefreshEvent` | 应用事件类 | 携带配置变更集、新旧对比明细及 `traceId` 的强类型 Spring 事件 | 继承 `ApplicationEvent`，脱敏边界自动掩码 |
+| `SafeConfigRefreshFailureEvent` | 领域事件类 | 配置热更属性增量重绑、校验或监听器执行失败时广播的强类型领域事件，携带错误描述、因果链与 MDC traceId | 继承 `ApplicationEvent`，异常不击穿容器 |
 | `ConfigChangeItem` | 数据值对象 | 封装单项配置键、变更前旧值、变更后新值及变更类型 | 遵循“内存真明文”，`toString()` 输出脱敏掩码 |
 | `ConfigChangeType` | 枚举类 | 配置变更类型：`ADDED`、`MODIFIED`、`DELETED` | 精准描述属性生命周期变化 |
 | `NacosConfigChangeListener` | 扩展点 SPI | 支持按属性前缀（`getPrefix()`）过滤与按优先级排序的受管监听器 | 业务解耦声明，异常受到独立屏障隔离 |
@@ -70,6 +71,7 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `getHealthyInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务通过健康检查的实例列表 | 保底返回空集合 `[]` |
 | `getInstances(serviceName [, groupName])` | `List<Instance>` | 查询健康且可用实例（自动过滤 `weight <= 0.0` 与禁用节点） | 保底返回空集合 `[]` |
 | `selectOneHealthyInstance(serviceName [, groupName])` | `Optional<Instance>` | 基于 Nacos 随机权重算法选举单个健康可用实例 | 保底返回 `Optional.empty()` |
+| `subscribeInstances(serviceName [, groupName, clusters], callback)` | `AutoCloseable` | 编程式订阅微服务实例拓扑动态变更，首帧快照即时派发并自动注入 MDC 与异常屏障 | 离线平滑注册空句柄 |
 | `getMyInstance()` | `Optional<Instance>` | 获取当前服务节点在 Nacos 注册的自身实例信息快照 | 保底返回 `Optional.empty()` |
 | `getSameZoneInstances(serviceName [, groupName])` | `List<Instance>` | 查询机房（Zone）就近亲和健康实例，本区全宕平滑降级全集群 | 保底返回空集合 `[]` |
 | `isUnderProtection(serviceName [, groupName])` | `boolean` | 检测目标服务集群是否触发过载保护阈值 | 保底返回 `false` |

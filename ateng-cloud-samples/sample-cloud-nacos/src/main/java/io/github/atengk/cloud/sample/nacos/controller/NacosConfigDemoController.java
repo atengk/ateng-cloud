@@ -2,14 +2,17 @@ package io.github.atengk.cloud.sample.nacos.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
+import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.mask.ConfigMasker;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.sample.nacos.config.DemoConfigProperties;
 import io.github.atengk.cloud.sample.nacos.config.DemoNacosConfigChangeListener;
 import io.github.atengk.cloud.sample.nacos.config.DemoSafeRefreshEventListener;
 import io.github.atengk.cloud.sample.nacos.config.DemoTypedSubscriptionService;
+import io.github.atengk.cloud.sample.nacos.event.DemoConfigRefreshFailureEventListener;
 import io.github.atengk.cloud.sample.nacos.model.DemoConfigVO;
 import io.github.atengk.cloud.sample.nacos.model.ListenerStatusVO;
+import io.github.atengk.cloud.sample.nacos.model.RefreshFailureStatusVO;
 import io.github.atengk.cloud.sample.nacos.model.RefreshRequestDTO;
 import io.github.atengk.cloud.sample.nacos.model.SafeConfigRefreshVO;
 import io.github.atengk.cloud.sample.nacos.model.TradeRuleConfig;
@@ -41,17 +44,20 @@ public class NacosConfigDemoController {
     private final NacosTemplate nacosTemplate;
     private final DemoNacosConfigChangeListener demoListener;
     private final DemoSafeRefreshEventListener demoEventListener;
+    private final DemoConfigRefreshFailureEventListener failureEventListener;
     private final DemoTypedSubscriptionService typedSubscriptionService;
 
     public NacosConfigDemoController(DemoConfigProperties demoConfigProperties,
                                      NacosTemplate nacosTemplate,
                                      DemoNacosConfigChangeListener demoListener,
                                      DemoSafeRefreshEventListener demoEventListener,
+                                     DemoConfigRefreshFailureEventListener failureEventListener,
                                      DemoTypedSubscriptionService typedSubscriptionService) {
         this.demoConfigProperties = demoConfigProperties;
         this.nacosTemplate = nacosTemplate;
         this.demoListener = demoListener;
         this.demoEventListener = demoEventListener;
+        this.failureEventListener = failureEventListener;
         this.typedSubscriptionService = typedSubscriptionService;
     }
 
@@ -103,6 +109,42 @@ public class NacosConfigDemoController {
                 event.getChangedKeys(),
                 event.getChangedKeys().size(),
                 true
+        );
+        return Result.success(vo);
+    }
+
+    /**
+     * 读取配置热更异常告警与失败事件统计状态
+     */
+    @GetMapping("/refresh-failure-status")
+    public Result<RefreshFailureStatusVO> getRefreshFailureStatus() {
+        SafeConfigRefreshFailureEvent lastEvent = failureEventListener.getLastEvent();
+        RefreshFailureStatusVO vo = new RefreshFailureStatusVO(
+                failureEventListener.getEventCount(),
+                lastEvent != null ? lastEvent.getDataId() : "",
+                lastEvent != null ? lastEvent.getGroup() : "",
+                lastEvent != null ? lastEvent.getChangedKeys() : java.util.Collections.emptySet(),
+                lastEvent != null ? lastEvent.getErrorMessage() : "",
+                lastEvent != null ? lastEvent.getTraceId() : ""
+        );
+        return Result.success(vo);
+    }
+
+    /**
+     * 模拟触发配置热更失败场景（演示异常隔离屏障与失败事件派发）
+     */
+    @PostMapping("/simulate-refresh-failure")
+    public Result<SafeConfigRefreshVO> simulateRefreshFailure() {
+        SafeConfigRefreshEvent event = nacosTemplate.refreshConfig(
+                java.util.Set.of("demo.config.simulate-failure"),
+                "demo-failure.yml",
+                "DEFAULT_GROUP"
+        );
+        SafeConfigRefreshVO vo = new SafeConfigRefreshVO(
+                event.getTraceId(),
+                event.getChangedKeys(),
+                event.getChangedKeys().size(),
+                false
         );
         return Result.success(vo);
     }

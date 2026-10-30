@@ -354,6 +354,56 @@ class NacosConfigRefreshEngineTest {
 
         verify(metricsManager, times(1)).recordRefreshFailure(anyLong(), contains("One or more NacosConfigChangeListener failed"));
         verify(metricsManager, never()).recordRefreshSuccess(anyLong(), anyInt());
+
+        org.mockito.ArgumentCaptor<org.springframework.context.ApplicationEvent> eventCaptor =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.context.ApplicationEvent.class);
+        verify(publisher, atLeastOnce()).publishEvent(eventCaptor.capture());
+        boolean hasFailureEvent = eventCaptor.getAllValues().stream()
+                .anyMatch(e -> e instanceof io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent);
+        assertThat(hasFailureEvent).isTrue();
+    }
+
+    @Test
+    @DisplayName("重绑异常防卫：属性校验或重绑失败时发布 SafeConfigRefreshFailureEvent 且异常不击穿容器")
+    void testRebindFailurePublishesFailureEventAndGuardsContainer() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        ConfigurationPropertiesRebinder rebinder = mock(ConfigurationPropertiesRebinder.class);
+        doThrow(new RuntimeException("Simulated validation error on server.port"))
+                .when(rebinder).rebind();
+        io.github.atengk.cloud.nacos.metrics.NacosMetricsManager metricsManager = mock(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                environment,
+                publisher,
+                Collections.emptyList(),
+                rebinder,
+                properties,
+                metricsManager
+        );
+
+        SafeConfigRefreshEvent event = engine.refreshConfig(Set.of("server.port"), "demo.yml", "DEFAULT_GROUP");
+        assertThat(event).isNotNull();
+
+        NacosConfigRefreshEngine.RefreshRecord record = engine.getLastRefreshRecord();
+        assertThat(record).isNotNull();
+        assertThat(record.isSuccess()).isFalse();
+        assertThat(record.getError()).contains("Simulated validation error on server.port");
+
+        org.mockito.ArgumentCaptor<org.springframework.context.ApplicationEvent> eventCaptor =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.context.ApplicationEvent.class);
+        verify(publisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue()).isInstanceOf(io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent.class);
+        io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent failureEvent =
+                (io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent) eventCaptor.getValue();
+        assertThat(failureEvent.getDataId()).isEqualTo("demo.yml");
+        assertThat(failureEvent.getGroup()).isEqualTo("DEFAULT_GROUP");
+        assertThat(failureEvent.getChangedKeys()).containsExactly("server.port");
+        assertThat(failureEvent.getErrorMessage()).contains("Simulated validation error on server.port");
+        assertThat(failureEvent.getCause()).isNotNull();
+
+        verify(metricsManager, times(1)).recordRefreshFailure(anyLong(), any());
     }
 
     @Test

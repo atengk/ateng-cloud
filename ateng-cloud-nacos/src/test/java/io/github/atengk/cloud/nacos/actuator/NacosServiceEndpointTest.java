@@ -155,4 +155,49 @@ class NacosServiceEndpointTest {
         assertThat(lastRefresh).containsEntry("success", true);
         assertThat(lastRefresh.get("traceId")).isNotNull();
     }
+
+    @Test
+    @DisplayName("测试运维端点读取最近一次热更失败详情（包含 success=false 与 errorMessage）")
+    void testGetStatusWithRefreshFailureRecord() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        NacosLifecycleStateMachine stateMachine = new NacosLifecycleStateMachine(
+                properties, event -> {}, beanFactory.getBeanProvider(AbstractAutoServiceRegistration.class)
+        );
+
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("spring.application.name", "demo-service");
+
+        io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener faultyListener = new io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener() {
+            @Override
+            public void onConfigChange(io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent event) {
+                throw new RuntimeException("Listener exploded");
+            }
+        };
+
+        io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine refreshEngine =
+                new io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine(
+                        env,
+                        event -> {},
+                        java.util.List.of(faultyListener),
+                        null,
+                        properties
+                );
+
+        // 触发热更，预期失败
+        refreshEngine.refreshConfig(java.util.Set.of("faulty.key"), "demo.yml", "DEFAULT_GROUP");
+
+        NacosServiceEndpoint endpoint = new NacosServiceEndpoint(stateMachine, null, properties, env, refreshEngine);
+        Map<String, Object> status = endpoint.getStatus();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> configInfo = (Map<String, Object>) status.get("config");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> lastRefresh = (Map<String, Object>) configInfo.get("lastRefresh");
+        assertThat(lastRefresh).isNotNull();
+        assertThat(lastRefresh).containsEntry("success", false);
+        assertThat(lastRefresh).containsKey("error");
+        assertThat(lastRefresh).containsKey("errorMessage");
+        assertThat((String) lastRefresh.get("errorMessage")).contains("One or more NacosConfigChangeListener failed");
+    }
 }

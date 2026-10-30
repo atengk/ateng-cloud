@@ -521,4 +521,41 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.data.count", notNullValue()))
                 .andExpect(jsonPath("$.data.instances", notNullValue()));
     }
+
+    @Test
+    @DisplayName("配置热更异常端到端：异常隔离屏障、SafeConfigRefreshFailureEvent 广播与 Actuator 状态联动")
+    void testSafeConfigRefreshFailureEventAndActuatorLinkage() throws Exception {
+        // 1. 触发模拟热更失败（携带 demo.config.simulate-failure 键名）
+        // 验证框架异常隔离屏障生效：未击穿 Spring 容器抛出 500，依然受控响应 200
+        mockMvc.perform(post("/api/nacos/config/simulate-refresh-failure")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.success", is(false)))
+                .andExpect(jsonPath("$.data.changedKeysCount", is(1)))
+                .andExpect(jsonPath("$.data.traceId", notNullValue()));
+
+        // 2. 验证业务侧 DemoConfigRefreshFailureEventListener 成功捕获失败领域事件并完成告警联动
+        mockMvc.perform(get("/api/nacos/config/refresh-failure-status")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.failureCount", org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.data.lastDataId", is("demo-failure.yml")))
+                .andExpect(jsonPath("$.data.lastGroup", is("DEFAULT_GROUP")))
+                .andExpect(jsonPath("$.data.lastChangedKeys[0]", is("demo.config.simulate-failure")))
+                .andExpect(jsonPath("$.data.lastErrorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")))
+                .andExpect(jsonPath("$.data.lastTraceId", notNullValue()));
+
+        // 3. 验证 Actuator /actuator/nacosService 运维端点联动呈现失败详情
+        mockMvc.perform(get("/actuator/nacosService")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lastRefresh.success", is(false)))
+                .andExpect(jsonPath("$.lastRefresh.errorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")))
+                .andExpect(jsonPath("$.lastRefresh.traceId", notNullValue()))
+                .andExpect(jsonPath("$.lastRefresh.changedKeys[0]", is("demo.config.simulate-failure")))
+                .andExpect(jsonPath("$.config.lastRefresh.success", is(false)))
+                .andExpect(jsonPath("$.config.lastRefresh.errorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")));
+    }
 }

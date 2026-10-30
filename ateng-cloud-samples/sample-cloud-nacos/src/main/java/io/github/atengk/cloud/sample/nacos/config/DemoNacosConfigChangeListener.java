@@ -30,6 +30,9 @@ public class DemoNacosConfigChangeListener implements NacosConfigChangeListener 
         this.lastEvent = event;
         log.info("[DemoNacosConfigChangeListener] 收到前缀 'demo.config' 变更通知，traceId: {}, changedKeys: {}",
                 event.getTraceId(), event.getChangedKeys());
+        if (event.getChangedKeys().contains("demo.config.simulate-failure")) {
+            throw new IllegalStateException("模拟配置监听器处理异常: demo.config.simulate-failure 校验不合法");
+        }
     }
 
     @Override
