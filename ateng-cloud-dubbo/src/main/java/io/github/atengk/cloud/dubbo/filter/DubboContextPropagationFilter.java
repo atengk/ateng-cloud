@@ -5,6 +5,7 @@ import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import io.github.atengk.cloud.dubbo.support.DubboSeataPropagationSupport;
+import io.github.atengk.cloud.dubbo.support.DubboTrafficPropagationSupport;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
 import org.apache.dubbo.rpc.BaseFilter;
@@ -103,15 +104,26 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             setAttachmentIfValid(invocation, MessageHeaderConstants.IGNORE_TENANT, Boolean.TRUE.toString());
         }
 
-        // 5. 提取并注入金丝雀流量染色标记
-        String trafficTag = MDC.get(TRAFFIC_TAG);
-        if (!StringUtils.hasText(trafficTag)) {
-            trafficTag = MDC.get("trafficTag");
+        // 5. 提取并注入金丝雀流量染色标记与泳道上下文快照
+        var trafficSnapshot = DubboTrafficPropagationSupport.getSnapshot();
+        if (trafficSnapshot != null && trafficSnapshot.hasTag()) {
+            setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficSnapshot.tag());
+            setAttachmentIfValid(invocation, CommonConstants.TAG_KEY, trafficSnapshot.tag());
+            setAttachmentIfValid(invocation, "tag", trafficSnapshot.tag());
+            setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficSnapshot.laneName());
+            setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE, trafficSnapshot.matchedRule());
+        } else {
+            String trafficTag = MDC.get(TRAFFIC_TAG);
+            if (!StringUtils.hasText(trafficTag)) {
+                trafficTag = MDC.get("trafficTag");
+            }
+            if (!StringUtils.hasText(trafficTag)) {
+                trafficTag = MDC.get("traffic-tag");
+            }
+            setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficTag);
+            setAttachmentIfValid(invocation, CommonConstants.TAG_KEY, trafficTag);
+            setAttachmentIfValid(invocation, "tag", trafficTag);
         }
-        if (!StringUtils.hasText(trafficTag)) {
-            trafficTag = MDC.get("traffic-tag");
-        }
-        setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficTag);
 
         // 6. 提取并注入 Seata 全局分布式事务 XID
         String xid = DubboSeataPropagationSupport.getXID();
@@ -147,15 +159,17 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             TenantContextHolder.setIgnoreTenant(true);
         }
 
-        // 5. 还原流量染色路由标记
+        // 5. 还原流量染色路由标记与泳道上下文
         String trafficTag = getAttachment(invocation, TRAFFIC_TAG);
         if (!StringUtils.hasText(trafficTag)) {
             trafficTag = getAttachment(invocation, "trafficTag");
         }
-        if (StringUtils.hasText(trafficTag)) {
-            MDC.put(TRAFFIC_TAG, trafficTag);
-            MDC.put("trafficTag", trafficTag);
+        if (!StringUtils.hasText(trafficTag)) {
+            trafficTag = getAttachment(invocation, CommonConstants.TAG_KEY);
         }
+        String trafficLane = getAttachment(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE);
+        String trafficRule = getAttachment(invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE);
+        DubboTrafficPropagationSupport.restore(trafficTag, trafficLane, trafficRule);
 
         // 6. 还原 Seata 分布式事务 XID 并执行安全绑定
         String xid = getAttachment(invocation, DubboSeataPropagationSupport.TX_XID);
@@ -167,6 +181,7 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
 
     private void cleanContexts(boolean boundXid) {
         DubboSeataPropagationSupport.unbind(boundXid);
+        DubboTrafficPropagationSupport.clear();
         UserContextHolder.clear();
         TenantContextHolder.clear();
         MDC.clear();

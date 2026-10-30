@@ -2,6 +2,7 @@ package io.github.atengk.cloud.dubbo.filter;
 
 import io.github.atengk.cloud.dubbo.properties.AtengDubboTrafficProperties;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
+import io.github.atengk.cloud.dubbo.support.DubboTrafficPropagationSupport;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
 import org.apache.dubbo.rpc.Constants;
@@ -50,8 +51,11 @@ public class DubboTrafficTagFilter implements Filter {
         String headerName = (traffic != null && StringUtils.hasText(traffic.getHeaderName()))
                 ? traffic.getHeaderName() : DEFAULT_TRAFFIC_TAG_HEADER;
 
-        // 1. 提取流量染色标签 (优先 MDC，备选 RpcContext / Invocation attachment)
-        String tag = resolveTrafficTag(invocation, headerName);
+        // 1. 提取流量染色与泳道元数据快照 (优先 TrafficContextHolder，次选 MDC / 附件)
+        var trafficSnapshot = DubboTrafficPropagationSupport.getSnapshot();
+        String tag = trafficSnapshot != null && trafficSnapshot.hasTag()
+                ? trafficSnapshot.tag()
+                : resolveTrafficTag(invocation, headerName);
 
         // 2. 若存在有效流量染色标签，则注入 Dubbo 标签路由及降级策略
         if (StringUtils.hasText(tag) && !"null".equalsIgnoreCase(tag.trim())) {
@@ -85,6 +89,16 @@ public class DubboTrafficTagFilter implements Filter {
             // 同步确保全链路透传请求头存在
             setAttachment(invocation, headerName, trimmedTag);
 
+            // 同步透传泳道名称与匹配规则
+            if (trafficSnapshot != null) {
+                if (StringUtils.hasText(trafficSnapshot.laneName())) {
+                    setAttachment(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficSnapshot.laneName());
+                }
+                if (StringUtils.hasText(trafficSnapshot.matchedRule())) {
+                    setAttachment(invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE, trafficSnapshot.matchedRule());
+                }
+            }
+
             // 3. 强隔离校验 (Fail-Fast 防线)：若启用 tagForce=true，检验目标 invoker 标签；若目标不具备该标签则直接阻断
             if (tagForce) {
                 String providerTag = invoker.getUrl().getParameter(CommonConstants.TAG_KEY);
@@ -102,6 +116,12 @@ public class DubboTrafficTagFilter implements Filter {
     }
 
     private String resolveTrafficTag(Invocation invocation, String headerName) {
+        // 0. 优先检查 TrafficContextHolder
+        var snapshot = DubboTrafficPropagationSupport.getSnapshot();
+        if (snapshot != null && snapshot.hasTag()) {
+            return snapshot.tag();
+        }
+
         // 1. 检查 MDC
         String tag = MDC.get(headerName);
         if (!StringUtils.hasText(tag)) {

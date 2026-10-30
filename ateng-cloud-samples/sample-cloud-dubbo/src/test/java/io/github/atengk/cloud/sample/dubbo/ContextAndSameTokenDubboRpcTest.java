@@ -10,6 +10,8 @@ import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import org.apache.dubbo.config.annotation.DubboReference;
 import org.apache.dubbo.rpc.RpcContext;
 import org.apache.seata.core.context.RootContext;
+import io.github.atengk.cloud.traffic.context.TrafficContext;
+import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -49,6 +51,7 @@ public class ContextAndSameTokenDubboRpcTest {
         if (RootContext.inGlobalTransaction()) {
             RootContext.unbind();
         }
+        TrafficContextHolder.clear();
         UserContextHolder.clear();
         TenantContextHolder.clear();
         MDC.clear();
@@ -56,16 +59,16 @@ public class ContextAndSameTokenDubboRpcTest {
     }
 
     @Test
-    @DisplayName("端到端验证四维上下文、灰度染色标记与 Seata XID 跨进程透明透传并由服务端正确还原")
+    @DisplayName("端到端验证四维上下文、灰度染色标记、泳道元数据与 Seata XID 跨进程透明透传并由服务端正确还原")
     void testFourDimensionalContextPropagation() {
         assertNotNull(userRpcService, "UserRpcService 引用不可为空");
 
-        // 1. 在消费端线程设置四维上下文快照、流量染色标记与 Seata 全局事务 XID
+        // 1. 在消费端线程设置四维上下文快照、TrafficContext 泳道元数据与 Seata 全局事务 XID
         MDC.put("traceId", "dubbo-trace-99998888");
         UserContextHolder.setUserId("user-ateng-admin");
         TenantContextHolder.setTenantId("tenant-enterprise-001");
         TenantContextHolder.setIgnoreTenant(true);
-        MDC.put(DubboContextPropagationFilter.TRAFFIC_TAG, "gray-canary-v2");
+        TrafficContextHolder.setContext(TrafficContext.of("gray-canary-v2", "user-lane-01", "rule-user-vip"));
         RootContext.bind("192.168.1.50:8091:8877665544");
 
         // 2. 发起 RPC 调用获取服务端上下文镜像
@@ -78,8 +81,11 @@ public class ContextAndSameTokenDubboRpcTest {
         assertEquals("tenant-enterprise-001", providerContext.get("tenantId"), "Tenant ID 跨进程透传不匹配");
         assertEquals("true", providerContext.get("ignoreTenant"), "IgnoreTenant 跨进程透传不匹配");
         assertEquals("gray-canary-v2", providerContext.get("trafficTag"), "TrafficTag 跨进程染色透传不匹配");
+        assertEquals("user-lane-01", providerContext.get("trafficLane"), "TrafficLane 跨进程泳道名透传不匹配");
+        assertEquals("rule-user-vip", providerContext.get("trafficRule"), "TrafficRule 跨进程规则标识透传不匹配");
         assertEquals("192.168.1.50:8091:8877665544", providerContext.get("xid"), "Seata XID 跨进程透传不匹配");
         assertEquals("192.168.1.50:8091:8877665544", RootContext.getXID(), "消费端当前线程 XID 应保持不变");
+        assertEquals("gray-canary-v2", TrafficContextHolder.getTag(), "消费端当前线程 TrafficContext 应保持不变");
     }
 
     @Test
@@ -92,6 +98,7 @@ public class ContextAndSameTokenDubboRpcTest {
         TenantContextHolder.setTenantId("dirty-tenant-before");
         MDC.put("traceId", "dirty-trace-before");
         RootContext.bind("dirty-xid-before");
+        TrafficContextHolder.setContext(TrafficContext.of("dirty-tag-before", "dirty-lane", "dirty-rule"));
         userRpcService.getProviderContext();
 
         // 2. 清空消费端上下文后再次发起调用
@@ -99,6 +106,7 @@ public class ContextAndSameTokenDubboRpcTest {
         TenantContextHolder.clear();
         MDC.clear();
         RootContext.unbind();
+        TrafficContextHolder.clear();
         Map<String, String> cleanContext = userRpcService.getProviderContext();
 
         // 3. 强断言服务端未发生上下文残留脏读
@@ -107,7 +115,35 @@ public class ContextAndSameTokenDubboRpcTest {
         assertNull(cleanContext.get("tenantId"), "服务端线程池发生 tenantId 上下文残留污染");
         assertNull(cleanContext.get("traceId"), "服务端线程池发生 traceId 上下文残留污染");
         assertNull(cleanContext.get("xid"), "服务端线程池发生 Seata XID 事务上下文残留污染");
+        assertNull(cleanContext.get("trafficTag"), "服务端线程池发生 trafficTag 上下文残留污染");
+        assertNull(cleanContext.get("trafficLane"), "服务端线程池发生 trafficLane 上下文残留污染");
+        assertNull(cleanContext.get("trafficRule"), "服务端线程池发生 trafficRule 上下文残留污染");
         assertEquals("false", cleanContext.get("ignoreTenant"), "服务端线程池发生 ignoreTenant 上下文残留污染");
+    }
+
+    @Test
+    @DisplayName("端到端验证 TrafficContextHolder 泳道元数据跨进程透传与确定性对称清理")
+    void testTrafficContextLanePropagationAndDeterministicCleanup() {
+        assertNotNull(userRpcService, "UserRpcService 引用不可为空");
+
+        TrafficContextHolder.setContext(TrafficContext.of("canary-lane-v1", "feature-lane-auth", "rule-auth-gray"));
+
+        try {
+            Map<String, String> providerContext = userRpcService.getProviderContext();
+            assertNotNull(providerContext);
+            assertEquals("canary-lane-v1", providerContext.get("trafficTag"));
+            assertEquals("feature-lane-auth", providerContext.get("trafficLane"));
+            assertEquals("rule-auth-gray", providerContext.get("trafficRule"));
+            assertEquals("canary-lane-v1", TrafficContextHolder.getTag(), "消费端当前线程流量标签应保持不变");
+        } finally {
+            TrafficContextHolder.clear();
+        }
+
+        // 再次发起调用，强断言服务端已执行确定性清理
+        Map<String, String> postContext = userRpcService.getProviderContext();
+        assertNull(postContext.get("trafficTag"), "服务端在请求完成后必须彻底清理流量标签");
+        assertNull(postContext.get("trafficLane"), "服务端在请求完成后必须彻底清理泳道名");
+        assertNull(postContext.get("trafficRule"), "服务端在请求完成后必须彻底清理规则标识");
     }
 
     @Test

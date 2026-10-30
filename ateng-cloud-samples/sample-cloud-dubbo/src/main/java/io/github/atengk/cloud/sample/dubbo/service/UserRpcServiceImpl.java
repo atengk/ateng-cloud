@@ -67,6 +67,19 @@ public class UserRpcServiceImpl implements UserRpcService {
         map.put("ignoreTenant", String.valueOf(io.github.atengk.boot.core.context.TenantContextHolder.isIgnoreTenant()));
         map.put("trafficTag", org.slf4j.MDC.get("X-Traffic-Tag"));
         map.put("xid", io.github.atengk.cloud.dubbo.support.DubboSeataPropagationSupport.getXID());
+
+        var trafficSnapshot = io.github.atengk.cloud.dubbo.support.DubboTrafficPropagationSupport.getSnapshot();
+        if (trafficSnapshot != null) {
+            if (trafficSnapshot.tag() != null) {
+                map.put("trafficTag", trafficSnapshot.tag());
+            }
+            if (trafficSnapshot.laneName() != null) {
+                map.put("trafficLane", trafficSnapshot.laneName());
+            }
+            if (trafficSnapshot.matchedRule() != null) {
+                map.put("trafficRule", trafficSnapshot.matchedRule());
+            }
+        }
         return map;
     }
 

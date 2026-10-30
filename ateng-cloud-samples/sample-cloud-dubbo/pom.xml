@@ -56,6 +56,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Traffic 流量染色与泳道治理测试套件 (用于端到端验证泳道穿透) -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-cloud-traffic</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Dubbo Nacos 真实注册中心测试驱动适配 (激活 local profile 实测支持) -->
         <dependency>
             <groupId>org.apache.dubbo</groupId>
