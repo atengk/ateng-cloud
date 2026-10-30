@@ -56,6 +56,10 @@ _Avoid_: Dubbo事务拦截器, SeataFilter, XID透传器
 支持通过配置属性动态声明并合并业务数据传输对象包路径的 Dubbo 3 反序列化安全检查机制。
 _Avoid_: 序列化黑白名单, 自动信任包, Fastjson2类白名单
 
+**Client Native Mock Fallback**:
+在 Dubbo 消费端遵循原生同包契约，当下游服务宕机或不可达时自动触发 `*Mock` 保底实现的弹性容灾机制。
+_Avoid_: 兜底拦截器, 降级切面, 客户端容错代理
+
 **Hermetic Module Test Suite**:
 在脱离物理注册中心与外部网络环境下，使用纯内存桩对 Starter 自动装配、过滤器链与异常转译进行全分支防御性验证的单测矩阵。
 _Avoid_: 集成测试套件, Dubbo单测, 本地测试用例
