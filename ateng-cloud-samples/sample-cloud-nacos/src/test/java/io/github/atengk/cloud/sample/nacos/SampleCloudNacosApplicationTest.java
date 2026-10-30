@@ -65,6 +65,9 @@ class SampleCloudNacosApplicationTest {
     @Autowired(required = false)
     private io.github.atengk.cloud.nacos.health.NacosHealthChecker healthChecker;
 
+    @Autowired(required = false)
+    private io.github.atengk.cloud.sample.nacos.event.DemoConfigRefreshFailureEventListener failureEventListener;
+
     /**
      * 离线 Mock/环境守卫测试配置
      * 关键守卫：标配 @Profile("!local")。当激活 local 时本配置自动失效，完全让位给真实中间件自动装配
@@ -547,6 +550,13 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.data.lastChangedKeys[0]", is("demo.config.simulate-failure")))
                 .andExpect(jsonPath("$.data.lastErrorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")))
                 .andExpect(jsonPath("$.data.lastTraceId", notNullValue()));
+
+        if (failureEventListener != null && failureEventListener.getLastEvent() != null) {
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    failureEventListener.getLastEvent().getCause(),
+                    "SafeConfigRefreshFailureEvent 必须携带原始 cause 根因链"
+            );
+        }
 
         // 3. 验证 Actuator /actuator/nacosService 运维端点联动呈现失败详情
         mockMvc.perform(get("/actuator/nacosService")

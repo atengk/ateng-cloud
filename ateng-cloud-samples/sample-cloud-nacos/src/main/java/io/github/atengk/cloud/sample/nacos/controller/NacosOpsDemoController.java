@@ -6,6 +6,7 @@ import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.sample.nacos.config.DemoInstanceSubscriptionService;
 import io.github.atengk.cloud.sample.nacos.event.DemoConnectionEventListener;
 import io.github.atengk.cloud.sample.nacos.model.ConnectionEventVO;
+import io.github.atengk.cloud.sample.nacos.model.InstanceSubscriptionStatusVO;
 import io.github.atengk.cloud.sample.nacos.model.InstanceVO;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -166,15 +167,11 @@ public class NacosOpsDemoController {
      * 获取最近一次实例编程式订阅通知状态
      */
     @GetMapping("/instance-subscription")
-    public Result<Map<String, Object>> getInstanceSubscriptionStatus() {
+    public Result<InstanceSubscriptionStatusVO> getInstanceSubscriptionStatus() {
         DemoInstanceSubscriptionService service = instanceSubscriptionServiceProvider.getIfAvailable();
         if (service == null) {
-            return Result.success(Map.of("count", 0, "instances", Collections.emptyList(), "traceId", ""));
+            return Result.success(new InstanceSubscriptionStatusVO(0, Collections.emptyList(), ""));
         }
-        return Result.success(Map.of(
-                "count", service.getNotificationCount(),
-                "instances", service.getCurrentInstances().stream().map(InstanceVO::fromInstance).collect(Collectors.toList()),
-                "traceId", service.getLastTraceId()
-        ));
+        return Result.success(service.getStatusSnapshot());
     }
 }

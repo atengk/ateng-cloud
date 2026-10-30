@@ -234,20 +234,20 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             }
 
             // 5. 调度 NacosConfigChangeListener SPI 监听器（构筑强隔离异常捕获屏障）
-            boolean listenerErrors = dispatchToListeners(event);
-            if (listenerErrors) {
+            Throwable listenerError = dispatchToListeners(event);
+            if (listenerError != null) {
                 anyError = true;
-                errorMessage = "One or more NacosConfigChangeListener failed";
-                publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, null, traceId);
+                errorMessage = "One or more NacosConfigChangeListener failed: " + listenerError.getMessage();
+                publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, listenerError, traceId);
             }
 
             // 6. 发布 Spring 原生强类型事件，支持 @EventListener 响应
-            boolean eventError = publishSafeEvent(event);
-            if (eventError) {
+            Throwable eventError = publishSafeEvent(event);
+            if (eventError != null) {
                 anyError = true;
                 if (errorMessage == null) {
-                    errorMessage = "SafeConfigRefreshEvent publication encountered errors";
-                    publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, null, traceId);
+                    errorMessage = "SafeConfigRefreshEvent publication encountered errors: " + eventError.getMessage();
+                    publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, eventError, traceId);
                 }
             }
 
@@ -357,15 +357,15 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
      * 调度 SPI 监听器并构筑异常隔离屏障
      *
      * @param event 刷新事件
-     * @return 若存在任何监听器执行抛错返回 true，全部成功返回 false
+     * @return 若监听器执行抛错返回捕获的异常根因（若有多个监听器抛错则通过 addSuppressed 链式归集），全部成功返回 null
      */
-    private boolean dispatchToListeners(SafeConfigRefreshEvent event) {
+    private Throwable dispatchToListeners(SafeConfigRefreshEvent event) {
         List<NacosConfigChangeListener> sortedListeners = getListeners();
         if (sortedListeners.isEmpty()) {
-            return false;
+            return null;
         }
 
-        boolean hasError = false;
+        Throwable aggregatedError = null;
         for (NacosConfigChangeListener listener : sortedListeners) {
             if (listener == null) {
                 continue;
@@ -375,7 +375,11 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 try {
                     listener.onConfigChange(event);
                 } catch (Throwable t) {
-                    hasError = true;
+                    if (aggregatedError == null) {
+                        aggregatedError = t;
+                    } else {
+                        aggregatedError.addSuppressed(t);
+                    }
                     log.error("[ateng-cloud-nacos] 配置热更监听器执行异常 [Listener: {}, Prefix: '{}'], 已隔离拦截: {}",
                             listener.getClass().getName(), prefix, t.getMessage(), t);
                 }
@@ -384,7 +388,7 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                         listener.getClass().getSimpleName(), prefix);
             }
         }
-        return hasError;
+        return aggregatedError;
     }
 
     /**
@@ -412,18 +416,18 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
      * 发布 Spring 强类型事件
      *
      * @param event 待发布的配置安全热更事件
-     * @return 是否发生异常（true 表示发布期间发生异常，false 表示正常完成）
+     * @return 捕获的异常（null 表示正常发布完成）
      */
-    private boolean publishSafeEvent(SafeConfigRefreshEvent event) {
+    private Throwable publishSafeEvent(SafeConfigRefreshEvent event) {
         if (eventPublisher == null) {
-            return false;
+            return null;
         }
         try {
             eventPublisher.publishEvent(event);
-            return false;
+            return null;
         } catch (Throwable t) {
             log.error("[ateng-cloud-nacos] 发布 SafeConfigRefreshEvent 事件时捕获异常: {}", t.getMessage(), t);
-            return true;
+            return t;
         }
     }
 

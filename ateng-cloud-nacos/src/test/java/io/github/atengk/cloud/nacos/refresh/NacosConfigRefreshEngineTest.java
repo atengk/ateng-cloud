@@ -358,9 +358,13 @@ class NacosConfigRefreshEngineTest {
         org.mockito.ArgumentCaptor<org.springframework.context.ApplicationEvent> eventCaptor =
                 org.mockito.ArgumentCaptor.forClass(org.springframework.context.ApplicationEvent.class);
         verify(publisher, atLeastOnce()).publishEvent(eventCaptor.capture());
-        boolean hasFailureEvent = eventCaptor.getAllValues().stream()
-                .anyMatch(e -> e instanceof io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent);
-        assertThat(hasFailureEvent).isTrue();
+        java.util.Optional<io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent> failureEvent = eventCaptor.getAllValues().stream()
+                .filter(e -> e instanceof io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent)
+                .map(e -> (io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent) e)
+                .findFirst();
+        assertThat(failureEvent).isPresent();
+        assertThat(failureEvent.get().getCause()).isNotNull();
+        assertThat(failureEvent.get().getCause().getMessage()).contains("Simulated error in listener");
     }
 
     @Test

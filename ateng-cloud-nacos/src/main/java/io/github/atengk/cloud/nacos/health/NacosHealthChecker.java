@@ -214,7 +214,8 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
                     if (detected != null && ip.equals(detected.getIp())) {
                         iface = detected.getNetworkInterface();
                     }
-                } catch (Exception ignored) {
+                } catch (Exception ex) {
+                    log.debug("Failed to detect network interface for configured IP {}: {}", ip, ex.getMessage());
                 }
             }
             return new NetworkAddressResult(ip, iface, isLoopback);

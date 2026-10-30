@@ -2,6 +2,8 @@ package io.github.atengk.cloud.sample.nacos.config;
 
 import com.alibaba.nacos.api.naming.pojo.Instance;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
+import io.github.atengk.cloud.sample.nacos.model.InstanceSubscriptionStatusVO;
+import io.github.atengk.cloud.sample.nacos.model.InstanceVO;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -13,6 +15,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * 编程式微服务实例拓扑动态变更订阅演示服务
@@ -85,5 +88,21 @@ public class DemoInstanceSubscriptionService {
 
     public String getLastTraceId() {
         return lastTraceId.get();
+    }
+
+    /**
+     * 获取当前实例订阅状态与快照视图对象
+     *
+     * @return 实例订阅状态视图对象
+     */
+    public InstanceSubscriptionStatusVO getStatusSnapshot() {
+        List<InstanceVO> instanceVOList = currentInstances.get().stream()
+                .map(InstanceVO::fromInstance)
+                .collect(Collectors.toList());
+        return new InstanceSubscriptionStatusVO(
+                notificationCount.get(),
+                instanceVOList,
+                lastTraceId.get()
+        );
     }
 }

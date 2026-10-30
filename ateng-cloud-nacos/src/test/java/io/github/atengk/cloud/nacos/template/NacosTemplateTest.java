@@ -19,6 +19,7 @@ import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -54,6 +55,11 @@ import static org.mockito.Mockito.when;
  * @since 2026-10-27
  */
 class NacosTemplateTest {
+
+    @AfterEach
+    void tearDown() {
+        MDC.clear();
+    }
 
     @Test
     @DisplayName("离线平滑空转：当未配置 Nacos 或发现禁用时，查询接口返回安全默认值")
@@ -1003,6 +1009,46 @@ class NacosTemplateTest {
         // 容器销毁时自动注销
         template.destroy();
         verify(namingService).unsubscribe(eq("pay-service"), eq("PAY_GROUP"), eq(clusters), eq(listenerCaptor.getValue()));
+        assertThat(template.getActiveSubscriptionCount()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("服务实例编程式动态订阅：支持仅指定集群列表（默认分组）重载")
+    void testSubscribeInstancesClustersDefaultGroupOverload() throws Exception {
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+        when(namingService.getServerStatus()).thenReturn("UP");
+
+        List<String> clusters = List.of("cluster-x");
+        when(namingService.selectInstances(eq("order-service"), eq("DEFAULT_GROUP"), eq(clusters), eq(true)))
+                .thenReturn(Collections.emptyList());
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+        beanFactory.addBean("serviceManager", serviceManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        AutoCloseable sub = template.subscribeInstances("order-service", clusters, instances -> {});
+        assertThat(template.getActiveSubscriptionCount()).isEqualTo(1);
+
+        ArgumentCaptor<com.alibaba.nacos.api.naming.listener.EventListener> listenerCaptor =
+                ArgumentCaptor.forClass(com.alibaba.nacos.api.naming.listener.EventListener.class);
+        verify(namingService).subscribe(eq("order-service"), eq("DEFAULT_GROUP"), eq(clusters), listenerCaptor.capture());
+
+        sub.close();
+        verify(namingService).unsubscribe(eq("order-service"), eq("DEFAULT_GROUP"), eq(clusters), eq(listenerCaptor.getValue()));
         assertThat(template.getActiveSubscriptionCount()).isEqualTo(0);
     }
 

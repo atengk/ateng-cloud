@@ -99,12 +99,14 @@ public class NacosServiceEndpoint {
                 recordMap.put("changedKeys", lastRecord.getChangedKeys());
                 recordMap.put("success", lastRecord.isSuccess());
                 recordMap.put("durationMs", lastRecord.getDurationMs());
+                // 双写 error 与 errorMessage 字段，保持与旧版监控采集端点向后兼容
                 if (lastRecord.getError() != null) {
                     recordMap.put("error", lastRecord.getError());
                     recordMap.put("errorMessage", lastRecord.getError());
                 } else {
                     recordMap.put("errorMessage", null);
                 }
+                // 在 config 节点内部与根节点同时暴露 lastRefresh，兼顾微服务通用端点扁平视图与配置中心分组视图
                 configInfo.put("lastRefresh", recordMap);
                 result.put("lastRefresh", recordMap);
             } else {

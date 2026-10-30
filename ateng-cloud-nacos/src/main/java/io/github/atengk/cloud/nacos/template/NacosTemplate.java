@@ -330,6 +330,18 @@ public class NacosTemplate implements DisposableBean {
     }
 
     /**
+     * 编程式订阅指定集群列表下服务的实例拓扑动态变更（默认分组）
+     *
+     * @param serviceName 服务名
+     * @param clusters    指定集群列表 (为 null 或空时监听全部集群)
+     * @param listener    实例拓扑变更回调消费函数
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public AutoCloseable subscribeInstances(String serviceName, List<String> clusters, Consumer<List<Instance>> listener) {
+        return subscribeInstances(serviceName, null, clusters, listener);
+    }
+
+    /**
      * 编程式订阅指定分组与集群列表下服务的实例拓扑动态变更
      *
      * @param serviceName 服务名
