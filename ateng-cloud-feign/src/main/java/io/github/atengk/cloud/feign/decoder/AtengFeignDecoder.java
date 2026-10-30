@@ -48,7 +48,7 @@ public class AtengFeignDecoder implements Decoder {
     @Override
     public Object decode(Response response, Type type) throws IOException {
         if (response.status() == 204 || response.body() == null) {
-            return delegate.decode(response, type);
+            return checkPrimitiveNull(type, delegate.decode(response, type));
         }
 
         // 1. 如果返回类型本身属于流式 / 二进制 / Response，无条件豁免并原样透传
@@ -63,7 +63,7 @@ public class AtengFeignDecoder implements Decoder {
 
         // 3. 检查自适应解包是否被全局、客户端或注解显式禁用
         if (!isUnwrapEnabled(response)) {
-            return delegate.decode(response, type);
+            return checkPrimitiveNull(type, delegate.decode(response, type));
         }
 
         // 4. 硬防爆安全前置防御：校验 Content-Length 标头
@@ -89,7 +89,7 @@ public class AtengFeignDecoder implements Decoder {
             bodyBytes = readBoundedBody(is, maxBytes);
         }
         if (bodyBytes.length == 0) {
-            return null;
+            return checkPrimitiveNull(type, null);
         }
 
         // 6. 尝试将 body 解析为 JsonNode
@@ -99,7 +99,7 @@ public class AtengFeignDecoder implements Decoder {
         } catch (Exception e) {
             // 非 JSON 格式，回退直接用原生 delegate 解码
             Response copy = response.toBuilder().body(bodyBytes).build();
-            return delegate.decode(copy, type);
+            return checkPrimitiveNull(type, delegate.decode(copy, type));
         }
 
         // 7. 判断是否符合 Result 结构 (具备数字类型的 code 字段)
@@ -119,16 +119,29 @@ public class AtengFeignDecoder implements Decoder {
 
             // 7.3 业务成功，反序列化 data 字段为业务类型 T
             if (!jsonNode.has("data") || jsonNode.get("data").isNull()) {
-                return null;
+                return checkPrimitiveNull(type, null);
             }
 
             JavaType javaType = objectMapper.getTypeFactory().constructType(type);
-            return objectMapper.readValue(jsonNode.get("data").traverse(objectMapper), javaType);
+            return checkPrimitiveNull(type, objectMapper.readValue(jsonNode.get("data").traverse(objectMapper), javaType));
         }
 
         // 8. 若返回 JSON 不包含 code 字段（如第三方 API），平滑降级反序列化为声明的 type
         JavaType javaType = objectMapper.getTypeFactory().constructType(type);
-        return objectMapper.readValue(bodyBytes, javaType);
+        return checkPrimitiveNull(type, objectMapper.readValue(bodyBytes, javaType));
+    }
+
+    private boolean isPrimitiveNonVoid(Type type) {
+        return type instanceof Class<?> clazz && clazz.isPrimitive() && clazz != void.class;
+    }
+
+    private Object checkPrimitiveNull(Type type, Object result) {
+        if (result == null && isPrimitiveNonVoid(type)) {
+            Class<?> clazz = (Class<?>) type;
+            throw new BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR,
+                    String.format("Feign 接口方法返回原生基本类型 [%s] 无法接收 null 载荷，请修改方法返回类型为包装类型", clazz.getName()));
+        }
+        return result;
     }
 
     private byte[] readBoundedBody(InputStream is, long maxBytes) throws IOException {

@@ -53,4 +53,14 @@ public class AdaptiveUnwrapMockController {
     public Map<String, Object> getThirdPartyData() {
         return Map.of("id", 888L, "username", "third-party-user");
     }
+
+    @GetMapping("/user/null-data")
+    public Result<UserVO> getNullData() {
+        return Result.success(null);
+    }
+
+    @GetMapping("/user/http-204")
+    public ResponseEntity<Void> getHttp204() {
+        return ResponseEntity.noContent().build();
+    }
 }

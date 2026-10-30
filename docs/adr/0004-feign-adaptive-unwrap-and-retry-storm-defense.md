@@ -16,27 +16,31 @@
    - 当调用端 Feign 接口声明返回具体业务对象 `T`（如 `UserVO`，非 `Result<T>`）时，定制解码器自动校验物理契约 `Result<T>` 的 `code == 200`，校验通过自动剥壳返回业务对象 `T`；若 `code != 200`，自动抛出携带原样状态码与错误描述的受管 `BusinessException`；
    - 当方法声明返回原生 `Result<T>` 时，解码器自动关闭解包，原样透传供调用方自行模式匹配；
    - 当方法声明返回 `void` / `Void` 时，校验 `code == 200` 正常返回 `null`，非 200 时同样抛出 `BusinessException`；
+   - **原生基本类型 null 防卫铁律**：当接口方法声明返回 Java 原生基本数据类型（如 `long`、`int`、`boolean`，非包装类）时，无论该 `null` 源于 `Result.data == null`、HTTP 204 No Content 还是 0 字节空响应体，解码器统一严格 Fail-Fast 抛出受管 `BusinessException(CommonResultCode.RPC_ERROR, ...)`，彻底杜绝 JVM 拆箱引发的无上下文裸 NPE；
    - **精细化规避与第三方豁免**：提供 `@AdaptiveUnwrap(false)` 注解（支持类与方法级）与 `ateng.cloud.feign.adaptive-unwrap.exclude-clients` 配置白名单，对非标准 JSON 响应自动降级为原生 Jackson 反序列化，彻底消除误杀。
 
 2. **因果异常解码与因果链保真 (Causal Error Decoding)**：
-   - 定制 `AtengFeignErrorDecoder`，当遭遇非 2xx HTTP 状态码时，优先尝试按 `Result<?>` 格式解析并转译为业务异常；
-   - 无法解析或属于网关/网络层故障时，统一转译为 `BusinessException(CommonResultCode.RPC_ERROR, ...)`，同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染。
+   - 定制 `AtengFeignErrorDecoder`，当遭遇非 2xx HTTP 状态码时，确立“业务状态优先于传输层状态”原则：优先尝试按 `Result<?>` 格式解析并转译为业务异常（`BusinessException(code, msg, feignException)`）；
+   - 无法解析或属于网关/网络层故障时，统一转译为 `BusinessException(CommonResultCode.RPC_ERROR, ...)`，同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染。
 
 3. **防雪崩弹性重试纪律 (Retry Storm Defense)**：
    - 定制 `AtengFeignRetryer` 彻底践行**“写请求绝对禁止重试不变量”**：
      - 对非幂等写接口（`POST`、`PUT`、`PATCH`、`DELETE`），无论发生任何异常，**默认彻底关闭重试**，直接抛出阻断，杜绝下游重复落库与资损；
      - 仅对纯读接口（`GET`、`HEAD`），且引发异常的根因精确为握手建连失败（`ConnectTimeoutException`），才允许弹性重试 1 次；对读取超时（`SocketTimeoutException` / `ReadTimeoutException`）一律禁止盲目重试，防范对端满载时演变为重试风暴；
+   - **Full Jitter 弹性抖动算法**：退避休眠引入带有保底时间窗的 Full Jitter 算法（`floor + random(0, upper - floor)`，`floor = min(period / 2, 20ms)`），在打散并发重试脉冲的同时保留最小物理退避缓冲，彻底消除高并发下的惊群风暴；
    - 强类型配置项 `ateng.cloud.feign.retry.*` 统一采用 `Duration` 规范管理重试间隔与上限。
 
 4. **全链路四维上下文与零信任同源防穿透透传 (4D Context & Same-Token)**：
-   - 实现 `FeignContextPropagationInterceptor`，在请求出站前自动从当前线程提取并标准化挂载：`X-Trace-Id`、`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant` 及 `X-Traffic-Tag`；
+   - 实现 `FeignContextPropagationInterceptor`，显式实现 `Ordered.HIGHEST_PRECEDENCE` 确保第一顺位执行，在请求出站前自动从当前线程提取并标准化挂载：`X-Trace-Id`、`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant` 及 `X-Traffic-Tag`；
+   - **生态扩展原生解耦**：跨中间件（如 Seata XID 透传）或业务自定义出站标头，统一遵循 Spring 官方 `RequestInterceptor` 单例责任链机制无缝协同，Starter 绝不造专有侵入性 SPI；
    - **平滑条件探测零信任凭据**：基于 `@ConditionalOnClass(SaSameUtil.class)` 条件探测，仅当类路径存在 Sa-Token 且开启校验时自动附加 `Same-Token`，未引入时平滑跳过；
    - **空值防呆清洗**：上下文项为空时直接跳过标头注入，严禁向 HTTP Headers 写入 `"null"` 脏数据；
    - **日志脱敏防线**：定制 `AtengFeignLogger`，在输出请求详情时对 `Same-Token`、`Authorization` 等敏感标头执行自动掩码脱敏。
 
 5. **连接池高并发通信底座 (Connection Pool Warm Transport)**：
    - 标配引入 `io.github.openfeign:feign-hc5`，默认自动装配 Apache HttpClient 5 线程池通信底座；
-   - 提供生产合理的默认连接池参数（最大连接数 200，单路由并发 50，长连接存活 900s，连接超时 2s，读取超时 5s），彻底告别原生单连接阻塞模式。
+   - **生命周期与空闲清理正交解耦**：保留连接总存活上限 `time-to-live: 900s`，新增配置项 `max-idle-time: 60s` 与后台扫描周期 `evict-idle-connections-interval: 60s`；在后台显式激活 `builder.evictIdleConnections(...)` 与 `builder.evictExpiredConnections()`，主动防御云原生容器滚动重建时的 TCP 半开连接与网络 RST 毛刺；
+   - 提供生产合理的默认连接池参数（最大连接数 200，单路由并发 50，握手建连 2s，读取 5s），彻底告别原生单连接阻塞模式。
 
 6. **全场景二进制流与文件传输支持 (Stream Passthrough & Multipart)**：
    - 在解码器前置设置白名单卫语句，对声明返回 `Response`、`byte[]`、`Resource`、`InputStream`、`File` 的方法无条件豁免，绝对不碰流、不解析 JSON，实现纯净流式透传；

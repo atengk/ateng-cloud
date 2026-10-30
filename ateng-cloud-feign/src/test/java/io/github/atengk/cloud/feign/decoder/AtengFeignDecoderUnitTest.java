@@ -84,4 +84,97 @@ public class AtengFeignDecoderUnitTest {
         assertFalse(FeignResultSupport.isResultObject(nodeNonResult));
         assertEquals("", FeignResultSupport.extractMessage(nodeNonResult));
     }
+
+    @Test
+    @DisplayName("测试 AtengFeignDecoder 对原生基本类型返回 null 载荷实施 Fail-Fast 阻断")
+    void testPrimitiveNullThrowsExceptionAcrossAllPrimitives() {
+        feign.codec.Decoder delegate = (resp, type) -> null;
+        io.github.atengk.cloud.feign.properties.AtengFeignProperties properties = new io.github.atengk.cloud.feign.properties.AtengFeignProperties();
+        AtengFeignDecoder decoder = new AtengFeignDecoder(delegate, properties, objectMapper);
+
+        String jsonNull = "{\"code\":200,\"msg\":\"成功\",\"data\":null}";
+        Request request = Request.create(Request.HttpMethod.GET, "/api/test", Collections.emptyMap(), null, StandardCharsets.UTF_8, null);
+
+        Class<?>[] primitives = new Class<?>[]{
+                byte.class, short.class, int.class, long.class,
+                float.class, double.class, boolean.class, char.class
+        };
+
+        for (Class<?> primitiveType : primitives) {
+            Response response = Response.builder()
+                    .status(200)
+                    .reason("OK")
+                    .request(request)
+                    .headers(Collections.emptyMap())
+                    .body(jsonNull, StandardCharsets.UTF_8)
+                    .build();
+
+            BusinessException ex = assertThrows(BusinessException.class,
+                    () -> decoder.decode(response, primitiveType),
+                    "原生基本类型 [" + primitiveType.getName() + "] 遇到 null 载荷必须抛出 BusinessException");
+            assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
+            assertTrue(ex.getMsg().contains("无法接收 null 载荷"));
+        }
+    }
+
+    @Test
+    @DisplayName("测试 AtengFeignDecoder 对 HTTP 204 与空响应体在原生基本类型下统一 Fail-Fast")
+    void testPrimitiveNullOn204AndEmptyBody() {
+        feign.codec.Decoder delegate = (resp, type) -> null;
+        io.github.atengk.cloud.feign.properties.AtengFeignProperties properties = new io.github.atengk.cloud.feign.properties.AtengFeignProperties();
+        AtengFeignDecoder decoder = new AtengFeignDecoder(delegate, properties, objectMapper);
+        Request request = Request.create(Request.HttpMethod.GET, "/api/test", Collections.emptyMap(), null, StandardCharsets.UTF_8, null);
+
+        // 1. HTTP 204 No Content
+        Response response204 = Response.builder()
+                .status(204)
+                .reason("No Content")
+                .request(request)
+                .headers(Collections.emptyMap())
+                .build();
+        BusinessException ex204 = assertThrows(BusinessException.class,
+                () -> decoder.decode(response204, boolean.class));
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex204.getCode());
+        assertTrue(ex204.getMsg().contains("boolean"));
+
+        // 2. HTTP 200 空响应体 (0 字节)
+        Response responseEmpty = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.emptyMap())
+                .body(new byte[0])
+                .build();
+        BusinessException exEmpty = assertThrows(BusinessException.class,
+                () -> decoder.decode(responseEmpty, long.class));
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), exEmpty.getCode());
+        assertTrue(exEmpty.getMsg().contains("long"));
+    }
+
+    @Test
+    @DisplayName("测试 AtengFeignDecoder 对包装类型与 void 正常放行 null 载荷")
+    void testWrapperTypesAndVoidAllowNull() throws Exception {
+        feign.codec.Decoder delegate = (resp, type) -> null;
+        io.github.atengk.cloud.feign.properties.AtengFeignProperties properties = new io.github.atengk.cloud.feign.properties.AtengFeignProperties();
+        AtengFeignDecoder decoder = new AtengFeignDecoder(delegate, properties, objectMapper);
+        Request request = Request.create(Request.HttpMethod.GET, "/api/test", Collections.emptyMap(), null, StandardCharsets.UTF_8, null);
+
+        String jsonNull = "{\"code\":200,\"msg\":\"成功\",\"data\":null}";
+        Response response = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.emptyMap())
+                .body(jsonNull, StandardCharsets.UTF_8)
+                .build();
+
+        // 包装类正常接收 null
+        assertNull(decoder.decode(response, Long.class));
+        assertNull(decoder.decode(response, Boolean.class));
+        assertNull(decoder.decode(response, Integer.class));
+
+        // void 正常返回 null
+        assertNull(decoder.decode(response, void.class));
+        assertNull(decoder.decode(response, Void.class));
+    }
 }

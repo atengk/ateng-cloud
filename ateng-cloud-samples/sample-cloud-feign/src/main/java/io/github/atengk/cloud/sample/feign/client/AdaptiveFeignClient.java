@@ -59,4 +59,22 @@ public interface AdaptiveFeignClient {
     @GetMapping("/api/mock/adaptive/third-party/data")
     @AdaptiveUnwrap(false)
     UserVO getThirdPartyData();
+
+    /**
+     * 8. 基本类型 null 安全：方法返回原生基本类型 long，对端返回 null 触发 BusinessException
+     */
+    @GetMapping("/api/mock/adaptive/user/null-data")
+    long getPrimitiveNullData();
+
+    /**
+     * 9. 包装类型 null 接收：方法返回包装类型 Long，对端返回 null 正常返回 null
+     */
+    @GetMapping("/api/mock/adaptive/user/null-data")
+    Long getWrapperNullData();
+
+    /**
+     * 10. HTTP 204 基本类型防卫：方法返回原生基本类型 boolean，对端返回 204 触发 BusinessException
+     */
+    @GetMapping("/api/mock/adaptive/user/http-204")
+    boolean getPrimitive204();
 }

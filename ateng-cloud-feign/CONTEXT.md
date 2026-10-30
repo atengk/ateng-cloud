@@ -5,15 +5,15 @@
 ## Language
 
 **Adaptive Unwrap**:
-当调用端 Feign 接口方法显式声明返回具体业务对象 `T` 时，解码引擎自动校验底层物理契约 `Result<T>` 的业务成功状态（`code == 200`）并剥离壳对象返回纯业务数据；若方法声明返回 `Result<T>` 则原样透传。
+当调用端 Feign 接口方法显式声明返回具体业务对象 `T` 时，解码引擎自动校验底层物理契约 `Result<T>` 的业务成功状态（`code == 200`）并剥离壳对象返回纯业务数据；若方法声明返回 `Result<T>` 则原样透传。若方法声明返回原生基本类型（如 `long`、`boolean`）但无论源自 `Result.data == null`、HTTP 204 还是 0 字节空响应体导致数据为 `null`，严格前置 Fail-Fast 抛出受管 `BusinessException` 杜绝裸 NPE。
 _Avoid_: 自动脱壳, 智能拆包, 响应拦截剥离
 
 **Retry Storm Defense**:
-针对非幂等写接口（POST/PUT 等）在发生读取超时时彻底禁止重试，仅对只读接口（GET）在握手建连失败时受控重试 1 次的高可用防雪崩纪律。
+针对非幂等写接口（POST/PUT 等）在发生读取超时时彻底禁止重试，仅对只读接口（GET）在握手建连失败时受控重试 1 次，并采用带保底时间窗的 Full Jitter 随机抖动算法打散重试脉冲的高可用防雪崩纪律。
 _Avoid_: 容错重试, 弹性重试机制, 失败轮询
 
 **4D Context Propagation**:
-在微服务跨进程 HTTP 通信时，出站请求自动抽取当前线程的 MDC traceId、userId、tenantId 及 ignoreTenant 快照并标准化挂载至 HTTP 标头的全链路治理机制。
+在微服务跨进程 HTTP 通信时，出站请求以最高优先级自动抽取当前线程的 MDC traceId、userId、tenantId 及 ignoreTenant 快照并标准化挂载至 HTTP 标头的全链路治理机制。
 _Avoid_: 标头透传, 请求头复制, 线程变量传递
 
 **Zero-Trust Header Guard**:
@@ -21,11 +21,11 @@ _Avoid_: 标头透传, 请求头复制, 线程变量传递
 _Avoid_: 内网认证头, 内部Token, 安全签名
 
 **Causal Error Decoding**:
-当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，精准解析并转译为框架受管的强类型 `BusinessException`，且 100% 完整保留原始因果链（`cause`）的防御性异常解码器。
+当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，优先按对端标准 `Result` 报文的业务错误状态转译为受管的强类型 `BusinessException`，且 100% 完整保留原始因果链（底层 `FeignException` 作为 `cause`）的防御性异常解码器。
 _Avoid_: 统一异常拦截, 错误包装器, Feign异常处理
 
 **Connection Pool Warm Transport**:
-摒弃原生单连接阻塞模式，默认以 Apache HttpClient 5 线程池作为高并发通信底座，保障微服务间长连接复用与优雅路由管理的传输底座。
+摒弃原生单连接阻塞模式，默认以 Apache HttpClient 5 线程池作为高并发通信底座，正交解耦长连接物理生命周期（TTL）与空闲淘汰时限并在后台主动定时驱逐失效连接，保障微服务间长连接复用与优雅路由管理的传输底座。
 _Avoid_: HTTP客户端, 底层驱动, 网络通信组件
 
 **Stream Passthrough**:

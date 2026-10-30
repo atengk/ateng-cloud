@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.feign;
 
+import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.feign.client.AdaptiveFeignClient;
@@ -131,5 +132,28 @@ public class AdaptiveFeignClientTest {
         assertNotNull(user, "声明式注解覆盖排除名单后，必须成功剥壳");
         assertEquals(1L, user.getId());
         assertEquals("ateng-1", user.getUsername());
+    }
+
+    @Test
+    @DisplayName("11. 验证声明返回原生基本类型 long 时，若对端返回 null 数据，触发 BusinessException 阻断裸 NPE")
+    void testPrimitiveReturnNullDataFailFast() {
+        BusinessException ex = assertThrows(BusinessException.class, () -> adaptiveFeignClient.getPrimitiveNullData());
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
+        assertTrue(ex.getMsg().contains("无法接收 null 载荷"));
+    }
+
+    @Test
+    @DisplayName("12. 验证声明返回包装类型 Long 时，若对端返回 null 数据，正常接收 null 并不抛出异常")
+    void testWrapperReturnNullDataSuccess() {
+        Long value = adaptiveFeignClient.getWrapperNullData();
+        assertNull(value, "包装类型必须能够安全接收 null 返回");
+    }
+
+    @Test
+    @DisplayName("13. 验证声明返回原生基本类型 boolean 时，若对端返回 HTTP 204 No Content，触发 BusinessException 阻断")
+    void testPrimitiveReturnHttp204FailFast() {
+        BusinessException ex = assertThrows(BusinessException.class, () -> adaptiveFeignClient.getPrimitive204());
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
+        assertTrue(ex.getMsg().contains("boolean"));
     }
 }
