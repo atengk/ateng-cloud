@@ -34,6 +34,17 @@ public class NacosNetworkAddressDetector {
      * @throws IllegalStateException 当配置了 failOnLoopback 且仅找到 127.0.0.1 时抛出
      */
     public String detectIp(AtengNacosProperties.NetworkProperties networkProps) {
+        return detect(networkProps).getIp();
+    }
+
+    /**
+     * 根据网络配置策略智能解析并返回网卡名称、IP 地址与回环状态综合检测结果
+     *
+     * @param networkProps 网络配置属性
+     * @return 网络地址侦测综合结果对象
+     * @throws IllegalStateException 当配置了 failOnLoopback 且仅找到 127.0.0.1 时抛出
+     */
+    public NetworkAddressResult detect(AtengNacosProperties.NetworkProperties networkProps) {
         if (networkProps == null) {
             networkProps = new AtengNacosProperties.NetworkProperties();
         }
@@ -44,24 +55,25 @@ public class NacosNetworkAddressDetector {
             log.info("Nacos network interface explicitly specified: '{}'", specifiedInterface);
             String ip = getIpFromSpecifiedInterface(specifiedInterface);
             if (StringUtils.hasText(ip)) {
-                return ip;
+                return new NetworkAddressResult(ip, specifiedInterface, false);
             }
             log.warn("Specified network interface '{}' not found or has no valid IPv4 address. Falling back to auto-detection.", specifiedInterface);
         }
 
         // 2. 遍历宿主机/容器所有网卡并执行清洗过滤
-        List<InetAddress> candidateAddresses = getValidCandidateAddresses(networkProps.getIgnoredInterfaces());
+        List<CandidateAddress> candidateAddresses = getValidCandidateAddresses(networkProps.getIgnoredInterfaces());
 
         // 3. 匹配首选网段 (Preferred Networks)
         List<String> preferred = networkProps.getPreferredNetworks();
         if (preferred != null && !preferred.isEmpty()) {
             for (String prefix : preferred) {
                 if (StringUtils.hasText(prefix)) {
-                    for (InetAddress addr : candidateAddresses) {
-                        String host = addr.getHostAddress();
+                    for (CandidateAddress candidate : candidateAddresses) {
+                        String host = candidate.getAddress().getHostAddress();
                         if (host.startsWith(prefix.trim())) {
-                            log.info("Nacos registered IP matched preferred network prefix '{}': {}", prefix, host);
-                            return host;
+                            log.info("Nacos registered IP matched preferred network prefix '{}': {} on interface '{}'",
+                                    prefix, host, candidate.getInterfaceName());
+                            return new NetworkAddressResult(host, candidate.getInterfaceName(), false);
                         }
                     }
                 }
@@ -69,19 +81,22 @@ public class NacosNetworkAddressDetector {
         }
 
         // 4. 优先选择私有内网网段 (Site-Local Address: 10.*, 172.16~31.*, 192.168.*)
-        for (InetAddress addr : candidateAddresses) {
-            if (addr.isSiteLocalAddress()) {
-                String host = addr.getHostAddress();
-                log.info("Nacos registered IP selected site-local address: {}", host);
-                return host;
+        for (CandidateAddress candidate : candidateAddresses) {
+            if (candidate.getAddress().isSiteLocalAddress()) {
+                String host = candidate.getAddress().getHostAddress();
+                log.info("Nacos registered IP selected site-local address: {} on interface '{}'",
+                        host, candidate.getInterfaceName());
+                return new NetworkAddressResult(host, candidate.getInterfaceName(), false);
             }
         }
 
         // 5. 次选其他非回环 IPv4
         if (!candidateAddresses.isEmpty()) {
-            String host = candidateAddresses.get(0).getHostAddress();
-            log.info("Nacos registered IP selected public/other address: {}", host);
-            return host;
+            CandidateAddress candidate = candidateAddresses.get(0);
+            String host = candidate.getAddress().getHostAddress();
+            log.info("Nacos registered IP selected public/other address: {} on interface '{}'",
+                    host, candidate.getInterfaceName());
+            return new NetworkAddressResult(host, candidate.getInterfaceName(), false);
         }
 
         // 6. 兜底回环地址与 Fail-Fast 校验
@@ -90,7 +105,7 @@ public class NacosNetworkAddressDetector {
         }
 
         log.warn("Nacos network address detection fallback to loopback address (127.0.0.1). This instance may not be reachable remotely.");
-        return LOOPBACK_IP;
+        return new NetworkAddressResult(LOOPBACK_IP, "lo", true);
     }
 
     /**
@@ -136,8 +151,8 @@ public class NacosNetworkAddressDetector {
         return null;
     }
 
-    private List<InetAddress> getValidCandidateAddresses(List<String> ignoredPatterns) {
-        List<InetAddress> candidates = new ArrayList<>();
+    private List<CandidateAddress> getValidCandidateAddresses(List<String> ignoredPatterns) {
+        List<CandidateAddress> candidates = new ArrayList<>();
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             if (interfaces == null) {
@@ -161,7 +176,7 @@ public class NacosNetworkAddressDetector {
                 while (addresses.hasMoreElements()) {
                     InetAddress addr = addresses.nextElement();
                     if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
-                        candidates.add(addr);
+                        candidates.add(new CandidateAddress(addr, name));
                     }
                 }
             }
@@ -169,5 +184,26 @@ public class NacosNetworkAddressDetector {
             log.error("Failed to enumerate network interfaces: {}", ex.getMessage(), ex);
         }
         return candidates;
+    }
+
+    /**
+     * 内部候选网络地址与所属物理网卡元组
+     */
+    private static final class CandidateAddress {
+        private final InetAddress address;
+        private final String interfaceName;
+
+        CandidateAddress(InetAddress address, String interfaceName) {
+            this.address = address;
+            this.interfaceName = interfaceName;
+        }
+
+        InetAddress getAddress() {
+            return address;
+        }
+
+        String getInterfaceName() {
+            return interfaceName;
+        }
     }
 }

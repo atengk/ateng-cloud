@@ -1,12 +1,15 @@
 package io.github.atengk.cloud.nacos.health;
 
 import com.alibaba.cloud.nacos.NacosConfigManager;
+import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.nacos.api.config.ConfigService;
 import io.github.atengk.cloud.nacos.constant.NacosConfigConstants;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosWarmupHelper;
 import io.github.atengk.cloud.nacos.metrics.NacosMetricsManager;
+import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
+import io.github.atengk.cloud.nacos.network.NetworkAddressResult;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import org.slf4j.Logger;
@@ -60,11 +63,13 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
     private final ObjectProvider<NacosMetadataProvider> metadataProvider;
     private final ObjectProvider<NacosTemplate> nacosTemplateProvider;
     private final ObjectProvider<NacosMetricsManager> metricsManagerProvider;
+    private final ObjectProvider<NacosNetworkAddressDetector> networkAddressDetectorProvider;
+    private final ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider;
 
     public NacosHealthChecker(AtengNacosProperties properties,
                               Environment environment,
                               ObjectProvider<NacosConfigManager> configManagerProvider) {
-        this(properties, environment, configManagerProvider, null, null, null);
+        this(properties, environment, configManagerProvider, null, null, null, null, null);
     }
 
     public NacosHealthChecker(AtengNacosProperties properties,
@@ -72,7 +77,7 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
                               ObjectProvider<NacosConfigManager> configManagerProvider,
                               @Nullable ObjectProvider<NacosMetadataProvider> metadataProvider,
                               @Nullable ObjectProvider<NacosTemplate> nacosTemplateProvider) {
-        this(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider, null);
+        this(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider, null, null, null);
     }
 
     public NacosHealthChecker(AtengNacosProperties properties,
@@ -81,12 +86,25 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
                               @Nullable ObjectProvider<NacosMetadataProvider> metadataProvider,
                               @Nullable ObjectProvider<NacosTemplate> nacosTemplateProvider,
                               @Nullable ObjectProvider<NacosMetricsManager> metricsManagerProvider) {
+        this(properties, environment, configManagerProvider, metadataProvider, nacosTemplateProvider, metricsManagerProvider, null, null);
+    }
+
+    public NacosHealthChecker(AtengNacosProperties properties,
+                              Environment environment,
+                              ObjectProvider<NacosConfigManager> configManagerProvider,
+                              @Nullable ObjectProvider<NacosMetadataProvider> metadataProvider,
+                              @Nullable ObjectProvider<NacosTemplate> nacosTemplateProvider,
+                              @Nullable ObjectProvider<NacosMetricsManager> metricsManagerProvider,
+                              @Nullable ObjectProvider<NacosNetworkAddressDetector> networkAddressDetectorProvider,
+                              @Nullable ObjectProvider<NacosDiscoveryProperties> discoveryPropertiesProvider) {
         this.properties = properties;
         this.environment = environment;
         this.configManagerProvider = configManagerProvider;
         this.metadataProvider = metadataProvider;
         this.nacosTemplateProvider = nacosTemplateProvider;
         this.metricsManagerProvider = metricsManagerProvider;
+        this.networkAddressDetectorProvider = networkAddressDetectorProvider;
+        this.discoveryPropertiesProvider = discoveryPropertiesProvider;
     }
 
     @Override
@@ -116,29 +134,43 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
         String defaultGroup = properties.getConfig() != null
                 ? properties.getConfig().getDefaultGroup() : "DEFAULT_GROUP";
 
-        // 4. 元数据与预热状态采集
+        // 4. 网卡绑定与宿主 IP 探测（防范多网卡与回环地址安全风险）
+        NetworkAddressResult networkResult = detectNetworkAddress();
+        if (networkResult != null && networkResult.isLoopback()) {
+            log.warn("[ateng-cloud-nacos] [高危安全告警] 检测到当前绑定的微服务注册 IP 为回环地址 (127.0.0.1)！"
+                    + "该节点将无法被其他微服务节点或网关跨主机寻址访问，仅推荐在单机离线自测环境下使用。"
+                    + "建议配置 ateng.cloud.nacos.network.preferred-networks 或 network-interface 显式指定内网物理网卡！");
+        }
+
+        // 5. 元数据与预热状态采集
         String serviceName = environment != null
                 ? environment.getProperty("spring.application.name", "unknown") : "unknown";
 
         NacosMetadataProvider metaProvider = metadataProvider != null ? metadataProvider.getIfAvailable() : null;
-        Map<String, String> meta = metaProvider != null ? metaProvider.getMetadata() : Collections.emptyMap();
+        Map<String, String> sortedMeta = resolveMetadataSnapshot();
 
-        String zone = meta.get(DefaultNacosMetadataProvider.KEY_ZONE);
+        String zone = sortedMeta.get(DefaultNacosMetadataProvider.KEY_ZONE);
         if (!StringUtils.hasText(zone)) {
             zone = properties.getZone();
         }
-        String cluster = meta.get(DefaultNacosMetadataProvider.KEY_CLUSTER);
+        String cluster = sortedMeta.get(DefaultNacosMetadataProvider.KEY_CLUSTER);
         if (!StringUtils.hasText(cluster)) {
             cluster = properties.getCluster();
         }
 
         NacosWarmupHelper.WarmupStatus warmup = NacosWarmupHelper.calculateWarmupStatus(metaProvider, properties);
 
-        // 5. 格式化输出全景就绪自检报告
+        // 6. 格式化输出全景就绪自检报告
         StringBuilder sb = new StringBuilder("\n");
         sb.append("=================== [ateng-cloud-nacos 全景健康就绪诊断报告] ===================\n");
         sb.append(String.format(" 应用标识 (Application)    : %s\n", serviceName));
         sb.append(String.format(" 服务端状态 (ServerStatus) : %s\n", serverStatus));
+        if (networkResult != null) {
+            sb.append(String.format(" 网卡绑定 (NetworkBind)    : Interface=%s, IP=%s%s\n",
+                    networkResult.getNetworkInterface(),
+                    networkResult.getIp(),
+                    networkResult.isLoopback() ? " [WARN: LOOPBACK]" : ""));
+        }
         sb.append(String.format(" 可用区机房 (Zone/Cluster) : Zone=%s, Cluster=%s\n",
                 StringUtils.hasText(zone) ? zone : "N/A",
                 StringUtils.hasText(cluster) ? cluster : "DEFAULT"));
@@ -154,10 +186,72 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
         if (!activeNacosSources.isEmpty()) {
             sb.append(String.format(" 已激活配置源列表         : %s\n", activeNacosSources));
         }
-        sb.append(String.format(" 实例元数据拓扑 (Metadata): %s\n", meta));
+        sb.append(String.format(" 实例元数据拓扑 (Metadata): %s\n", sortedMeta));
         sb.append("================================================================================");
 
         log.info(sb.toString());
+    }
+
+    /**
+     * 探测绑定的物理网卡名称、选中的宿主 IP 及回环状态
+     *
+     * @return 侦测到的网络地址探测结果对象，保证不为 null
+     */
+    public NetworkAddressResult detectNetworkAddress() {
+        NacosDiscoveryProperties discoveryProperties = discoveryPropertiesProvider != null
+                ? discoveryPropertiesProvider.getIfAvailable() : null;
+        NacosNetworkAddressDetector detector = networkAddressDetectorProvider != null
+                ? networkAddressDetectorProvider.getIfAvailable() : null;
+
+        // 1. 若 discoveryProperties 已配置具体 IP
+        if (discoveryProperties != null && StringUtils.hasText(discoveryProperties.getIp())) {
+            String ip = discoveryProperties.getIp().trim();
+            boolean isLoopback = "127.0.0.1".equals(ip) || "localhost".equalsIgnoreCase(ip);
+            String iface = "configured";
+            if (detector != null && properties != null) {
+                try {
+                    NetworkAddressResult detected = detector.detect(properties.getNetwork());
+                    if (detected != null && ip.equals(detected.getIp())) {
+                        iface = detected.getNetworkInterface();
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            return new NetworkAddressResult(ip, iface, isLoopback);
+        }
+
+        // 2. 若存在 detector 则主动检测
+        if (detector != null) {
+            try {
+                AtengNacosProperties.NetworkProperties netProps = properties != null ? properties.getNetwork() : null;
+                return detector.detect(netProps);
+            } catch (Exception ex) {
+                log.debug("NacosNetworkAddressDetector execution failed: {}", ex.getMessage());
+            }
+        }
+
+        // 3. 离线无探测器保底
+        return new NetworkAddressResult("127.0.0.1", "lo", true);
+    }
+
+    /**
+     * 采集并按字典序排列注入注册中心的实例元数据全量快照
+     *
+     * @return 按键名自然排序的实例元数据字典，不可为 null
+     */
+    public Map<String, String> resolveMetadataSnapshot() {
+        NacosDiscoveryProperties discoveryProps = discoveryPropertiesProvider != null
+                ? discoveryPropertiesProvider.getIfAvailable() : null;
+        NacosMetadataProvider metaProvider = metadataProvider != null
+                ? metadataProvider.getIfAvailable() : null;
+
+        Map<String, String> meta = Collections.emptyMap();
+        if (discoveryProps != null && discoveryProps.getMetadata() != null && !discoveryProps.getMetadata().isEmpty()) {
+            meta = discoveryProps.getMetadata();
+        } else if (metaProvider != null) {
+            meta = metaProvider.getMetadata();
+        }
+        return Collections.unmodifiableMap(new TreeMap<>(meta));
     }
 
     /**

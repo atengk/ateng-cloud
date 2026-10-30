@@ -82,4 +82,33 @@ class NacosNetworkAddressDetectorTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("fail-on-loopback is enabled");
     }
+
+    @Test
+    @DisplayName("测试 detect 返回包含 IP、物理网卡与回环标记的结构化侦测结果")
+    void testDetectReturnsStructuredResult() {
+        AtengNacosProperties.NetworkProperties props = new AtengNacosProperties.NetworkProperties();
+        props.setFailOnLoopback(false);
+
+        NetworkAddressResult result = detector.detect(props);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getIp()).isNotBlank();
+        assertThat(result.getNetworkInterface()).isNotBlank();
+        assertThat(result.toString()).contains("NetworkAddressResult");
+    }
+
+    @Test
+    @DisplayName("测试忽略全部网卡且允许回环时返回 loopback 结构化结果")
+    void testDetectFallbackToLoopbackResult() {
+        AtengNacosProperties.NetworkProperties props = new AtengNacosProperties.NetworkProperties();
+        props.setIgnoredInterfaces(Collections.singletonList(".*"));
+        props.setFailOnLoopback(false);
+
+        NetworkAddressResult result = detector.detect(props);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getIp()).isEqualTo("127.0.0.1");
+        assertThat(result.getNetworkInterface()).isEqualTo("lo");
+        assertThat(result.isLoopback()).isTrue();
+    }
 }

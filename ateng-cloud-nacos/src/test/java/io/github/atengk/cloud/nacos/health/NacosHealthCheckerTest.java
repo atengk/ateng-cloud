@@ -1,9 +1,12 @@
 package io.github.atengk.cloud.nacos.health;
 
 import com.alibaba.cloud.nacos.NacosConfigManager;
+import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.nacos.api.config.ConfigService;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
+import io.github.atengk.cloud.nacos.network.NacosNetworkAddressDetector;
+import io.github.atengk.cloud.nacos.network.NetworkAddressResult;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -231,6 +235,103 @@ class NacosHealthCheckerTest {
         );
 
         // 执行单例初始化后自检
+        checker.afterSingletonsInstantiated();
+        checker.checkAndLogStatus();
+    }
+
+    @Test
+    @DisplayName("网卡绑定与元数据快照诊断：准确探测网卡名称、IP 与格式化元数据")
+    void testNetworkAddressDetectionAndMetadataSnapshot() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("spring.application.name", "order-service");
+
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setIp("10.0.1.50");
+        discoveryProperties.setClusterName("beijing-cluster");
+        discoveryProperties.getMetadata().put("version", "1.0.0");
+        discoveryProperties.getMetadata().put("env", "test");
+        discoveryProperties.getMetadata().put("zone", "beijing-az1");
+
+        NacosNetworkAddressDetector detector = mock(NacosNetworkAddressDetector.class);
+        when(detector.detect(any())).thenReturn(new NetworkAddressResult("10.0.1.50", "eth0", false));
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+        beanFactory.addBean("detector", detector);
+
+        NacosHealthChecker checker = new NacosHealthChecker(
+                properties, env,
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                null, null, null,
+                beanFactory.getBeanProvider(NacosNetworkAddressDetector.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class)
+        );
+
+        NetworkAddressResult result = checker.detectNetworkAddress();
+        assertThat(result).isNotNull();
+        assertThat(result.getIp()).isEqualTo("10.0.1.50");
+        assertThat(result.getNetworkInterface()).isEqualTo("eth0");
+        assertThat(result.isLoopback()).isFalse();
+
+        Map<String, String> metadataSnapshot = checker.resolveMetadataSnapshot();
+        assertThat(metadataSnapshot).containsEntry("version", "1.0.0")
+                .containsEntry("env", "test")
+                .containsEntry("zone", "beijing-az1");
+
+        // 验证执行全景自检打印
+        checker.checkAndLogStatus();
+    }
+
+    @Test
+    @DisplayName("高危回环警告：检测到 127.0.0.1 时标记 isLoopback 为 true 并输出警告")
+    void testLoopbackDetectionAndWarning() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        MockEnvironment env = new MockEnvironment();
+
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setIp("127.0.0.1");
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+
+        NacosHealthChecker checker = new NacosHealthChecker(
+                properties, env,
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                null, null, null,
+                null,
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class)
+        );
+
+        NetworkAddressResult result = checker.detectNetworkAddress();
+        assertThat(result).isNotNull();
+        assertThat(result.getIp()).isEqualTo("127.0.0.1");
+        assertThat(result.isLoopback()).isTrue();
+
+        checker.checkAndLogStatus();
+    }
+
+    @Test
+    @DisplayName("离线自洽性：在缺少外部 Nacos 与任何 DiscoveryProperties 时自检平滑完成")
+    void testOfflineResilienceWithoutAnyDiscoveryContext() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        MockEnvironment env = new MockEnvironment();
+        StaticListableBeanFactory emptyFactory = new StaticListableBeanFactory();
+
+        NacosHealthChecker checker = new NacosHealthChecker(
+                properties, env,
+                emptyFactory.getBeanProvider(NacosConfigManager.class)
+        );
+
+        NetworkAddressResult result = checker.detectNetworkAddress();
+        assertThat(result).isNotNull();
+        assertThat(result.getIp()).isEqualTo("127.0.0.1");
+        assertThat(result.isLoopback()).isTrue();
+
+        Map<String, String> metadata = checker.resolveMetadataSnapshot();
+        assertThat(metadata).isNotNull().isEmpty();
+
+        // 平滑执行无异常
         checker.afterSingletonsInstantiated();
         checker.checkAndLogStatus();
     }

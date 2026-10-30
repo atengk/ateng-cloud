@@ -24,6 +24,7 @@ import reactor.core.publisher.Flux;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.hamcrest.Matchers.is;
@@ -557,5 +558,33 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.lastRefresh.changedKeys[0]", is("demo.config.simulate-failure")))
                 .andExpect(jsonPath("$.config.lastRefresh.success", is(false)))
                 .andExpect(jsonPath("$.config.lastRefresh.errorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")));
+    }
+
+    @Test
+    @DisplayName("全景健康就绪诊断器端到端：网卡侦测、元数据快照一致性与安全时限自检")
+    void testNacosHealthCheckerReportAndNetworkDetection() {
+        org.junit.jupiter.api.Assertions.assertNotNull(healthChecker, "NacosHealthChecker 必须成功被 Spring 容器受管装配");
+
+        // 1. 验证网卡绑定探测
+        io.github.atengk.cloud.nacos.network.NetworkAddressResult netResult = healthChecker.detectNetworkAddress();
+        org.junit.jupiter.api.Assertions.assertNotNull(netResult);
+        org.junit.jupiter.api.Assertions.assertTrue(org.springframework.util.StringUtils.hasText(netResult.getIp()));
+        org.junit.jupiter.api.Assertions.assertTrue(org.springframework.util.StringUtils.hasText(netResult.getNetworkInterface()));
+
+        // 2. 验证注入注册中心元数据快照一致性
+        Map<String, String> metaSnapshot = healthChecker.resolveMetadataSnapshot();
+        org.junit.jupiter.api.Assertions.assertNotNull(metaSnapshot);
+        org.junit.jupiter.api.Assertions.assertEquals("1.0.0", metaSnapshot.get("version"));
+        org.junit.jupiter.api.Assertions.assertEquals("beijing-az1", metaSnapshot.get("zone"));
+        org.junit.jupiter.api.Assertions.assertEquals("60s", metaSnapshot.get("warmup-duration"));
+        org.junit.jupiter.api.Assertions.assertEquals("default-cluster", metaSnapshot.get("cluster"));
+        org.junit.jupiter.api.Assertions.assertEquals("core-platform", metaSnapshot.get("team"));
+
+        // 3. 验证排空安全时限与快照目录可写性
+        org.junit.jupiter.api.Assertions.assertTrue(healthChecker.checkDrainTimeout());
+        org.junit.jupiter.api.Assertions.assertTrue(healthChecker.checkSnapshotDirectoryWritable());
+
+        // 4. 执行全景自检输出
+        healthChecker.checkAndLogStatus();
     }
 }
