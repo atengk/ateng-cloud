@@ -9,6 +9,8 @@ import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.api.naming.NamingMaintainService;
 import com.alibaba.nacos.api.naming.NamingService;
+import com.alibaba.nacos.api.naming.listener.EventListener;
+import com.alibaba.nacos.api.naming.listener.NamingEvent;
 import com.alibaba.nacos.api.naming.pojo.Instance;
 import com.alibaba.nacos.api.naming.pojo.ListView;
 import com.alibaba.nacos.api.naming.pojo.Service;
@@ -292,6 +294,144 @@ public class NacosTemplate implements DisposableBean {
         }
         return zoneAffinityFilter.filter(healthyInstances, currentZone);
     }
+
+    // ==========================================
+    // 1.1 服务实例动态编程式订阅 API (Instance Change Subscription)
+    // ==========================================
+
+    /**
+     * 编程式订阅指定服务的实例拓扑动态变更（默认分组与全集群）
+     *
+     * <p>特性保证：
+     * 1. <b>首帧即时触发</b>：订阅成功后立即执行一次当前健康实例快照查询并回调，消除启动冷态空白；
+     * 2. <b>MDC 链路隔离</b>：每次回调自动注入 traceId，并在 finally 块中确定性清理；
+     * 3. <b>异常物理屏障</b>：业务回调中的任何异常被内部捕获隔离，绝不破坏底层事件分发线程；
+     * 4. <b>受管自闭合句柄</b>：返回 {@link AutoCloseable}，调用 {@code close()} 幂等注销监听，且在容器销毁时统一释放；
+     * 5. <b>离线平滑保底</b>：在 discovery.enabled=false 环境下安全首帧回调空集合并返回 No-Op 句柄，不抛出 NPE。</p>
+     *
+     * @param serviceName 服务名 (如 order-service)
+     * @param listener    实例拓扑变更回调消费函数 (入参保证为非空只读列表)
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public AutoCloseable subscribeInstances(String serviceName, Consumer<List<Instance>> listener) {
+        return subscribeInstances(serviceName, null, null, listener);
+    }
+
+    /**
+     * 编程式订阅指定分组下服务的实例拓扑动态变更（全集群）
+     *
+     * @param serviceName 服务名
+     * @param groupName   分组名 (为 null 时使用默认组)
+     * @param listener    实例拓扑变更回调消费函数
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public AutoCloseable subscribeInstances(String serviceName, String groupName, Consumer<List<Instance>> listener) {
+        return subscribeInstances(serviceName, groupName, null, listener);
+    }
+
+    /**
+     * 编程式订阅指定分组与集群列表下服务的实例拓扑动态变更
+     *
+     * @param serviceName 服务名
+     * @param groupName   分组名 (为 null 时使用默认组)
+     * @param clusters    指定集群列表 (为 null 或空时监听全部集群)
+     * @param listener    实例拓扑变更回调消费函数
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public AutoCloseable subscribeInstances(String serviceName, String groupName, List<String> clusters, Consumer<List<Instance>> listener) {
+        Assert.hasText(serviceName, "serviceName must not be blank");
+        Assert.notNull(listener, "listener must not be null");
+
+        if (!isDiscoveryAvailable()) {
+            log.debug("Nacos discovery is not available. Skipping subscribeInstances for service '{}'", serviceName);
+            dispatchInstancesUpdate(Collections.emptyList(), listener, serviceName, groupName);
+            return () -> {};
+        }
+
+        String targetGroup = resolveGroupName(groupName);
+        List<String> targetClusters = (clusters != null && !clusters.isEmpty()) ? clusters : Collections.emptyList();
+
+        // 1. 尝试首次立即拉取并派发当前最新有效健康实例快照
+        deliverInitialInstances(serviceName, targetGroup, targetClusters, listener);
+
+        // 2. 构建具备 MDC 追踪与异常物理隔离屏障的原生 EventListener
+        EventListener nacosListener = event -> {
+            if (event instanceof NamingEvent namingEvent) {
+                List<Instance> instances = namingEvent.getInstances();
+                dispatchInstancesUpdate(instances != null ? instances : Collections.emptyList(), listener, serviceName, targetGroup);
+            }
+        };
+
+        // 3. 注册底层监听器
+        executeWithExceptionTranslation("subscribeInstances", () -> {
+            NamingService namingService = getNamingService();
+            if (namingService != null) {
+                if (!targetClusters.isEmpty()) {
+                    namingService.subscribe(serviceName, targetGroup, targetClusters, nacosListener);
+                } else {
+                    namingService.subscribe(serviceName, targetGroup, nacosListener);
+                }
+            }
+            return null;
+        });
+
+        // 4. 封装自闭合句柄并登记至活动订阅集合中受管
+        ManagedInstanceSubscription subscription = new ManagedInstanceSubscription(serviceName, targetGroup, targetClusters, nacosListener);
+        activeSubscriptions.add(subscription);
+        return subscription;
+    }
+
+    private void deliverInitialInstances(String serviceName, String targetGroup, List<String> clusters, Consumer<List<Instance>> listener) {
+        try {
+            List<Instance> initialList;
+            if (clusters != null && !clusters.isEmpty()) {
+                NamingService namingService = getNamingService();
+                if (namingService != null) {
+                    List<Instance> list = namingService.selectInstances(serviceName, targetGroup, clusters, true);
+                    initialList = list != null ? list.stream()
+                            .filter(i -> i != null && i.isEnabled() && i.isHealthy() && i.getWeight() > 0.0)
+                            .collect(Collectors.toList()) : Collections.emptyList();
+                } else {
+                    initialList = Collections.emptyList();
+                }
+            } else {
+                initialList = getHealthyInstances(serviceName, targetGroup);
+            }
+            dispatchInstancesUpdate(initialList, listener, serviceName, targetGroup);
+        } catch (Exception ex) {
+            log.warn("Failed to fetch initial Nacos instances for service '{}', group '{}'", serviceName, targetGroup, ex);
+            dispatchInstancesUpdate(Collections.emptyList(), listener, serviceName, targetGroup);
+        }
+    }
+
+    private void dispatchInstancesUpdate(List<Instance> instances, Consumer<List<Instance>> listener, String serviceName, String group) {
+        executeWithTrace(() -> {
+            try {
+                listener.accept(Collections.unmodifiableList(instances != null ? instances : Collections.emptyList()));
+            } catch (Throwable t) {
+                log.error("Error processing dynamic Nacos instance subscription for service '{}', group '{}'",
+                        serviceName, group, t);
+            }
+        });
+    }
+
+    private void unsubscribeInstances(String serviceName, String group, List<String> clusters, EventListener listener) {
+        if (!isDiscoveryAvailable()) {
+            return;
+        }
+        executeWithExceptionTranslation("unsubscribeInstances", () -> {
+            NamingService namingService = getNamingService();
+            if (namingService != null) {
+                if (clusters != null && !clusters.isEmpty()) {
+                    namingService.unsubscribe(serviceName, group, clusters, listener);
+                } else {
+                    namingService.unsubscribe(serviceName, group, listener);
+                }
+            }
+            return null;
+        });
+    }
+
 
     /**
      * 分页查询服务端所有已注册的服务名列表
@@ -1651,6 +1791,29 @@ public class NacosTemplate implements DisposableBean {
             if (closed.compareAndSet(false, true)) {
                 activeSubscriptions.remove(this);
                 removeConfigListener(dataId, group, listener);
+            }
+        }
+    }
+
+    private final class ManagedInstanceSubscription implements AutoCloseable {
+        private final String serviceName;
+        private final String group;
+        private final List<String> clusters;
+        private final EventListener listener;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        private ManagedInstanceSubscription(String serviceName, String group, List<String> clusters, EventListener listener) {
+            this.serviceName = serviceName;
+            this.group = group;
+            this.clusters = clusters;
+            this.listener = listener;
+        }
+
+        @Override
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                activeSubscriptions.remove(this);
+                unsubscribeInstances(serviceName, group, clusters, listener);
             }
         }
     }

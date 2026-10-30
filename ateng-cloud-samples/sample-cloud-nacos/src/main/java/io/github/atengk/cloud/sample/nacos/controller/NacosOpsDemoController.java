@@ -3,6 +3,7 @@ package io.github.atengk.cloud.sample.nacos.controller;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.nacos.event.NacosConnectionEvent;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
+import io.github.atengk.cloud.sample.nacos.config.DemoInstanceSubscriptionService;
 import io.github.atengk.cloud.sample.nacos.event.DemoConnectionEventListener;
 import io.github.atengk.cloud.sample.nacos.model.ConnectionEventVO;
 import io.github.atengk.cloud.sample.nacos.model.InstanceVO;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -30,11 +32,14 @@ public class NacosOpsDemoController {
 
     private final NacosTemplate nacosTemplate;
     private final ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider;
+    private final ObjectProvider<DemoInstanceSubscriptionService> instanceSubscriptionServiceProvider;
 
     public NacosOpsDemoController(NacosTemplate nacosTemplate,
-                                  ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider) {
+                                  ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider,
+                                  ObjectProvider<DemoInstanceSubscriptionService> instanceSubscriptionServiceProvider) {
         this.nacosTemplate = nacosTemplate;
         this.connectionEventListenerProvider = connectionEventListenerProvider;
+        this.instanceSubscriptionServiceProvider = instanceSubscriptionServiceProvider;
     }
 
     /**
@@ -155,5 +160,21 @@ public class NacosOpsDemoController {
                 lastEvent != null ? String.valueOf(lastEvent.getServerAddress()) : "N/A"
         );
         return Result.success(vo);
+    }
+
+    /**
+     * 获取最近一次实例编程式订阅通知状态
+     */
+    @GetMapping("/instance-subscription")
+    public Result<Map<String, Object>> getInstanceSubscriptionStatus() {
+        DemoInstanceSubscriptionService service = instanceSubscriptionServiceProvider.getIfAvailable();
+        if (service == null) {
+            return Result.success(Map.of("count", 0, "instances", Collections.emptyList(), "traceId", ""));
+        }
+        return Result.success(Map.of(
+                "count", service.getNotificationCount(),
+                "instances", service.getCurrentInstances().stream().map(InstanceVO::fromInstance).collect(Collectors.toList()),
+                "traceId", service.getLastTraceId()
+        ));
     }
 }

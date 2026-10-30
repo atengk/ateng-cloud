@@ -510,4 +510,15 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data", is(1.0)));
     }
+
+    @Test
+    @DisplayName("实例编程式订阅端到端：首帧快照即时派发、MDC 链路感知与离线自洽保底")
+    void testInstanceSubscriptionEndToEnd() throws Exception {
+        mockMvc.perform(get("/api/nacos/ops/instance-subscription")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.count", notNullValue()))
+                .andExpect(jsonPath("$.data.instances", notNullValue()));
+    }
 }

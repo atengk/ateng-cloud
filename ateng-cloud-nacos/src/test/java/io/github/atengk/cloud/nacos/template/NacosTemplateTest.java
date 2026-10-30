@@ -861,6 +861,193 @@ class NacosTemplateTest {
         assertThat(template.getNamingServerStatus()).isEqualTo("DISCONNECTED");
     }
 
+    @Test
+    @DisplayName("服务实例编程式动态订阅：离线自洽保底回调空集合且返回 No-Op 句柄")
+    void testSubscribeInstancesOfflineSmoothIdle() throws Exception {
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        AtengNacosProperties properties = new AtengNacosProperties();
+        NacosMetadataProvider metadataProvider = mock(NacosMetadataProvider.class);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                properties,
+                metadataProvider,
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicReference<List<Instance>> receivedRef = new java.util.concurrent.atomic.AtomicReference<>();
+
+        AutoCloseable sub = template.subscribeInstances("order-service", list -> {
+            callCount.incrementAndGet();
+            receivedRef.set(list);
+        });
+
+        assertThat(sub).isNotNull();
+        // 离线模式下安全首帧回调一次空集合，消除冷态等待
+        assertThat(callCount.get()).isEqualTo(1);
+        assertThat(receivedRef.get()).isEmpty();
+
+        // 幂等自闭合，不报错
+        sub.close();
+        sub.close();
+    }
+
+    @Test
+    @DisplayName("服务实例编程式动态订阅：首次立即派发、增量变更推送、MDC 链路穿透与注销闭环")
+    void testSubscribeInstancesLifecycleAndMdc() throws Exception {
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+        discoveryProperties.setGroup("DEFAULT_GROUP");
+
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+        when(namingService.getServerStatus()).thenReturn("UP");
+
+        // 模拟首帧快照
+        Instance inst1 = createInstance("192.168.1.10", 8080, "zone-1", 1.0, true, true);
+        when(namingService.selectInstances(eq("order-service"), eq("DEFAULT_GROUP"), eq(true)))
+                .thenReturn(List.of(inst1));
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+        beanFactory.addBean("serviceManager", serviceManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        java.util.concurrent.atomic.AtomicInteger callbackCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicReference<List<Instance>> currentInstances = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> callbackTraceId = new java.util.concurrent.atomic.AtomicReference<>();
+
+        // 1. 注册订阅
+        AutoCloseable sub = template.subscribeInstances("order-service", instances -> {
+            callbackCount.incrementAndGet();
+            currentInstances.set(instances);
+            callbackTraceId.set(MDC.get("traceId"));
+        });
+
+        // 验证首帧即时触发
+        assertThat(callbackCount.get()).isEqualTo(1);
+        assertThat(currentInstances.get()).hasSize(1);
+        assertThat(currentInstances.get().get(0).getIp()).isEqualTo("192.168.1.10");
+        assertThat(callbackTraceId.get()).isNotBlank();
+        assertThat(MDC.get("traceId")).isNull(); // MDC 确定性清理
+
+        // 捕获底层 Nacos EventListener
+        ArgumentCaptor<com.alibaba.nacos.api.naming.listener.EventListener> listenerCaptor =
+                ArgumentCaptor.forClass(com.alibaba.nacos.api.naming.listener.EventListener.class);
+        verify(namingService).subscribe(eq("order-service"), eq("DEFAULT_GROUP"), listenerCaptor.capture());
+        com.alibaba.nacos.api.naming.listener.EventListener nacosListener = listenerCaptor.getValue();
+        assertThat(nacosListener).isNotNull();
+
+        // 2. 模拟 Nacos 推送增量实例变更事件
+        Instance inst2 = createInstance("192.168.1.20", 8080, "zone-1", 1.0, true, true);
+        com.alibaba.nacos.api.naming.listener.NamingEvent event =
+                new com.alibaba.nacos.api.naming.listener.NamingEvent("order-service", "DEFAULT_GROUP", "", List.of(inst1, inst2));
+        nacosListener.onEvent(event);
+
+        assertThat(callbackCount.get()).isEqualTo(2);
+        assertThat(currentInstances.get()).hasSize(2);
+        assertThat(MDC.get("traceId")).isNull();
+
+        // 3. 自闭合注销
+        sub.close();
+        verify(namingService).unsubscribe(eq("order-service"), eq("DEFAULT_GROUP"), eq(nacosListener));
+    }
+
+    @Test
+    @DisplayName("服务实例编程式动态订阅：支持集群列表过滤与受管 destroy 兜底释放")
+    void testSubscribeInstancesWithClustersAndDestroy() throws Exception {
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+        when(namingService.getServerStatus()).thenReturn("UP");
+
+        List<String> clusters = List.of("cluster-a", "cluster-b");
+        when(namingService.selectInstances(eq("pay-service"), eq("PAY_GROUP"), eq(clusters), eq(true)))
+                .thenReturn(Collections.emptyList());
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+        beanFactory.addBean("serviceManager", serviceManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        AutoCloseable sub = template.subscribeInstances("pay-service", "PAY_GROUP", clusters, instances -> {});
+        assertThat(template.getActiveSubscriptionCount()).isGreaterThanOrEqualTo(1);
+
+        ArgumentCaptor<com.alibaba.nacos.api.naming.listener.EventListener> listenerCaptor =
+                ArgumentCaptor.forClass(com.alibaba.nacos.api.naming.listener.EventListener.class);
+        verify(namingService).subscribe(eq("pay-service"), eq("PAY_GROUP"), eq(clusters), listenerCaptor.capture());
+
+        // 容器销毁时自动注销
+        template.destroy();
+        verify(namingService).unsubscribe(eq("pay-service"), eq("PAY_GROUP"), eq(clusters), eq(listenerCaptor.getValue()));
+        assertThat(template.getActiveSubscriptionCount()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("服务实例编程式动态订阅：业务监听器异常物理隔离屏障")
+    void testSubscribeInstancesExceptionBarrier() throws Exception {
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+        when(namingService.getServerStatus()).thenReturn("UP");
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+        beanFactory.addBean("serviceManager", serviceManager);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        // 监听器抛出严重异常
+        AutoCloseable sub = template.subscribeInstances("err-service", instances -> {
+            throw new RuntimeException("Simulated listener business explosion!");
+        });
+
+        ArgumentCaptor<com.alibaba.nacos.api.naming.listener.EventListener> listenerCaptor =
+                ArgumentCaptor.forClass(com.alibaba.nacos.api.naming.listener.EventListener.class);
+        verify(namingService).subscribe(eq("err-service"), anyString(), listenerCaptor.capture());
+
+        // 触发变更事件，异常被内部屏障拦截，不向外抛出
+        com.alibaba.nacos.api.naming.listener.NamingEvent event =
+                new com.alibaba.nacos.api.naming.listener.NamingEvent("err-service", "DEFAULT_GROUP", "", Collections.emptyList());
+        listenerCaptor.getValue().onEvent(event);
+
+        sub.close();
+    }
+
+
     private Instance createInstance(String ip, int port, String zone, double weight, boolean healthy, boolean enabled) {
         Instance inst = new Instance();
         inst.setIp(ip);
