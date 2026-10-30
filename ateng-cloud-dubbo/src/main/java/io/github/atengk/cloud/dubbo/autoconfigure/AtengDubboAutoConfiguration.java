@@ -4,6 +4,7 @@ import io.github.atengk.cloud.dubbo.overload.DubboOverloadMetrics;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.apache.dubbo.common.utils.SerializeSecurityManager;
 import org.apache.dubbo.config.AbstractConfig;
 import org.apache.dubbo.config.ApplicationConfig;
 import org.apache.dubbo.config.ConsumerConfig;
@@ -11,6 +12,7 @@ import org.apache.dubbo.config.ProtocolConfig;
 import org.apache.dubbo.config.ProviderConfig;
 import org.apache.dubbo.config.spring.context.config.DubboConfigBeanCustomizer;
 import org.apache.dubbo.rpc.model.ApplicationModel;
+import org.apache.dubbo.rpc.model.FrameworkModel;
 import org.apache.dubbo.spring.boot.autoconfigure.DubboAutoConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +25,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
+import org.springframework.util.StringUtils;
 
 /**
  * Dubbo 核心通信与治理自动装配
@@ -41,6 +44,7 @@ public class AtengDubboAutoConfiguration {
 
     public AtengDubboAutoConfiguration(AtengDubboProperties properties) {
         DubboPropertiesHolder.set(properties);
+        applySerializeSecurityAllowlist(properties);
     }
 
     /**
@@ -64,6 +68,7 @@ public class AtengDubboAutoConfiguration {
 
         public AtengDubboConfigBeanCustomizer(AtengDubboProperties properties) {
             this.properties = properties;
+            applySerializeSecurityAllowlist(properties);
         }
 
         @Override
@@ -147,7 +152,37 @@ public class AtengDubboAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(name = "atengDubboApplicationConfigCustomizer")
     public SmartInitializingSingleton atengDubboApplicationConfigCustomizer(AtengDubboProperties properties) {
-        return () -> applyBaselineToApplicationModel(properties);
+        return () -> {
+            applyBaselineToApplicationModel(properties);
+            applySerializeSecurityAllowlist(properties);
+        };
+    }
+
+    private static void applySerializeSecurityAllowlist(AtengDubboProperties properties) {
+        if (properties == null || properties.getSecurity() == null
+                || properties.getSecurity().getSerialize() == null) {
+            return;
+        }
+        var allowPackages = properties.getSecurity().getSerialize().getAllowPackages();
+        if (allowPackages == null || allowPackages.isEmpty()) {
+            return;
+        }
+        try {
+            SerializeSecurityManager securityManager = FrameworkModel.defaultModel()
+                    .getBeanFactory()
+                    .getBean(SerializeSecurityManager.class);
+            if (securityManager != null) {
+                for (String pkg : allowPackages) {
+                    if (StringUtils.hasText(pkg)) {
+                        String trimmed = pkg.trim();
+                        securityManager.addToAllowed(trimmed);
+                        log.debug("[DUBBO-SECURITY] 动态注册自定义反序列化白名单包: {}", trimmed);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            log.debug("[DUBBO-SECURITY] 注册自定义反序列化白名单包时捕获非关键异常，已安全跳过: {}", t.getMessage());
+        }
     }
 
     private void applyBaselineToApplicationModel(AtengDubboProperties properties) {

@@ -89,6 +89,12 @@ public class AtengDubboProperties {
     @NestedConfigurationProperty
     private AtengDubboValidationProperties validation = new AtengDubboValidationProperties();
 
+    /**
+     * Dubbo 生产级安全防护配置 (包含反序列化安全白名单等)
+     */
+    @NestedConfigurationProperty
+    private AtengDubboSecurityProperties security = new AtengDubboSecurityProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -201,5 +207,13 @@ public class AtengDubboProperties {
 
     public void setValidation(AtengDubboValidationProperties validation) {
         this.validation = validation;
+    }
+
+    public AtengDubboSecurityProperties getSecurity() {
+        return security;
+    }
+
+    public void setSecurity(AtengDubboSecurityProperties security) {
+        this.security = security;
     }
 }
