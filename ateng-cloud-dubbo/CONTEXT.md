@@ -47,3 +47,15 @@ _Avoid_: 参数校验切面, Dubbo参数拦截器, JSR校验器
 **Stream Passthrough**:
 对 Triple 原生流式调用（`StreamObserver`）执行上下文预注入且不触碰单体业务解包的流式传输机制。
 _Avoid_: 流式解包, Stream拦截, 数据流转译
+
+**Seata XID RPC Propagation**:
+在 Dubbo RPC 跨进程通信中通过条件探测透明穿透并清理 Seata 全局事务 ID (TX_XID) 的防线。
+_Avoid_: Dubbo事务拦截器, SeataFilter, XID透传器
+
+**Dynamic Serialization Allowlist**:
+支持通过配置属性动态声明并合并业务数据传输对象包路径的 Dubbo 3 反序列化安全检查机制。
+_Avoid_: 序列化黑白名单, 自动信任包, Fastjson2类白名单
+
+**Hermetic Module Test Suite**:
+在脱离物理注册中心与外部网络环境下，使用纯内存桩对 Starter 自动装配、过滤器链与异常转译进行全分支防御性验证的单测矩阵。
+_Avoid_: 集成测试套件, Dubbo单测, 本地测试用例

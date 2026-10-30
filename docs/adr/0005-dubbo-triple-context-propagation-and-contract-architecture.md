@@ -14,19 +14,21 @@
 
 确立 `ateng-cloud-dubbo` 核心架构机制与生产防线：
 
-1. **双核通信协议基线与二进制序列化 (Triple & Fastjson2 Invariant)**：
+1. **双核通信协议基线与二进制序列化安全 (Triple, Fastjson2 & Dynamic Allowlist)**：
    - 默认主推云原生 **Triple 协议**（`tri`，默认端口 `50051`），基于 HTTP/2 协议栈与 gRPC 规范，原生支持 POJO 与流式通信；
    - 序列化默认采用高性能且类型安全的 **`fastjson2`**（JSONB 二进制模式），天然支持 JDK 17 Records、多态对象与异常堆栈，杜绝反序列化 RCE 风险；同时支持经典 `hessian2` 备选；
+   - **动态序列化白名单支持**：除了预设 `io.github.atengk.` 框架白名单外，提供 `ateng.cloud.dubbo.security.serialize.allow-packages` 强类型配置通道，启动时平滑合并至 Dubbo 官方序列化安全校验器，彻底解决业务 DTO 反序列化阻断风险；
    - 保持对经典高性能 TCP `dubbo` 协议（端口 `20880`）的无缝兼容与多协议共存支持。
 
 2. **双模契约与结果守卫机制 (Dual-Mode RPC Contract)**：
    - **模式 1（原生强类型实体返回）**：RPC 接口直接声明返回强类型业务对象 `T`。业务正常执行直接返回数据；业务错误时 Provider 抛出受管 `BusinessException(code, message)`，通过定制 Filter 原生透传；
    - **模式 2（显式 Result<T> 强契约防呆）**：当 RPC 接口声明返回 `Result<T>` 时，Consumer 端 Filter 自动后置拦截出参：若 `!result.isSuccess()`，自动剥壳转译为 `BusinessException(code, message)` 抛出；确保调用端只要正常接收到返回值，业务就必定成功，彻底消除漏判隐患。
 
-3. **全链路四维上下文透传与零信任同源防穿透 (4D Context & Same-Token Guard)**：
+3. **全链路四维上下文透传、Seata 事务与零信任防穿透 (4D Context, Seata XID & Same-Token Guard)**：
    - 实现 `DubboContextPropagationFilter`（双向出入栈拦截）：
-     - **Consumer 出站**：从当前线程提取 `X-Trace-Id`、`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant` 及 `X-Traffic-Tag`，压入 `RpcContext.getClientAttachment()`；
-     - **Provider 入站**：从 `RpcContext.getServerAttachment()` 还原至 MDC、`UserContextHolder`、`TenantContextHolder`；在 `finally` 块中强制执行 `clear()`，杜绝 Netty 线程池脏读；
+     - **Consumer 出站**：从当前线程提取 `X-Trace-Id`、`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant` 及 `X-Traffic-Tag`，压入 `RpcContext.getClientAttachment()`；平滑探测 Seata `RootContext`，若存在活跃 XID 则自动注入 `TX_XID`；
+     - **Provider 入站**：从 `RpcContext.getServerAttachment()` 还原至 MDC、`UserContextHolder`、`TenantContextHolder` 及 `TrafficContextHolder`；若存在 `TX_XID` 则执行 `RootContext.bind(xid)`；
+     - **确定性生命周期清理**：在 `finally` 块中强制执行 `clear()`，并在且仅在入站执行过 bind 时执行 `RootContext.unbind()`，杜绝 Netty 线程池脏读与事务悬挂；
    - **零信任内网防穿透**：平滑条件探测 Sa-Token。当微服务开启 `sa-token.same-token.check=true` 时，Consumer 自动附加 `Same-Token`，Provider 强制执行合法性校验，缺失或无效凭据直接 Fail-Fast 401 阻断。
 
 4. **因果异常保真与反序列化防御 (Causal Exception Defense)**：
@@ -51,8 +53,9 @@
    - 默认推行纯应用级服务发现（`dubbo.application.register-mode=instance`），与 Nacos 1:1 对齐并彻底消灭注册表膨胀；
    - 停机时协同 `ateng-cloud-nacos` 无损下线状态机，先注销注册表 -> 排空在途请求（`dubbo.application.shut-down.wait=15000`）-> 释放物理资源。
 
-9. **100% 离线自洽 1:1 场景工程**：
-   - 在 `ateng-cloud-samples/sample-cloud-dubbo` 配套专属沙箱，声明 `dubbo.registry.address=N/A` 点对点直连，全真覆盖 Triple 协议、双模契约、四维上下文透传、Same-Token 拦截、异常保真与流式通信。
+9. **100% 离线自洽白盒单测与 1:1 场景工程矩阵 (Hermetic Unit Tests & Sample Alignment)**：
+   - 在 `ateng-cloud-dubbo/src/test` 建立全维离线自洽白盒单测（包括自动装配条件测试、Filter 链隔离对抗测试、工具类边界与后置处理器测试），保障 `mvn test -pl ateng-cloud-dubbo` 秒级极速准出；
+   - 在 `ateng-cloud-samples/sample-cloud-dubbo` 配套专属沙箱，声明 `dubbo.registry.address=N/A` 点对点直连，全真覆盖 Triple 协议、双模契约、四维上下文透传、Seata XID 跨进程穿透、Traffic 泳道元数据联动、Same-Token 拦截、异常保真与流式通信。
 
 ## Consequences
 
