@@ -66,6 +66,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Hibernate Validator 校验引擎 (测试作用域) -->
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -47,14 +47,14 @@ public class AtengDubboEnvironmentPostProcessor implements EnvironmentPostProces
         }
         String trimmed = value.trim().toLowerCase();
         try {
-            if (trimmed.endsWith("ms")) {
+            if (trimmed.startsWith("pt")) {
+                return java.time.Duration.parse(value.trim()).toMillis();
+            } else if (trimmed.endsWith("ms")) {
                 return Long.parseLong(trimmed.substring(0, trimmed.length() - 2).trim());
             } else if (trimmed.endsWith("s")) {
                 return Long.parseLong(trimmed.substring(0, trimmed.length() - 1).trim()) * 1000L;
             } else if (trimmed.endsWith("m")) {
                 return Long.parseLong(trimmed.substring(0, trimmed.length() - 1).trim()) * 60_000L;
-            } else if (trimmed.startsWith("pt")) {
-                return java.time.Duration.parse(value.trim()).toMillis();
             } else {
                 return Long.parseLong(trimmed);
             }

@@ -123,9 +123,12 @@ public class DubboSameTokenFilter implements Filter {
             token = getAttachment(invocation, SA_SAME_TOKEN_KEY);
         }
 
+        String interfaceName = (invoker != null && invoker.getInterface() != null)
+                ? invoker.getInterface().getName() : "UnknownService";
+
         if (!StringUtils.hasText(token) || "null".equalsIgnoreCase(token.trim())) {
             log.warn("[DUBBO] 零信任防穿透拦截: 接口 [{}.{}] 未携带合法 Same-Token 受信凭据，阻断直连访问",
-                    invoker.getInterface().getName(), invocation.getMethodName());
+                    interfaceName, invocation.getMethodName());
             throw new BusinessException(CommonResultCode.UNAUTHORIZED.getCode(),
                     "微服务内部调用未携带合法 Same-Token 受信凭据，拒绝非法访问");
         }
@@ -140,7 +143,7 @@ public class DubboSameTokenFilter implements Filter {
 
         if (!valid) {
             log.warn("[DUBBO] 零信任防穿透拦截: 接口 [{}.{}] 携带的 Same-Token 凭据校验无效或已过期: token={}",
-                    invoker.getInterface().getName(), invocation.getMethodName(), token);
+                    interfaceName, invocation.getMethodName(), token);
             throw new BusinessException(CommonResultCode.UNAUTHORIZED.getCode(),
                     "微服务内部调用 Same-Token 凭据校验无效或已过期，拒绝非法访问");
         }
