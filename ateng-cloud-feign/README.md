@@ -14,19 +14,19 @@
 | :--- | :--- | :--- | :--- |
 | `AtengFeignAutoConfiguration` | 自动装配类 | Feign 基础设施自动装配总入口 | 当 `ateng.cloud.feign.enabled=true` 且存在 Feign 相关类时激活 |
 | `AtengFeignProperties` | 配置属性类 | 强类型映射配置前缀 `ateng.cloud.feign` | 默认开启，收敛连接池、自适应解包、重试与预热配置 |
-| `AtengFeignHttpClientProperties` | 配置属性类 | Apache HttpClient 5 高并发连接池传输层配置 | 默认最大连接 200，单路由 50，TTL 900s，握手 2s，读取 5s |
-| `HttpClientConnectionManager` | 传输连接池管理器 | Apache HttpClient 5 物理连接池管控（最大连接数、路由连接数与 TTL） | 标配 `@ConditionalOnMissingBean`，支持外部连接池无缝接管 |
+| `AtengFeignHttpClientProperties` | 配置属性类 | Apache HttpClient 5 高并发连接池传输层配置 | 默认最大连接 200，单路由 50，TTL 900s，空闲驱逐 60s，握手 2s，读取 5s |
+| `HttpClientConnectionManager` | 传输连接池管理器 | Apache HttpClient 5 物理连接池管控（最大连接数、路由连接数、TTL 与空闲驱逐） | 标配 `@ConditionalOnMissingBean`，支持外部连接池无缝接管 |
 | `AtengFeignAdaptiveUnwrapProperties` | 配置属性类 | 双模自适应契约解包配置（支持客户端白名单豁免） | 默认开启全局自适应解包，支持 `excludeClients` |
 | `AtengFeignContextProperties` | 配置属性类 | 全链路四维上下文透传与零信任防穿透开关 | 默认开启出站标头注入拦截 |
-| `AtengFeignRetryProperties` | 配置属性类 | 防雪崩弹性重试纪律配置（退避休眠与最大尝试次数） | 默认开启，退避 100ms~1s，最大尝试 2 次（重试 1 次） |
+| `AtengFeignRetryProperties` | 配置属性类 | 防雪崩弹性重试纪律配置（带保底下限的 Full Jitter 随机抖动退避） | 默认开启，退避 100ms~1s，最大尝试 2 次（重试 1 次） |
 | `AtengFeignPreheatProperties` | 配置属性类 | 客户端启动期饥饿预热配置（消灭首调冷启动延迟） | 默认开启，自动预热容器扫描到的全部 FeignClient |
 | `AtengFeignPayloadProperties` | 配置属性类 | 响应载荷硬防爆与内存安全配置（防 OOM 击穿） | 默认阈值 `10MB`（强类型 `DataSize`） |
 | `AtengFeignCompressionProperties` | 配置属性类 | GZIP 传输压缩配置（请求/响应压缩开关与请求体阈值） | 默认关闭，触发阈值 `2KB`（强类型 `DataSize`） |
 | `AtengFeignClientProperties` | 配置属性类 | 单 Client 独立物理隔离配置（超时、重试、解包与日志） | 按客户端名称独立声明，未配项平滑回退全局基线 |
-| `AtengFeignDecoder` | 核心解码器 | 双模自适应契约解包、流透传白名单、有界防爆与 void 解包 | 标配 `@ConditionalOnMissingBean`，智能剥离 `Result<T>` |
+| `AtengFeignDecoder` | 核心解码器 | 双模自适应契约解包、原生基本类型 null 防卫 Fail-Fast、流透传白名单、有界防爆与 void 解包 | 标配 `@ConditionalOnMissingBean`，智能剥离 `Result<T>` |
 | `AtengFeignErrorDecoder` | 错误解码器 | HTTP 状态码异常拦截并因果转译为业务异常 | 标配 `@ConditionalOnMissingBean`，100% 保留原始 `cause` |
-| `AtengFeignRetryer` | 重试器 | 防雪崩弹性重试纪律执行器（写请求读超时绝不重试） | 标配 `@ConditionalOnMissingBean`，仅建连超时弹性重试 1 次 |
-| `FeignContextPropagationInterceptor` | 请求拦截器 | 出站透明注入四维上下文、金丝雀流量染色与 Same-Token | 条件装配，防注入 `null` 脏字面量 |
+| `AtengFeignRetryer` | 重试器 | 防雪崩弹性重试纪律执行器（写请求读超时绝不重试，建连超时带保底下限 Full Jitter 弹性重试 1 次） | 标配 `@ConditionalOnMissingBean`，仅建连超时弹性重试 1 次 |
+| `FeignContextPropagationInterceptor` | 请求拦截器 | 出站透明注入四维上下文、金丝雀流量染色与 Same-Token | 标配 `Ordered.HIGHEST_PRECEDENCE` 确保第一顺位注入，防注入 `null` 脏字面量 |
 | `AtengFeignLogger` | 安全日志器 | 请求响应日志格式化与敏感标头脱敏掩码输出 | 自动拦截 `authorization`、`same-token` 等敏感键 |
 | `AtengFeignPreheatListener` | 预热监听器 | `SmartInitializingSingleton` 启动期触发连接池与子容器预热 | 当 `preheat.enabled=true` 时受管初始化 |
 | `SameTokenProvider` | 扩展点 SPI | 内部微服务零信任受信凭据标头提供器 | `@FunctionalInterface`，支持业务或鉴权模块接管 |
@@ -45,15 +45,18 @@
 | `ateng.cloud.feign.httpclient.max-connections` | `int` | `200` | 连接池全局最大物理连接数上限 |
 | `ateng.cloud.feign.httpclient.max-connections-per-route` | `int` | `50` | 单个微服务目标路由的最大并发连接数上限 |
 | `ateng.cloud.feign.httpclient.time-to-live` | `Duration` | `900s` | 连接池空闲物理连接最大存活时限 (TTL) |
+| `ateng.cloud.feign.httpclient.max-idle-time` | `Duration` | `60s` | 连接最大空闲时限，超过该时间的空闲连接将被后台线程主动驱逐防半关 |
+| `ateng.cloud.feign.httpclient.evict-idle-connections-interval` | `Duration` | `60s` | 连接池后台主动驱逐空闲连接的执行周期 |
+| `ateng.cloud.feign.httpclient.evict-expired-connections` | `boolean` | `true` | 是否在后台驱逐任务中主动清理超过 TTL 的失效物理连接 |
 | `ateng.cloud.feign.httpclient.connection-timeout` | `Duration` | `2000ms` | TCP 网络三次握手建连超时时限 |
 | `ateng.cloud.feign.httpclient.connection-request-timeout` | `Duration` | `3000ms` | 从连接池租借获取可用连接的排队等待超时时限 |
 | `ateng.cloud.feign.httpclient.socket-timeout` | `Duration` | `5000ms` | 套接字数据读取超时时限（等待对端返回响应的窗口） |
 | `ateng.cloud.feign.adaptive-unwrap.enabled` | `boolean` | `true` | 是否全局开启 `Result<T>` 业务对象自适应解包剥壳 |
 | `ateng.cloud.feign.adaptive-unwrap.exclude-clients` | `List<String>` | `[]` | 豁免自适应解包的客户端名称列表（白名单透传） |
 | `ateng.cloud.feign.context.enabled` | `boolean` | `true` | 是否开启全链路四维上下文、流量染色与 Same-Token 透传 |
-| `ateng.cloud.feign.retry.enabled` | `boolean` | `true` | 是否开启全局弹性重试纪律 |
-| `ateng.cloud.feign.retry.period` | `Duration` | `100ms` | 重试初始退避休眠时间间隔 |
-| `ateng.cloud.feign.retry.max-period` | `Duration` | `1s` | 重试最大退避休眠时间间隔 |
+| `ateng.cloud.feign.retry.enabled` | `boolean` | `true` | 是否开启全局弹性重试纪律（写请求读超时绝不重试） |
+| `ateng.cloud.feign.retry.period` | `Duration` | `100ms` | 重试初始退避休眠时间间隔（Full Jitter 基础退避时间） |
+| `ateng.cloud.feign.retry.max-period` | `Duration` | `1s` | 重试最大退避休眠时间间隔（Full Jitter 最大上限） |
 | `ateng.cloud.feign.retry.max-attempts` | `int` | `2` | 最大请求尝试总次数（包含初次调用，`2` 表示最多重试 1 次） |
 | `ateng.cloud.feign.preheat.enabled` | `boolean` | `true` | 是否开启容器启动期饥饿预热机制 |
 | `ateng.cloud.feign.preheat.clients` | `List<String>` | `[]` | 显式预热目标客户端清单（为空则自动预热扫描到的全部客户端） |
@@ -115,6 +118,9 @@ ateng:
         max-connections: 200
         max-connections-per-route: 50
         time-to-live: 900s
+        max-idle-time: 60s
+        evict-idle-connections-interval: 60s
+        evict-expired-connections: true
         connection-timeout: 2000ms
         socket-timeout: 5000ms
       retry:
@@ -222,6 +228,33 @@ public class FeignSecurityConfiguration {
 }
 ```
 
+### 4. 请求拦截器最高优先级与下游上下文消费 (`Ordered.HIGHEST_PRECEDENCE`)
+
+`FeignContextPropagationInterceptor` 显式实现了 `org.springframework.core.Ordered` 接口，并返回 `Ordered.HIGHEST_PRECEDENCE`（`-2147483648`）。这确保了在 Feign 出站拦截器链中，分布式四维上下文（TraceId、UserId、TenantId、IgnoreTenant、TrafficTag）与零信任 Same-Token 始终以**第一顺位**完成注入。
+
+下游业务或基础设施声明的任何后续自定义 `RequestInterceptor`（例如接口签名、审计记录、动态鉴权等），均可确定性地从 `RequestTemplate.headers()` 中直接读取前置注入的上下文标头：
+
+```java
+@Configuration
+public class CustomAuditInterceptorConfig {
+
+    @Bean
+    public RequestInterceptor customAuditInterceptor() {
+        return new RequestInterceptor() {
+            @Override
+            public void apply(RequestTemplate template) {
+                // 第一顺位拦截器已执行，可 100% 确定性读取链路上下文标头
+                Collection<String> traceHeaders = template.headers().get(FeignHeaderConstants.TRACE_ID);
+                if (traceHeaders != null && !traceHeaders.isEmpty()) {
+                    String traceId = traceHeaders.iterator().next();
+                    // 基于 traceId 执行下游签名或业务审计动作
+                }
+            }
+        };
+    }
+}
+```
+
 ---
 
 ## 维度三：核心生产边界与非功能语义
@@ -234,7 +267,14 @@ public class FeignSecurityConfiguration {
    - 当 `code != 200` 时，自动将其转译为受管的 `BusinessException`，完整保留业务错误码与报错文案并阻断后续执行；
 2. **原生契约透传**：调用方若显式声明返回类型即为 `Result<T>`，解码器前置识别契约类型，100% 保持原始容器透传，绝不执行二次拆包；
 3. **`void` 安全返回**：声明返回 `void` 的接口，自动调用 `decodeVoid` 校验状态，对端业务失败即刻抛出异常；
-4. **因果链保留**：HTTP 4xx/5xx 状态码由 `AtengFeignErrorDecoder` 拦截，包装为 `BusinessException`，且强制挂载原始 `FeignException` 作为 `cause`，杜绝吞咽异常堆栈。
+4. **原生基本类型 null 防卫 Fail-Fast**：当声明返回 Java 原生基础类型（如 `long`、`int`、`boolean`）但对端返回 `null`（或 HTTP 204 No Content）时，前置 Fail-Fast 阻断并转译抛出语义清晰的 `BusinessException`，杜绝未防御的底层拆箱 `NullPointerException`；
+5. **因果链保留**：HTTP 4xx/5xx 状态码由 `AtengFeignErrorDecoder` 拦截，包装为 `BusinessException`，且强制挂载原始 `FeignException` 作为 `cause`，杜绝吞咽异常堆栈。
+
+> [!WARNING]
+> **原生基本类型返回值 Null 注入避坑防线 (Primitive Return Type Invariant)**：
+> 当对端接口返回 `Result<T>` 且 `data == null`（或 HTTP 204 无返回体）时，若 Feign 客户端接口声明了 Java 基础原始类型（如 `long`、`int`、`boolean`、`double` 等），Java 在拆箱（Unboxing）过程中会不可避免地触发底层运行时 `NullPointerException`。
+> `AtengFeignDecoder` 对此构建了强前置防线：当检测到目标方法声明返回基本类型且解包结果为 `null` 时，**前置 Fail-Fast 阻断并转译抛出语义清晰的 `BusinessException`**（错误码 `500`，提示避免对可空接口声明原始类型）。
+> **生产最佳实践**：凡涉及跨进程远程调用的接口方法，返回类型必须统一声明为对象包装类（如 `Long`、`Integer`、`Boolean`）或空安全实体对象，坚决杜绝声明 `long`、`int` 等原生基本类型！
 
 ```mermaid
 flowchart TD
@@ -246,7 +286,9 @@ flowchart TD
 
     ReadBounded --> ParseResult["反序列化为 Result&lt;T&gt;"]
     ParseResult --> CheckCode{"校验业务状态码 code == 200 ?"}
-    CheckCode -- "是 (成功)" --> Unwrap["剥壳返回业务对象 T"]
+    CheckCode -- "是 (成功)" --> CheckNull{"payload 是否为 null ?"}
+    CheckNull -- "是且返回声明为原生基本类型" --> ThrowPrimitiveNull["Fail-Fast 抛出 BusinessException (防裸 NPE)"]
+    CheckNull -- "否 (对象或包装类型)" --> Unwrap["剥壳返回业务对象 T"]
     CheckCode -- "否 (业务报错)" --> ThrowBiz["转译抛出 BusinessException(code, msg)"]
 ```
 
@@ -255,11 +297,17 @@ flowchart TD
 在高并发微服务网络抖动时，不加节制的重试是导致下游雪崩和资损的罪魁祸首：
 - **写请求绝对禁止重试铁律**：对于非幂等写操作（`POST` / `PUT` / `PATCH` / `DELETE`），当发生读超时（`SocketTimeoutException`）时，**默认绝对严禁重试**，坚决杜绝下游重复落库、重复扣款与并发死锁；
 - **建连超时弹性自愈**：对于 TCP 三次握手未建立连接的超时异常（`ConnectTimeoutException`），此时请求尚未到达下游服务器，安全允许执行最多 1 次弹性重试，结合退避算法抵御瞬时网络毛刺；
+- **带保底时间窗的 Full Jitter 随机抖动退避**：为避免集群在大规模建连故障恢复时发生重试惊群与波峰叠加效应（Thundering Herd），退避休眠引入带保底时间窗的 Full Jitter 算法：
+  $$\text{upper} = \min(\text{period} \times 1.5^{\text{attempt}-1}, \text{maxPeriod})$$
+  $$\text{floor} = \min(\min(\text{period} / 2, 20), \text{upper})$$
+  $$\text{interval} = \text{floor} + \text{ThreadLocalRandom.current().nextLong}(\text{upper} - \text{floor} + 1)$$
+  保底时间窗 $\text{floor}$ 消除了 0ms 紧密自旋对 CPU 的无谓消耗，全随机离散分布将重试流量均匀打散在时间窗口内；
 - **`ConnectTimeoutException` 继承陷阱防御**：HC5 的 `ConnectTimeoutException` 继承自 `SocketTimeoutException`，重试器通过显式类型判定前置放行建连超时，杜绝被误判为读超时而丢弃。
 
 ### 3. 全链路四维上下文穿透与零信任隔离
 
 `FeignContextPropagationInterceptor` 在出站请求前自动提取当前线程的运行环境：
+- **第一顺位执行保证**：显式实现 `Ordered.HIGHEST_PRECEDENCE`，确保出站链路中上下文与受信凭据最先装配，供后续下游拦截器可靠读取；
 - **四维上下文**：$\langle\text{MDC traceId}, \text{userId}, \text{tenantId}, \text{ignoreTenant}\rangle$ 全部注入标准标头；
 - **全链路染色**：自动捕获并向下游透传 `X-Traffic-Tag`，平滑支持金丝雀灰度发布；
 - **防脏字面量**：严格过滤 `null` 与空白值，严禁向请求头注入 `"null"` 脏字符串；
@@ -276,7 +324,11 @@ flowchart TD
 4. **响应载荷硬防爆 (`max-response-size`)**：
    - 提供基于强类型 `org.springframework.util.unit.DataSize` 的响应流有界读取；当遇到超大报文（如爬虫或错误接口返回超长响应）时，自动在达到阈值（默认 10MB）时熔断，抛出 `PAYLOAD_TOO_LARGE` (413) 业务异常，坚决防范客户端 OOM 假死；
 5. **启动期饥饿预热 (`SmartInitializingSingleton`)**：
-   - 容器单例初始化完成后，自动预热底座连接池并初始化各 `@FeignClient` 对应的子容器上下文，消灭线上微服务发布时的首调慢启动延迟。
+   - 容器单例初始化完成后，自动预热底座连接池并初始化各 `@FeignClient` 对应的子容器上下文，消灭线上微服务发布时的首调慢启动延迟；
+6. **Apache HttpClient 5 主动后台空闲与过期连接驱逐 (Stale Socket Defense)**：
+   - 下游服务、网关或 Nginx 通常具备连接空闲 Keep-Alive 超时策略（默认 60s），超过后会在服务端主动关闭连接（发送 TCP FIN）；
+   - 若客户端未主动感知，借出已处于半关状态（Half-Closed）的失效连接发起通信，将直接触发 `SocketException: Connection reset` 或 `NoHttpResponseException`；
+   - 框架通过 `max-idle-time`（默认 `60s`）、`evict-idle-connections-interval`（默认 `60s`）与 `evict-expired-connections`（默认 `true`），由后台线程主动回收空闲超时的失效物理连接，并在租借连接时前置执行探活（`validateAfterInactivity: 5s`），彻底消除长连接失效引发的瞬时断连报错。
 
 ---
 
@@ -367,6 +419,46 @@ public class AdvancedFeignClientTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> advancedFeignClient.largePayload());
         assertEquals(CommonResultCode.PAYLOAD_TOO_LARGE.getCode(), ex.getCode());
     }
+}
+```
+
+#### 原生基本类型 Null 防卫与包装类型测试验证
+
+断言逻辑源自 [AdaptiveFeignClientTest.java](../ateng-cloud-samples/sample-cloud-feign/src/test/java/io/github/atengk/cloud/sample/feign/AdaptiveFeignClientTest.java)：
+
+```java
+@Test
+@DisplayName("验证声明返回原生基本类型 long 时，若对端返回 null 数据，触发 BusinessException 阻断裸 NPE")
+void testPrimitiveReturnNullDataFailFast() {
+    BusinessException ex = assertThrows(BusinessException.class, () -> adaptiveFeignClient.getPrimitiveNullData());
+    assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
+    assertTrue(ex.getMsg().contains("无法接收 null 载荷"));
+}
+
+@Test
+@DisplayName("验证声明返回包装类型 Long 时，若对端返回 null 数据，正常接收 null 并不抛出异常")
+void testWrapperReturnNullDataSuccess() {
+    Long value = adaptiveFeignClient.getWrapperNullData();
+    assertNull(value, "包装类型必须能够安全接收 null 返回");
+}
+```
+
+#### 请求拦截器第一顺位注入与确定性消费验证
+
+断言逻辑源自 [ContextPropagationFeignClientTest.java](../ateng-cloud-samples/sample-cloud-feign/src/test/java/io/github/atengk/cloud/sample/feign/ContextPropagationFeignClientTest.java)：
+
+```java
+@Test
+@DisplayName("验证后续低优先级拦截器可确定性读取第一顺位注入的上下文标头")
+void testSubsequentInterceptorObservesContextHeaders() {
+    MDC.put("traceId", "trace-order-check-9999");
+    UserContextHolder.setUserId("user-order-123");
+
+    Map<String, String> receivedHeaders = contextFeignClient.echoHeaders();
+
+    assertThat(receivedHeaders).isNotNull();
+    assertThat(receivedHeaders.get("x-trace-id")).isEqualTo("trace-order-check-9999");
+    assertThat(receivedHeaders.get("x-subsequent-observed-trace-id")).isEqualTo("trace-order-check-9999");
 }
 ```
 
