@@ -69,6 +69,11 @@ import java.util.Map;
 @ConditionalOnProperty(prefix = "ateng.cloud.feign", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AtengFeignAutoConfiguration {
 
+    /**
+     * 默认连接空闲后探活阈值（毫秒），避免对空闲连接过于频繁发起握手探测，取 min(maxIdleTime, 5000ms)
+     */
+    private static final long DEFAULT_VALIDATE_AFTER_INACTIVITY_MS = 5000L;
+
     @Bean
     @ConditionalOnMissingBean(HttpClientConnectionManager.class)
     @ConditionalOnClass(HttpClientConnectionManager.class)
@@ -82,7 +87,8 @@ public class AtengFeignAutoConfiguration {
                 builder.setConnectionTimeToLive(TimeValue.ofMilliseconds(httpclientProps.getTimeToLive().toMillis()));
             }
             if (httpclientProps.getMaxIdleTime() != null) {
-                builder.setValidateAfterInactivity(TimeValue.ofMilliseconds(Math.min(httpclientProps.getMaxIdleTime().toMillis(), 5000)));
+                builder.setValidateAfterInactivity(TimeValue.ofMilliseconds(
+                        Math.min(httpclientProps.getMaxIdleTime().toMillis(), DEFAULT_VALIDATE_AFTER_INACTIVITY_MS)));
             }
         }
         return builder.build();
@@ -102,8 +108,13 @@ public class AtengFeignAutoConfiguration {
                         .build();
                 builder.setDefaultRequestConfig(requestConfig);
 
-                if (httpclientProps.getMaxIdleTime() != null) {
-                    builder.evictIdleConnections(TimeValue.ofMilliseconds(httpclientProps.getMaxIdleTime().toMillis()));
+                TimeValue maxIdle = httpclientProps.getMaxIdleTime() != null
+                        ? TimeValue.ofMilliseconds(httpclientProps.getMaxIdleTime().toMillis())
+                        : (httpclientProps.getEvictIdleConnectionsInterval() != null
+                                ? TimeValue.ofMilliseconds(httpclientProps.getEvictIdleConnectionsInterval().toMillis())
+                                : null);
+                if (maxIdle != null) {
+                    builder.evictIdleConnections(maxIdle);
                 }
                 if (httpclientProps.isEvictExpiredConnections()) {
                     builder.evictExpiredConnections();

@@ -99,4 +99,19 @@ public class AtengFeignAutoConfigurationTest {
             customizer.customize(builder);
         });
     }
+
+    @Test
+    @DisplayName("验证未配置 max-idle-time 时回退使用 evict-idle-connections-interval 驱动驱逐")
+    void testHttpclientIdleEvictionFallbackConfiguration() {
+        contextRunner.withPropertyValues(
+                "ateng.cloud.feign.httpclient.max-idle-time=",
+                "ateng.cloud.feign.httpclient.evict-idle-connections-interval=25s"
+        ).run(context -> {
+            HttpClient5FeignConfiguration.HttpClientBuilderCustomizer customizer =
+                    context.getBean(HttpClient5FeignConfiguration.HttpClientBuilderCustomizer.class);
+            org.apache.hc.client5.http.impl.classic.HttpClientBuilder builder =
+                    org.apache.hc.client5.http.impl.classic.HttpClientBuilder.create();
+            customizer.customize(builder);
+        });
+    }
 }

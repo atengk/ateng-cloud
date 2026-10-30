@@ -16,12 +16,12 @@
    - 当调用端 Feign 接口声明返回具体业务对象 `T`（如 `UserVO`，非 `Result<T>`）时，定制解码器自动校验物理契约 `Result<T>` 的 `code == 200`，校验通过自动剥壳返回业务对象 `T`；若 `code != 200`，自动抛出携带原样状态码与错误描述的受管 `BusinessException`；
    - 当方法声明返回原生 `Result<T>` 时，解码器自动关闭解包，原样透传供调用方自行模式匹配；
    - 当方法声明返回 `void` / `Void` 时，校验 `code == 200` 正常返回 `null`，非 200 时同样抛出 `BusinessException`；
-   - **原生基本类型 null 防卫铁律**：当接口方法声明返回 Java 原生基本数据类型（如 `long`、`int`、`boolean`，非包装类）时，无论该 `null` 源于 `Result.data == null`、HTTP 204 No Content 还是 0 字节空响应体，解码器统一严格 Fail-Fast 抛出受管 `BusinessException(CommonResultCode.RPC_ERROR, ...)`，彻底杜绝 JVM 拆箱引发的无上下文裸 NPE；
+   - **原生基本类型 null 防卫铁律**：当接口方法声明返回 Java 原生基本数据类型（如 `long`、`int`、`boolean`，非包装类）时，无论该 `null` 源于 `Result.data == null`、HTTP 204 No Content 还是 0 字节空响应体，解码器统一严格 Fail-Fast 抛出受管 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，彻底杜绝 JVM 拆箱引发的无上下文裸 NPE；
    - **精细化规避与第三方豁免**：提供 `@AdaptiveUnwrap(false)` 注解（支持类与方法级）与 `ateng.cloud.feign.adaptive-unwrap.exclude-clients` 配置白名单，对非标准 JSON 响应自动降级为原生 Jackson 反序列化，彻底消除误杀。
 
 2. **因果异常解码与因果链保真 (Causal Error Decoding)**：
    - 定制 `AtengFeignErrorDecoder`，当遭遇非 2xx HTTP 状态码时，确立“业务状态优先于传输层状态”原则：优先尝试按 `Result<?>` 格式解析并转译为业务异常（`BusinessException(code, msg, feignException)`）；
-   - 无法解析或属于网关/网络层故障时，统一转译为 `BusinessException(CommonResultCode.RPC_ERROR, ...)`，同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染。
+   - 无法解析或属于网关/网络层故障时，统一转译为 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染。
 
 3. **防雪崩弹性重试纪律 (Retry Storm Defense)**：
    - 定制 `AtengFeignRetryer` 彻底践行**“写请求绝对禁止重试不变量”**：

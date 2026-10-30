@@ -51,7 +51,10 @@ public class AtengFeignHttpClientProperties {
     private Duration maxIdleTime = Duration.ofSeconds(60);
 
     /**
-     * 后台线程主动扫描并驱逐空闲与失效连接的时间间隔，默认 60 秒
+     * 后台线程主动扫描并驱逐空闲与失效连接的时间间隔，默认 60 秒。
+     * <p>
+     * 注意：在 Apache HttpClient 5 驱动中，空闲驱逐调度周期由 {@link #maxIdleTime} 统一驱动；
+     * 若未显式配置 {@link #maxIdleTime} 时，将回退读取该属性作为驱逐时限，保障配置弹性。
      */
     private Duration evictIdleConnectionsInterval = Duration.ofSeconds(60);
 

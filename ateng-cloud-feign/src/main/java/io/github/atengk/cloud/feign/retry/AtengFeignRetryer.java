@@ -31,6 +31,11 @@ public class AtengFeignRetryer implements Retryer {
 
     private static final Logger log = LoggerFactory.getLogger(AtengFeignRetryer.class);
 
+    /**
+     * Full Jitter 抖动算法保底时间窗上限阈值（毫秒），防止极小基础间隔下退避缓冲过小，同时抑制过大下限
+     */
+    private static final long DEFAULT_MIN_FLOOR_JITTER_MS = 20L;
+
     private final long period;
     private final long maxPeriod;
     private final int maxAttempts;
@@ -145,7 +150,7 @@ public class AtengFeignRetryer implements Retryer {
     long calculateSleepInterval(long effectivePeriod, long effectiveMaxPeriod, int attempt) {
         long upper = (long) (effectivePeriod * Math.pow(1.5, attempt - 1));
         upper = Math.min(upper, effectiveMaxPeriod);
-        long floor = Math.min(effectivePeriod / 2, 20);
+        long floor = Math.min(effectivePeriod / 2, DEFAULT_MIN_FLOOR_JITTER_MS);
         floor = Math.min(floor, upper);
         if (upper <= floor) {
             return upper;
