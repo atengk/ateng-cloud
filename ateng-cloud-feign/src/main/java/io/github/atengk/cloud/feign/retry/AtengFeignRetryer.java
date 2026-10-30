@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -118,8 +119,7 @@ public class AtengFeignRetryer implements Retryer {
                 return;
             }
         } else {
-            interval = (long) (effectivePeriod * Math.pow(1.5, attempt - 1));
-            interval = Math.min(interval, effectiveMaxPeriod);
+            interval = calculateSleepInterval(effectivePeriod, effectiveMaxPeriod, attempt);
         }
 
         log.warn("Feign 客户端 [{}] 请求 [{}] 遭遇建连异常，正在进行第 {}/{} 次弹性重试，退避休眠 {} ms...",
@@ -131,6 +131,26 @@ public class AtengFeignRetryer implements Retryer {
             Thread.currentThread().interrupt();
             throw e;
         }
+    }
+
+    /**
+     * 计算指数退避休眠间隔（基于带保底下限的 Full Jitter 随机抖动算法）
+     * 避免集群在大规模建连故障恢复时发生重试惊群与波峰叠加效应。
+     *
+     * @param effectivePeriod    基础间隔（毫秒）
+     * @param effectiveMaxPeriod 最大上限间隔（毫秒）
+     * @param attempt            当前重试次数序号（从 1 开始）
+     * @return 实际退避休眠毫秒数
+     */
+    long calculateSleepInterval(long effectivePeriod, long effectiveMaxPeriod, int attempt) {
+        long upper = (long) (effectivePeriod * Math.pow(1.5, attempt - 1));
+        upper = Math.min(upper, effectiveMaxPeriod);
+        long floor = Math.min(effectivePeriod / 2, 20);
+        floor = Math.min(floor, upper);
+        if (upper <= floor) {
+            return upper;
+        }
+        return floor + ThreadLocalRandom.current().nextLong(upper - floor + 1);
     }
 
     /**

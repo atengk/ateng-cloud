@@ -239,4 +239,28 @@ public class AtengFeignRetryerUnitTest {
         assertThrows(RetryableException.class, () -> retryer.continueOrPropagate(ex)); // 4 >= 4 throws, attempt becomes 5
         assertEquals(5, retryer.getAttempt());
     }
+
+    @Test
+    @DisplayName("10. 验证 calculateSleepInterval 采用带保底时间窗的 Full Jitter 随机抖动算法")
+    void testFullJitterBackoffCalculation() {
+        AtengFeignRetryer retryer = new AtengFeignRetryer(100, 1000, 3);
+
+        long minObserved = Long.MAX_VALUE;
+        long maxObserved = Long.MIN_VALUE;
+        java.util.Set<Long> uniqueIntervals = new java.util.HashSet<>();
+
+        // attempt 2: upper = min(1000, 100 * 1.5^1) = 150, floor = min(100/2, 20) = 20
+        for (int i = 0; i < 100; i++) {
+            long interval = retryer.calculateSleepInterval(100, 1000, 2);
+            assertTrue(interval >= 20, "休眠间隔必须大于等于保底下限 20ms，当前: " + interval);
+            assertTrue(interval <= 150, "休眠间隔必须小于等于上限 150ms，当前: " + interval);
+            minObserved = Math.min(minObserved, interval);
+            maxObserved = Math.max(maxObserved, interval);
+            uniqueIntervals.add(interval);
+        }
+
+        // 验证确实存在随机离散性（100 次抽样应至少产生 10 种以上不同延迟，而非固定值）
+        assertTrue(uniqueIntervals.size() > 10, "Full Jitter 必须具备充分的离散度以打散惊群");
+        assertTrue(minObserved < maxObserved, "最大观测值必须严格大于最小观测值");
+    }
 }
