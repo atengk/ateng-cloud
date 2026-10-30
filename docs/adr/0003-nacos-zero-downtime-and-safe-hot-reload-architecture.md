@@ -26,13 +26,15 @@
 3. **单例 Bean 不可变性与配置安全热更 (Safe Hot-Reload)**：
    - 严禁在承载业务与事务的单例 Bean 上标注 `@RefreshScope`；
    - 动态配置热更严格收敛于 `@ConfigurationProperties` 纯属性 POJO 增量热绑；
-   - 对外提供 `NacosConfigChangeListener` SPI 接口与强类型 `SafeConfigRefreshEvent` 事件双模回调，附带 MDC 日志隔离与异常捕获屏障。
+   - 对外提供 `NacosConfigChangeListener` SPI 接口与强类型 `SafeConfigRefreshEvent` 事件双模回调，附带 MDC 日志隔离与异常捕获屏障；
+   - **配置热更异常隔离屏障与失败领域事件 (`SafeConfigRefreshFailureEvent`)**：增量重绑、JSR-303 数据校验违规或受管监听器抛出未捕获异常时，框架不吞咽异常亦不阻断 Spring 容器，广播强类型 `SafeConfigRefreshFailureEvent`（封装 `dataId`、`group`、`changedKeys`、`errorMessage` 与 `traceId`），同时联动更新 Actuator `/actuator/nacosService` 端点 `lastRefresh` 失败快照，赋能企业级机器人告警与运维排障。
 
 4. **对称运维抽象门面 (`NacosTemplate`)**：
    - 提供完备对称的实例上下线（`markOnline` / `markOffline`）、节点探测（`getInstances` 返回空集合保底，`getMyInstance` 返回 `Optional<Instance>`）、元数据动态增删及配置读写 API；
    - 拦截底层 `NacosException`，统一转译为携带完整 `cause` 因果链的受管 `BusinessException`；
    - **多格式强类型解析与发布预检**：支持泛型读取 `getConfig(dataId, group, Class<T>)`（依据 DataId 扩展名自动推断 YAML/JSON/Properties），写接口发布前执行语法 Fail-Fast 校验；
-   - **编程式强类型订阅门面 (`subscribeConfig`)**：提供强类型配置变更监听门面，自动捕获解析异常并注入 MDC 链路追踪，返回 `AutoCloseable` 并在容器停机时受管自动注销。
+   - **编程式强类型订阅门面 (`subscribeConfig`)**：提供强类型配置变更监听门面，自动捕获解析异常并注入 MDC 链路追踪，返回 `AutoCloseable` 并在容器停机时受管自动注销；
+   - **编程式微服务实例动态变更订阅门面 (`subscribeInstances`)**：提供完备对称的 4 组重载（支持指定服务名、配置分组与集群列表），在订阅建立时立即拉取并触发首帧快照派发，自动注入并清理 MDC `traceId`，单次回调抛错由独立异常隔离屏障拦截，返回不可变 `AutoCloseable` 订阅句柄以实现确定性生命周期注销与资源清理。
 
 5. **客户端负载均衡、平滑预热加权调度与自适应资源降权 (Zone & Warmup Load Balancing & Adaptive Weighting)**：
    - 基于 `@ConditionalOnClass(ServiceInstanceListSupplier.class)` 条件自动装配定制 `ZonePreferenceServiceInstanceListSupplier` 与 `NacosWarmupLoadBalancer`；
@@ -48,7 +50,8 @@
    - 统一收敛启动健康自检（实现 `SmartInitializingSingleton`），集中输出配置导入规范、长连接状态与元数据拓扑全景报告；
    - **K8s 停机排空安全时限对比预警**：排查 `drain-timeout`，超过 25s 安全阈值时输出明确 WARN 引导，防范容器被 `SIGKILL` 强杀；
    - **容灾快照 (Failover Snapshot) 磁盘可写性预检**：启动期主动探测本地快照缓存目录写入权限，防御容器只读根文件系统导致容灾失效；
-   - **预热可观测性透出**：在 `/actuator/nacosService` 端点与 Micrometer 标尺中透出预热剩余倒计时（`warmupRemainingSeconds`）与完成态标识。
+   - **预热可观测性透出**：在 `/actuator/nacosService` 端点与 Micrometer 标尺中透出预热剩余倒计时（`warmupRemainingSeconds`）与完成态标识；
+   - **智能网卡绑定探测与 127.0.0.1 回环高危安全防御 (`NetworkAddressResult`)**：以不可变结构体形式绑定物理网卡名称与选中的宿主 IP，并在启动 ASCII 横幅中全景透出；检测到 `127.0.0.1` 回环地址时输出高危安全 WARN 告警，开启 `fail-on-loopback: true` 时 Fail-Fast 阻断启动；按自然字典序格式化输出注入注册中心的实例元数据全景快照字典。
 
 8. **100% 离线自洽单测铁律**：
    - 默认配置 `discovery.enabled: false` 与 `config.enabled: false` 时，所有治理组件自动平滑 No-Op 降级，保障 CI 环境秒级绿灯；
@@ -60,3 +63,4 @@
 2. **零 502 滚动发布保障**：全自动的主动注销与排空窗口配合平滑预热，彻底消除了微服务滚动发布时的瞬间调用报错与冷启动雪崩。
 3. **生命周期绝对安全**：彻底杜绝 `@RefreshScope` 滥用引发的深层内存泄漏与锁悬挂问题。
 4. **CI/CD 高度稳定**：离线单测与本地真实联调彻底解耦，杜绝因外部网络抖动导致 GitHub CI 构建失败。
+5. **全链路拓扑感知与热更闭环运维**：业务不仅可实时、轻量订阅微服务实例变动并优雅反注册，还能解耦捕获配置热更失败事件与审计网卡绑定拓扑，形成从开发编码、启动自检到运行时应急的全维高可用闭环。

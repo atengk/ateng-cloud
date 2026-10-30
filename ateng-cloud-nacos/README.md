@@ -63,7 +63,7 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `removeConfigListener(dataId [, group], listener)` | `void` | 动态注销底层 Nacos 原生配置监听器回调 | 具备因果异常转译，离线平滑 No-Op |
 | `ensureConfigAvailable()` | `void` | 强校验配置中心就绪状态，不可用时抛出业务异常 | 离线抛出 `NACOS_CONFIG_DISABLED` |
 | `ensureDiscoveryAvailable()` | `void` | 强校验服务发现就绪状态，不可用时抛出业务异常 | 离线抛出 `NACOS_DISCOVERY_DISABLED` |
-| `refreshConfig(changedKeys)` | `SafeConfigRefreshEvent` | 声明式按属性键集合触发安全热更与 `@ConfigurationProperties` 重绑 | 返回强类型刷新事件对象 |
+| `refreshConfig(changedKeys [, dataId, group])` | `SafeConfigRefreshEvent` | 声明式按属性键集合触发安全热更与 `@ConfigurationProperties` 重绑，失败时广播 `SafeConfigRefreshFailureEvent` 并记录至端点 | 返回强类型刷新事件对象 |
 | `isConfigAvailable()` | `boolean` | 判断当前 Nacos 配置中心客户端是否就绪可用 | 离线返回 `false` |
 | `isDiscoveryAvailable()` | `boolean` | 判断当前 Nacos 服务发现客户端是否就绪可用 | 离线返回 `false` |
 | `getConfigServerStatus()` | `String` | 获取当前配置中心服务端通信状态（如 `UP`、`DOWN`） | 离线返回 `"DOWN"` |
@@ -72,7 +72,7 @@ Nacos 服务注册发现与现代动态配置中心基础设施构件，全面�
 | `getHealthyInstances(serviceName [, groupName])` | `List<Instance>` | 查询指定服务通过健康检查的实例列表 | 保底返回空集合 `[]` |
 | `getInstances(serviceName [, groupName])` | `List<Instance>` | 查询健康且可用实例（自动过滤 `weight <= 0.0` 与禁用节点） | 保底返回空集合 `[]` |
 | `selectOneHealthyInstance(serviceName [, groupName])` | `Optional<Instance>` | 基于 Nacos 随机权重算法选举单个健康可用实例 | 保底返回 `Optional.empty()` |
-| `subscribeInstances(serviceName [, groupName, clusters], callback)` | `AutoCloseable` | 编程式订阅微服务实例拓扑动态变更，首帧快照即时派发并自动注入 MDC 与异常屏障 | 离线平滑注册空句柄 |
+| `subscribeInstances(serviceName [, groupName, clusters], callback)` | `AutoCloseable` | 编程式订阅微服务实例拓扑动态变更（提供 4 组重载），首帧快照即时派发并自动注入 MDC 与异常隔离屏障 | 离线平滑注册空句柄 |
 | `getMyInstance()` | `Optional<Instance>` | 获取当前服务节点在 Nacos 注册的自身实例信息快照 | 保底返回 `Optional.empty()` |
 | `getSameZoneInstances(serviceName [, groupName])` | `List<Instance>` | 查询机房（Zone）就近亲和健康实例，本区全宕平滑降级全集群 | 保底返回空集合 `[]` |
 | `isUnderProtection(serviceName [, groupName])` | `boolean` | 检测目标服务集群是否触发过载保护阈值 | 保底返回 `false` |
@@ -287,7 +287,78 @@ public class DemoTypedSubscriptionService {
 }
 ```
 
-### 4. 客户端负载均衡亲和调度演示 (`NacosLoadBalancerDemoController.java`)
+### 4. 编程式微服务实例拓扑动态变更订阅 (`DemoInstanceSubscriptionService.java`)
+
+100% 逆向提取自样例工程。使用 `NacosTemplate.subscribeInstances` 门面编程式订阅微服务实例拓扑动态变更，首帧快照即时派发，自动注入 MDC `traceId` 并在关闭时自动安全注销：
+
+```java
+@Service
+public class DemoInstanceSubscriptionService {
+
+    private static final Logger log = LoggerFactory.getLogger(DemoInstanceSubscriptionService.class);
+
+    public static final String TARGET_SERVICE_NAME = "sample-cloud-nacos";
+
+    private final NacosTemplate nacosTemplate;
+    private final AtomicInteger notificationCount = new AtomicInteger(0);
+    private final AtomicReference<List<Instance>> currentInstances = new AtomicReference<>(Collections.emptyList());
+    private final AtomicReference<String> lastTraceId = new AtomicReference<>("");
+    private AutoCloseable subscriptionHandle;
+
+    public DemoInstanceSubscriptionService(NacosTemplate nacosTemplate) {
+        this.nacosTemplate = nacosTemplate;
+    }
+
+    @PostConstruct
+    public void init() {
+        // 编程式订阅 sample-cloud-nacos 实例拓扑变更，自动挂载 MDC traceId 穿透与异常屏障
+        try {
+            this.subscriptionHandle = nacosTemplate.subscribeInstances(
+                    TARGET_SERVICE_NAME,
+                    this::onInstancesChanged
+            );
+            log.info("[DemoInstanceSubscriptionService] 成功注册 '{}' 实例拓扑动态变更订阅句柄", TARGET_SERVICE_NAME);
+        } catch (Exception ex) {
+            log.warn("[DemoInstanceSubscriptionService] 初始化实例动态订阅跳过 (离线或无可用服务发现): {}", ex.getMessage());
+        }
+    }
+
+    @PreDestroy
+    public void destroy() {
+        if (subscriptionHandle != null) {
+            try {
+                subscriptionHandle.close();
+                log.info("[DemoInstanceSubscriptionService] 已安全注销 '{}' 实例动态变更订阅句柄", TARGET_SERVICE_NAME);
+            } catch (Exception ex) {
+                log.warn("Error closing instance subscription: {}", ex.getMessage());
+            }
+        }
+    }
+
+    public void onInstancesChanged(List<Instance> instances) {
+        int count = notificationCount.incrementAndGet();
+        currentInstances.set(instances != null ? instances : Collections.emptyList());
+        String traceId = MDC.get("traceId");
+        lastTraceId.set(traceId != null ? traceId : "");
+        log.info("[DemoInstanceSubscriptionService] 收到微服务实例拓扑变更通知 #{}, traceId={}, count={}",
+                count, traceId, currentInstances.get().size());
+    }
+
+    public int getNotificationCount() {
+        return notificationCount.get();
+    }
+
+    public List<Instance> getCurrentInstances() {
+        return currentInstances.get();
+    }
+
+    public String getLastTraceId() {
+        return lastTraceId.get();
+    }
+}
+```
+
+### 5. 客户端负载均衡亲和调度演示 (`NacosLoadBalancerDemoController.java`)
 
 ```java
 @RestController
@@ -315,7 +386,7 @@ public class NacosLoadBalancerDemoController {
 }
 ```
 
-### 5. 单例不可变配置属性 POJO (`DemoConfigProperties.java`)
+### 6. 单例不可变配置属性 POJO (`DemoConfigProperties.java`)
 
 业务配置属性统一使用 `@ConfigurationProperties` 承载，热更新时仅增量重新绑定属性对象，坚决不物理销毁单例 Bean：
 
@@ -340,7 +411,7 @@ public class DemoConfigProperties {
 }
 ```
 
-### 6. 业务 Controller 注入与强类型契约 (`NacosConfigDemoController.java`)
+### 7. 业务 Controller 注入与强类型契约 (`NacosConfigDemoController.java`)
 
 ```java
 @RestController
@@ -479,15 +550,46 @@ public class DemoSafeRefreshEventListener {
 }
 ```
 
-### 4. Actuator 端点读取预热倒计时、受管监听器与运行状态
+### 4. 监听 `SafeConfigRefreshFailureEvent` 领域事件实现配置热更异常告警与应急联动 (`DemoConfigRefreshFailureEventListener.java`)
 
-框架扩展了 `/actuator/nacosService` 端点，直观输出预热倒计时、受管监听器拓扑与最近一次热更状态：
+在配置属性增量重绑、JSR-303 数据校验未通过或业务受管监听器抛出未捕获异常时，框架通过异常隔离屏障兜底捕获并广播强类型 `SafeConfigRefreshFailureEvent`，避免异常击穿 Spring 容器导致进程崩溃，同时驱动机器人报警（如钉钉、企业微信）与故障排查：
+
+```java
+@Component
+public class DemoConfigRefreshFailureEventListener {
+
+    private static final Logger log = LoggerFactory.getLogger(DemoConfigRefreshFailureEventListener.class);
+
+    private final AtomicInteger eventCount = new AtomicInteger(0);
+    private final AtomicReference<SafeConfigRefreshFailureEvent> lastEvent = new AtomicReference<>();
+
+    @EventListener
+    public void onSafeConfigRefreshFailure(SafeConfigRefreshFailureEvent event) {
+        int count = eventCount.incrementAndGet();
+        lastEvent.set(event);
+        log.warn("[告警通知] 检测到 Nacos 配置热更异常领域事件 #{} [dataId='{}', group='{}', changedKeys={}, traceId='{}', error='{}']",
+                count, event.getDataId(), event.getGroup(), event.getChangedKeys(), event.getTraceId(), event.getErrorMessage());
+    }
+
+    public int getEventCount() {
+        return eventCount.get();
+    }
+
+    public SafeConfigRefreshFailureEvent getLastEvent() {
+        return lastEvent.get();
+    }
+}
+```
+
+### 5. Actuator 端点读取预热倒计时、受管监听器与热更故障全景 (`/actuator/nacosService`)
+
+框架扩展了 `/actuator/nacosService` 端点，直观输出预热倒计时、受管监听器拓扑与最近一次热更状态（含成功与失败根因快照）：
 
 ```bash
 curl http://localhost:8080/actuator/nacosService
 ```
 
-响应 JSON 示例：
+响应 JSON 示例（配置正常刷新与异常失败双态快照）：
 
 ```json
 {
@@ -525,11 +627,54 @@ curl http://localhost:8080/actuator/nacosService
       "success": true,
       "durationMs": 12
     }
+  },
+  "lastRefresh": {
+    "traceId": "ee02496e9149d0f0d281b8bf07f5e876",
+    "timestamp": 1793115496654,
+    "changedKeys": [
+      "demo.config.title",
+      "demo.config.secret-key"
+    ],
+    "success": true,
+    "durationMs": 12
   }
 }
 ```
 
-### 5. 动态介入候选实例有效权重 (`InstanceWeightCalculator` SPI)
+> [!NOTE]
+> 当配置热更失败时，`lastRefresh` 将包含 `success: false` 与详细的 `errorMessage`（例如 `"One or more NacosConfigChangeListener failed: ..."`），便于运维通过自动化巡检或监控大盘即时审计与定位。
+
+### 6. 启动诊断全景报告与网卡绑定探测 (`NacosHealthChecker & NetworkAddressResult`)
+
+框架内置 `NacosHealthChecker` 在容器启动阶段（`SmartInitializingSingleton`）输出全景健康就绪 ASCII 横幅，直观展示当前物理网卡绑定、宿主 IP、回环安全状态与元数据快照：
+
+```text
+=================== [ateng-cloud-nacos 全景健康就绪诊断报告] ===================
+ 应用标识 (Application)    : sample-cloud-nacos
+ 服务端状态 (ServerStatus) : DISCONNECTED
+ 网卡绑定 (NetworkBind)    : Interface=eth0, IP=192.168.1.100
+ 可用区机房 (Zone/Cluster) : Zone=beijing-az1, Cluster=default-cluster
+ 优雅停机 (DrainTimeout)  : 10s
+ 容灾快照 (SnapshotDisk)  : HEALTHY (Writable)
+ 启动预热 (WarmupStatus)  : Duration=60s, Remaining=57s, Completed=false
+ 动态配置 (ConfigSources) : BYPASS (Active: 0, DefaultGroup: DEFAULT_GROUP)
+ 实例元数据拓扑 (Metadata): {cluster=default-cluster, demo-module=sample-cloud-nacos, env=test, framework=ateng-cloud, maintainer=Ateng, startup-time=1793352385642, team=core-platform, version=1.0.0, warmup-duration=60s, zone=beijing-az1}
+================================================================================
+```
+
+业务亦可通过注入 `NacosHealthChecker` 编程式获取不可变探测对象与排序元数据字典：
+
+```java
+// 编程式获取智能网卡探测结果（网卡名称、宿主 IP 与回环标记）
+NetworkAddressResult netResult = healthChecker.detectNetworkAddress();
+String networkInterface = netResult.getNetworkInterface();
+String ip = netResult.getIp();
+
+// 获取注册中心实例元数据按自然字典序排列的完整快照
+Map<String, String> metaSnapshot = healthChecker.resolveMetadataSnapshot();
+```
+
+### 7. 动态介入候选实例有效权重 (`InstanceWeightCalculator` SPI)
 
 当需要基于业务规则（如 VIP 租户路由分、自定义健康指标）动态干预候选实例的权重时，可注册自定义 `InstanceWeightCalculator` Bean：
 
@@ -659,6 +804,33 @@ sequenceDiagram
 - **全集群过载熔断兜底**：
   当全体可用实例均处于重度过载状态时，负载均衡器触发全集群过载熔断保护，自动安全回退为均匀轮询，坚决杜绝因算法过度敏感导致全网节点自我孤立引发 503 报警。
 
+### 11. 微服务实例拓扑动态变更订阅首帧与异常隔离屏障
+
+- **首帧即时快照派发语义**：
+  在微服务消费端调用 `subscribeInstances` 注册监听器时，框架立即向底层拉取当前服务实例快照并向监听回调同步触发一次（首帧通知），确保调用方无需额外执行一次同步查询即可即时获知当前集群拓扑；
+- **全链路 MDC 上下文与异常隔离屏障**：
+  在实例变动推送回调执行前，框架自动检测并注入 MDC `traceId`；若业务监听回调逻辑发生未捕获异常，由框架顶层捕获并记录 ERROR 日志，坚决阻断次生异常向上渗透破坏 Nacos 底层长连接与事件轮询调度；
+- **`AutoCloseable` 确定性反注册**：
+  订阅返回 `AutoCloseable` 句柄，支持业务在 `@PreDestroy` 或组件生命周期结束时通过 `close()` 方法向 Nacos 注销监听器，彻底杜绝回调泄漏与内存悬挂。
+
+### 12. 配置热更失败容灾屏障与领域事件机制 (`SafeConfigRefreshFailureEvent`)
+
+- **异常不击穿 Spring 容器原则**：
+  在动态配置安全热更流程中，若属性重绑失败、JSR-303 数据校验违规或特定 `NacosConfigChangeListener` 抛出业务异常，框架绝不吞咽异常，亦不任由未受控异常击穿 Spring 容器导致进程崩溃；
+- **失败领域事件广播**：
+  框架在捕获异常后，立即广播携带完整因果链（`cause`）、受影响 Data ID / Group、变更键集及 MDC `traceId` 的强类型 `SafeConfigRefreshFailureEvent` 领域事件，供业务告警机器人（钉钉、企业微信等）与监控系统异步捕获；
+- **运维端点联动呈现**：
+  失败状态原子写入 Actuator `/actuator/nacosService` 端点的 `lastRefresh` 结构中，标记 `success: false` 并完整透出 `errorMessage`，为运维自动化巡检提供强类型排障依据。
+
+### 13. 智能网卡绑定探测与 127.0.0.1 回环高危安全防御 (`NetworkAddressResult`)
+
+- **虚拟与桥接网卡智能清洗**：
+  在容器或多网卡宿主机环境中，`NacosNetworkAddressDetector` 自动遍历宿主网卡并过滤 `docker0`、`cni0`、`veth*` 等虚拟或桥接网卡，优先绑定与 `ateng.cloud.nacos.network.preferred-networks` 匹配的真实物理内网 IP；
+- **结构化网卡绑定模型 (`NetworkAddressResult`)**：
+  将探测得到的物理网卡名称（`networkInterface`）、宿主 IP 与回环标记封装为不可变值对象，消除传统单 IP 字符串无法获知硬件绑定来源的问题；
+- **回环高危告警与启动阻断**：
+  若未能探测到有效局域网 IP 而回退至 `127.0.0.1` 等回环地址，会导致集群跨主机寻址彻底瘫痪。框架在启动自检横幅中显著输出 `[WARN: LOOPBACK]` 告警，并在开启 `fail-on-loopback: true`（默认开启）时直接 Fail-Fast 阻断容器启动，防止带病上线。
+
 ---
 
 ## 维度四：物理排版与代码全真验证
@@ -673,6 +845,9 @@ sequenceDiagram
   - `testSimulateRefreshAndSpiAndEventListenerPropagation`：验证主动触发配置增量热更时，MDC `traceId` 成功穿透，`NacosConfigChangeListener` SPI 与 Spring `@EventListener` 双模成功接收事件；
   - `testSimulateRefreshValidationError`：验证 JSR-303 参数格式校验防卫（变更键名列表为空时 Fail-Fast 阻断并返回标准 `Result(code=400)`）；
   - `testTypedConfigSubscriptionAndMdcTracing`：验证 `subscribeConfig` 强类型泛型订阅全真反序列化与 MDC `traceId` 链路追踪穿透；
+  - `testInstanceSubscriptionEndToEnd`：验证微服务实例编程式动态订阅首帧快照即时派发、MDC `traceId` 链路传递及离线自洽保底；
+  - `testSafeConfigRefreshFailureEventAndActuatorLinkage`：验证配置热更失败时框架异常隔离屏障生效（不击穿 Spring 容器），`SafeConfigRefreshFailureEvent` 广播成功触发告警联动，且 Actuator `/actuator/nacosService` 运维端点同步呈现失败详情；
+  - `testNacosHealthCheckerReportAndNetworkDetection`：验证 `NacosHealthChecker` 网卡与宿主 IP 智能探测（`NetworkAddressResult`）、实例元数据字典序快照一致性、排空安全时限与本地容灾快照目录可写性全景自检；
   - `testConnectionEventListening`：验证 `NacosConnectionEvent` gRPC 长连接领域事件发布与受管监听；
   - `testLoadBalancerZoneAffinity`：验证 Spring Cloud LoadBalancer 集成同机房（Zone Affinity）优先路由与平滑加权预热真实调度；
   - `testNacosMetricsAndHealthDiagnostics`：验证 Micrometer 全维监控度量标尺注册与 `NacosHealthChecker` 深水区安全自检防御。
