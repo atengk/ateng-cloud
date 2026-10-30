@@ -7,6 +7,7 @@ import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.cloud.feign.constant.FeignHeaderConstants;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
 import org.slf4j.MDC;
+import org.springframework.core.Ordered;
 import org.springframework.util.StringUtils;
 
 import java.util.Collection;
@@ -23,7 +24,7 @@ import java.util.Map;
  * @author Ateng
  * @since 2026-10-28
  */
-public class FeignContextPropagationInterceptor implements RequestInterceptor {
+public class FeignContextPropagationInterceptor implements RequestInterceptor, Ordered {
 
     private final SameTokenProvider sameTokenProvider;
 
@@ -33,6 +34,11 @@ public class FeignContextPropagationInterceptor implements RequestInterceptor {
 
     public FeignContextPropagationInterceptor(SameTokenProvider sameTokenProvider) {
         this.sameTokenProvider = sameTokenProvider;
+    }
+
+    @Override
+    public int getOrder() {
+        return Ordered.HIGHEST_PRECEDENCE;
     }
 
     @Override

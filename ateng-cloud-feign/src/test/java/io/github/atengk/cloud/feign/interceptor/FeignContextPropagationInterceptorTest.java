@@ -109,6 +109,15 @@ class FeignContextPropagationInterceptorTest {
         assertThat(getHeader(template, FeignHeaderConstants.USER_ID)).isEqualTo("user-explicit");
     }
 
+    @Test
+    @DisplayName("测试拦截器实现 Ordered 接口且具有最高优先级 HIGHEST_PRECEDENCE")
+    void testOrderedHighestPrecedence() {
+        FeignContextPropagationInterceptor interceptor = new FeignContextPropagationInterceptor(null);
+        assertThat(interceptor).isInstanceOf(org.springframework.core.Ordered.class);
+        assertThat(((org.springframework.core.Ordered) interceptor).getOrder())
+                .isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE);
+    }
+
     private String getHeader(RequestTemplate template, String headerName) {
         Collection<String> values = template.headers().get(headerName);
         if (values == null || values.isEmpty()) {

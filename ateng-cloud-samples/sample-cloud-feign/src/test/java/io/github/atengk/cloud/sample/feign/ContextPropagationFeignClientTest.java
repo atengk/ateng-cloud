@@ -4,8 +4,10 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import feign.RequestInterceptor;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.cloud.feign.constant.FeignHeaderConstants;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
 import io.github.atengk.cloud.sample.feign.client.ContextFeignClient;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +20,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.Ordered;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.TestSocketUtils;
@@ -61,6 +64,25 @@ class ContextPropagationFeignClientTest {
         @Bean
         public SameTokenProvider testSameTokenProvider() {
             return () -> TEST_SAME_TOKEN;
+        }
+
+        @Bean
+        public RequestInterceptor subsequentObservingInterceptor() {
+            class ObservingInterceptor implements RequestInterceptor, Ordered {
+                @Override
+                public void apply(feign.RequestTemplate template) {
+                    var traceHeaders = template.headers().get(FeignHeaderConstants.TRACE_ID);
+                    if (traceHeaders != null && !traceHeaders.isEmpty()) {
+                        template.header("x-subsequent-observed-trace-id", traceHeaders.iterator().next());
+                    }
+                }
+
+                @Override
+                public int getOrder() {
+                    return 0; // 优先级低于 HIGHEST_PRECEDENCE，验证执行时序后置
+                }
+            }
+            return new ObservingInterceptor();
         }
     }
 
@@ -161,5 +183,18 @@ class ContextPropagationFeignClientTest {
             clientLogger.detachAppender(listAppender);
             listAppender.stop();
         }
+    }
+
+    @Test
+    @DisplayName("测试后续低优先级拦截器可确定性读取第一顺位注入的上下文标头")
+    void testSubsequentInterceptorObservesContextHeaders() {
+        MDC.put("traceId", "trace-order-check-9999");
+        UserContextHolder.setUserId("user-order-123");
+
+        Map<String, String> receivedHeaders = contextFeignClient.echoHeaders();
+
+        assertThat(receivedHeaders).isNotNull();
+        assertThat(receivedHeaders.get("x-trace-id")).isEqualTo("trace-order-check-9999");
+        assertThat(receivedHeaders.get("x-subsequent-observed-trace-id")).isEqualTo("trace-order-check-9999");
     }
 }
