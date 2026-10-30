@@ -29,6 +29,9 @@ ateng:
         max-connections: 200
         max-connections-per-route: 50
         time-to-live: 900s
+        max-idle-time: 60s
+        evict-idle-connections-interval: 60s
+        evict-expired-connections: true
         connection-timeout: 2000ms
         socket-timeout: 5000ms
       retry:

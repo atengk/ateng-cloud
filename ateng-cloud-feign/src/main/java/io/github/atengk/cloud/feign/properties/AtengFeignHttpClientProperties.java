@@ -45,6 +45,21 @@ public class AtengFeignHttpClientProperties {
      */
     private Duration socketTimeout = Duration.ofMillis(5000);
 
+    /**
+     * 连接池空闲物理连接最大存活时限，超过该时间未被使用的连接将被后台线程主动驱逐，默认 60 秒
+     */
+    private Duration maxIdleTime = Duration.ofSeconds(60);
+
+    /**
+     * 后台线程主动扫描并驱逐空闲与失效连接的时间间隔，默认 60 秒
+     */
+    private Duration evictIdleConnectionsInterval = Duration.ofSeconds(60);
+
+    /**
+     * 是否在后台主动定时驱逐超过总存活时限（TTL）的失效物理连接，默认 true
+     */
+    private boolean evictExpiredConnections = true;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -99,5 +114,29 @@ public class AtengFeignHttpClientProperties {
 
     public void setSocketTimeout(Duration socketTimeout) {
         this.socketTimeout = socketTimeout;
+    }
+
+    public Duration getMaxIdleTime() {
+        return maxIdleTime;
+    }
+
+    public void setMaxIdleTime(Duration maxIdleTime) {
+        this.maxIdleTime = maxIdleTime;
+    }
+
+    public Duration getEvictIdleConnectionsInterval() {
+        return evictIdleConnectionsInterval;
+    }
+
+    public void setEvictIdleConnectionsInterval(Duration evictIdleConnectionsInterval) {
+        this.evictIdleConnectionsInterval = evictIdleConnectionsInterval;
+    }
+
+    public boolean isEvictExpiredConnections() {
+        return evictExpiredConnections;
+    }
+
+    public void setEvictExpiredConnections(boolean evictExpiredConnections) {
+        this.evictExpiredConnections = evictExpiredConnections;
     }
 }

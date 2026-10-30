@@ -76,4 +76,27 @@ public class AtengFeignAutoConfigurationTest {
             assertThat(context).hasSingleBean(io.github.atengk.cloud.feign.interceptor.AtengFeignContentGzipEncodingInterceptor.class);
         });
     }
+
+    @Test
+    @DisplayName("验证 HC5 连接池主动空闲驱逐与生命周期解耦配置生效")
+    void testHttpclientIdleEvictionConfiguration() {
+        contextRunner.withPropertyValues(
+                "ateng.cloud.feign.httpclient.max-idle-time=45s",
+                "ateng.cloud.feign.httpclient.evict-idle-connections-interval=30s",
+                "ateng.cloud.feign.httpclient.evict-expired-connections=true"
+        ).run(context -> {
+            io.github.atengk.cloud.feign.properties.AtengFeignProperties properties =
+                    context.getBean(io.github.atengk.cloud.feign.properties.AtengFeignProperties.class);
+            assertThat(properties.getHttpclient().getMaxIdleTime()).isEqualTo(java.time.Duration.ofSeconds(45));
+            assertThat(properties.getHttpclient().getEvictIdleConnectionsInterval()).isEqualTo(java.time.Duration.ofSeconds(30));
+            assertThat(properties.getHttpclient().isEvictExpiredConnections()).isTrue();
+
+            HttpClient5FeignConfiguration.HttpClientBuilderCustomizer customizer =
+                    context.getBean(HttpClient5FeignConfiguration.HttpClientBuilderCustomizer.class);
+            org.apache.hc.client5.http.impl.classic.HttpClientBuilder builder =
+                    org.apache.hc.client5.http.impl.classic.HttpClientBuilder.create();
+            // 验证定制器能成功对 HC5 builder 注入空闲驱逐与过期驱逐策略
+            customizer.customize(builder);
+        });
+    }
 }

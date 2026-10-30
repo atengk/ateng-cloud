@@ -81,6 +81,9 @@ public class AtengFeignAutoConfiguration {
             if (httpclientProps.getTimeToLive() != null) {
                 builder.setConnectionTimeToLive(TimeValue.ofMilliseconds(httpclientProps.getTimeToLive().toMillis()));
             }
+            if (httpclientProps.getMaxIdleTime() != null) {
+                builder.setValidateAfterInactivity(TimeValue.ofMilliseconds(Math.min(httpclientProps.getMaxIdleTime().toMillis(), 5000)));
+            }
         }
         return builder.build();
     }
@@ -98,6 +101,13 @@ public class AtengFeignAutoConfiguration {
                         .setConnectionRequestTimeout(Timeout.ofMilliseconds(httpclientProps.getConnectionRequestTimeout().toMillis()))
                         .build();
                 builder.setDefaultRequestConfig(requestConfig);
+
+                if (httpclientProps.getMaxIdleTime() != null) {
+                    builder.evictIdleConnections(TimeValue.ofMilliseconds(httpclientProps.getMaxIdleTime().toMillis()));
+                }
+                if (httpclientProps.isEvictExpiredConnections()) {
+                    builder.evictExpiredConnections();
+                }
             }
         };
     }
