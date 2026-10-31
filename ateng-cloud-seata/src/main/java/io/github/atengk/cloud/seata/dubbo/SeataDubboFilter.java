@@ -13,6 +13,7 @@ import org.apache.dubbo.rpc.RpcInvocation;
 import org.apache.seata.core.context.RootContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 
 /**
@@ -48,11 +49,12 @@ public class SeataDubboFilter implements Filter {
             return invoker.invoke(invocation);
         } else {
             boolean bound = false;
+            String previousMdc = MDC.get(SeataConstants.MDC_KEY_XID);
             try {
                 bound = handleProvider(invocation);
                 return invoker.invoke(invocation);
             } finally {
-                cleanContext(bound);
+                cleanContext(bound, previousMdc);
             }
         }
     }
@@ -98,14 +100,18 @@ public class SeataDubboFilter implements Filter {
         // 1. 若当前线程尚未绑定 XID，则由本过滤器安全绑定并标记 bound = true
         if (currentXid == null) {
             RootContext.bind(trimmedXid);
+            MDC.put(SeataConstants.MDC_KEY_XID, trimmedXid);
             if (log.isDebugEnabled()) {
-                log.debug("[SEATA-DUBBO] 服务端成功为当前线程绑定全局事务 XID: [{}]", trimmedXid);
+                log.debug("[SEATA-DUBBO] 服务端成功为当前线程绑定全局事务 XID 与 MDC 黄金关联: [{}]", trimmedXid);
             }
             return true;
         }
 
         // 2. 自适应幂等防卫：若外部环境已经绑定了相同的 XID，静默放行，标记 bound = false 避免二次解绑
         if (trimmedXid.equalsIgnoreCase(currentXid)) {
+            if (!StringUtils.hasText(MDC.get(SeataConstants.MDC_KEY_XID))) {
+                MDC.put(SeataConstants.MDC_KEY_XID, trimmedXid);
+            }
             log.trace("[SEATA-DUBBO] 当前线程已被外部环境绑定 XID [{}], 激活自适应幂等防卫，静默放行", currentXid);
             return false;
         }
@@ -116,7 +122,7 @@ public class SeataDubboFilter implements Filter {
         return false;
     }
 
-    private void cleanContext(boolean bound) {
+    private void cleanContext(boolean bound, String previousMdc) {
         if (!bound) {
             return;
         }
@@ -127,6 +133,12 @@ public class SeataDubboFilter implements Filter {
             }
         } catch (Throwable t) {
             log.warn("[SEATA-DUBBO] 服务端出口对称解绑 Seata 全局事务 XID 异常: {}", t.getMessage());
+        } finally {
+            if (previousMdc != null) {
+                MDC.put(SeataConstants.MDC_KEY_XID, previousMdc);
+            } else {
+                MDC.remove(SeataConstants.MDC_KEY_XID);
+            }
         }
     }
 

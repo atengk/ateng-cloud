@@ -27,6 +27,11 @@ public final class SeataConstants {
     public static final String TX_XID_HEADER = TX_XID;
 
     /**
+     * SLF4J MDC 全局事务唯一标识符键名
+     */
+    public static final String MDC_KEY_XID = "xid";
+
+    /**
      * Seata Web 拦截器默认执行顺序
      */
     public static final int WEB_INTERCEPTOR_ORDER = -100;

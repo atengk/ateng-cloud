@@ -2,6 +2,7 @@ package io.github.atengk.cloud.dubbo.support;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.StringUtils;
 
@@ -124,8 +125,9 @@ public final class DubboSeataPropagationSupport {
             String currentXid = getXID();
             if (currentXid == null) {
                 BIND_METHOD.invoke(null, trimmedXid);
+                MDC.put("xid", trimmedXid);
                 if (log.isDebugEnabled()) {
-                    log.debug("[DUBBO-SEATA] 成功为当前线程绑定全局事务 XID: [{}]", trimmedXid);
+                    log.debug("[DUBBO-SEATA] 成功为当前线程绑定全局事务 XID 与 MDC 黄金关联: [{}]", trimmedXid);
                 }
                 return true;
             } else if (!trimmedXid.equalsIgnoreCase(currentXid)) {
@@ -157,6 +159,8 @@ public final class DubboSeataPropagationSupport {
             }
         } catch (Throwable t) {
             log.warn("[DUBBO-SEATA] 对称解绑 Seata 全局事务 XID 异常: {}", t.getMessage());
+        } finally {
+            MDC.remove("xid");
         }
     }
 }

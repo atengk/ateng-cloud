@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,6 +39,7 @@ class SeataDubboFilterTest {
     void setUp() {
         filter = new SeataDubboFilter();
         RootContext.unbind();
+        MDC.remove(SeataConstants.MDC_KEY_XID);
         RpcContext.removeClientAttachment();
         RpcContext.removeServerAttachment();
         RpcContext.removeContext();
@@ -46,6 +48,7 @@ class SeataDubboFilterTest {
     @AfterEach
     void tearDown() {
         RootContext.unbind();
+        MDC.remove(SeataConstants.MDC_KEY_XID);
         RpcContext.removeClientAttachment();
         RpcContext.removeServerAttachment();
         RpcContext.removeContext();
@@ -94,7 +97,7 @@ class SeataDubboFilterTest {
     }
 
     @Test
-    @DisplayName("服务端入站：安全绑定 XID 并在出口 finally 块中确定性对称解绑")
+    @DisplayName("服务端入站：安全绑定 XID 并在出口 finally 块中确定性对称解绑，全生命周期联动 MDC")
     void testProviderSideBindsAndUnbindsXid() {
         String testXid = "192.168.1.100:8091:987654321";
 
@@ -108,20 +111,22 @@ class SeataDubboFilterTest {
 
         Result mockResult = mock(Result.class);
         when(invoker.invoke(invocation)).thenAnswer(inv -> {
-            // 在 invoker 执行期间，断言当前线程已成功绑定 XID
+            // 在 invoker 执行期间，断言当前线程已成功绑定 XID 与 MDC 黄金关联
             assertThat(RootContext.getXID()).isEqualTo(testXid);
+            assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(testXid);
             return mockResult;
         });
 
         Result result = filter.invoke(invoker, invocation);
 
         assertThat(result).isSameAs(mockResult);
-        // 执行完毕后，出口 finally 必须已确定性解绑
+        // 执行完毕后，出口 finally 必须已确定性解绑与清理 MDC
         assertThat(RootContext.getXID()).isNull();
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isNull();
     }
 
     @Test
-    @DisplayName("服务端入站：下游发生异常时出口依然绝对可靠解绑，杜绝线程污染")
+    @DisplayName("服务端入站：下游发生异常时出口依然绝对可靠解绑与清理 MDC，杜绝线程污染")
     void testProviderSideUnbindsOnException() {
         String testXid = "192.168.1.100:8091:exception-xid";
 
@@ -139,8 +144,38 @@ class SeataDubboFilterTest {
                 .isInstanceOf(RpcException.class)
                 .hasMessageContaining("下游业务故障");
 
-        // 异常抛出后必须依然解绑
+        // 异常抛出后必须依然解绑且清理 MDC
         assertThat(RootContext.getXID()).isNull();
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isNull();
+    }
+
+    @Test
+    @DisplayName("服务端入站：若存在先前 MDC XID，执行完毕后保真恢复原值")
+    void testProviderSideRestoresPriorMdcXid() {
+        String priorMdcXid = "prior-dubbo-xid-111";
+        MDC.put(SeataConstants.MDC_KEY_XID, priorMdcXid);
+
+        String testXid = "192.168.1.100:8091:987654321";
+
+        @SuppressWarnings("unchecked")
+        Invoker<Object> invoker = mock(Invoker.class);
+        URL providerUrl = URL.valueOf("tri://127.0.0.1:20880/DemoService?" + CommonConstants.SIDE_KEY + "=" + CommonConstants.PROVIDER_SIDE);
+        when(invoker.getUrl()).thenReturn(providerUrl);
+
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setAttachment(SeataConstants.TX_XID, testXid);
+
+        Result mockResult = mock(Result.class);
+        when(invoker.invoke(invocation)).thenAnswer(inv -> {
+            assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(testXid);
+            return mockResult;
+        });
+
+        filter.invoke(invoker, invocation);
+
+        assertThat(RootContext.getXID()).isNull();
+        // 保真恢复原值
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(priorMdcXid);
     }
 
     @Test

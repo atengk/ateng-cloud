@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -25,10 +26,11 @@ class SeataWebHandlerInterceptorTest {
     @AfterEach
     void cleanContext() {
         RootContext.unbind();
+        MDC.remove(SeataConstants.MDC_KEY_XID);
     }
 
     @Test
-    @DisplayName("测试入站请求携带 TX_XID 时成功绑定并在请求完成后安全解绑")
+    @DisplayName("测试入站请求携带 TX_XID 时成功绑定并在请求完成后安全解绑，全生命周期联动 MDC")
     void testPreHandleAndAfterCompletionLifecycle() {
         String testXid = "192.168.1.100:8091:88888888";
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -39,12 +41,34 @@ class SeataWebHandlerInterceptorTest {
         boolean handleResult = interceptor.preHandle(request, response, new Object());
         assertThat(handleResult).isTrue();
         assertThat(RootContext.getXID()).isEqualTo(testXid);
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(testXid);
         assertThat(request.getAttribute(SeataWebHandlerInterceptor.BIND_XID_ATTRIBUTE)).isEqualTo(testXid);
 
         // 模拟请求生命周期结束
         interceptor.afterCompletion(request, response, new Object(), null);
         assertThat(RootContext.getXID()).isNull();
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isNull();
         assertThat(request.getAttribute(SeataWebHandlerInterceptor.BIND_XID_ATTRIBUTE)).isNull();
+    }
+
+    @Test
+    @DisplayName("测试入站前若存在原有 MDC XID，afterCompletion 能够保真恢复原值")
+    void testMdcXidRestorationWhenPriorMdcPresent() {
+        String priorMdcXid = "prior-trace-xid-999";
+        MDC.put(SeataConstants.MDC_KEY_XID, priorMdcXid);
+
+        String testXid = "192.168.1.100:8091:88888888";
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(SeataConstants.TX_XID_HEADER, testXid);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        interceptor.preHandle(request, response, new Object());
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(testXid);
+
+        interceptor.afterCompletion(request, response, new Object(), null);
+        assertThat(RootContext.getXID()).isNull();
+        // 验证保真恢复
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(priorMdcXid);
     }
 
     @Test

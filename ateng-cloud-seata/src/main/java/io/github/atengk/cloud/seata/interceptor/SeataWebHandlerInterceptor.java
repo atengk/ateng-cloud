@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.apache.seata.core.context.RootContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -28,6 +29,11 @@ public class SeataWebHandlerInterceptor implements HandlerInterceptor {
      */
     public static final String BIND_XID_ATTRIBUTE = "ATENG_SEATA_BOUND_XID";
 
+    /**
+     * 入站前 MDC 原有 XID 上下文属性标识（用于请求结束时保真恢复）
+     */
+    public static final String PREVIOUS_MDC_XID_ATTRIBUTE = "ATENG_SEATA_PREVIOUS_MDC_XID";
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         String rpcXid = request.getHeader(SeataConstants.TX_XID_HEADER);
@@ -39,9 +45,14 @@ public class SeataWebHandlerInterceptor implements HandlerInterceptor {
         if (StringUtils.hasText(rpcXid)) {
             String currentXid = RootContext.getXID();
             if (currentXid == null) {
+                String previousMdc = MDC.get(SeataConstants.MDC_KEY_XID);
+                if (previousMdc != null) {
+                    request.setAttribute(PREVIOUS_MDC_XID_ATTRIBUTE, previousMdc);
+                }
                 RootContext.bind(rpcXid);
+                MDC.put(SeataConstants.MDC_KEY_XID, rpcXid);
                 request.setAttribute(BIND_XID_ATTRIBUTE, rpcXid);
-                log.debug("Seata Web 入站请求成功绑定全局事务 XID: [{}] (URI: [{}])", rpcXid, request.getRequestURI());
+                log.debug("Seata Web 入站请求成功绑定全局事务 XID 与 MDC 黄金关联: [{}] (URI: [{}])", rpcXid, request.getRequestURI());
             } else if (!rpcXid.equalsIgnoreCase(currentXid)) {
                 log.warn("Seata Web 入站请求携带 XID [{}] 与当前线程已绑定的 XID [{}] 不一致，跳过重新绑定",
                         rpcXid, currentXid);
@@ -64,7 +75,14 @@ public class SeataWebHandlerInterceptor implements HandlerInterceptor {
                 }
             } finally {
                 RootContext.unbind();
+                String previousMdc = (String) request.getAttribute(PREVIOUS_MDC_XID_ATTRIBUTE);
+                if (previousMdc != null) {
+                    MDC.put(SeataConstants.MDC_KEY_XID, previousMdc);
+                } else {
+                    MDC.remove(SeataConstants.MDC_KEY_XID);
+                }
                 request.removeAttribute(BIND_XID_ATTRIBUTE);
+                request.removeAttribute(PREVIOUS_MDC_XID_ATTRIBUTE);
             }
         }
     }
