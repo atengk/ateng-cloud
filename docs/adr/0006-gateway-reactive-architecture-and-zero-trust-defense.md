@@ -106,6 +106,41 @@
 20. **100% 离线自洽 1:1 场景工程 (Hermetic Sample Sandbox)**：
     - 在 `ateng-cloud-samples/sample-cloud-gateway` 配套专属响应式沙箱，基于 `WebTestClient` + 内置响应式 Mock 终结点 + 内存动态路由推演，在脱网（`nacos.enabled=false`）环境下秒级跑通全特性回归。
 
+21. **Sentinel 响应式流控降级异常自适应转译协同 (Sentinel Reactive Adapter)**：
+    - 坚持网关底座零臃肿（Zero-Bloat Invariant），不强制引入 Sentinel 依赖，采用 `ClassUtils.isPresent` 平滑自适应探测；
+    - 在 `GatewayGlobalExceptionHandler` 中对齐转译：`FlowException`、`ParamFlowException` 与 `SystemBlockException` 转译为 HTTP 429（`Retry-After: 1`，Result 429）；`DegradeException` 转译为 HTTP 503（Result 503）；`AuthorityException` 转译为 HTTP 403（Result 403），实现物理状态码与 Result 语义 100% 对齐。
+
+22. **受限载荷防爆的 Request Body SHA-256 摘要加签防线 (Body Digest Sign Guard)**：
+    - 在 2MB Netty 载荷硬限制内，提供受控的 Request Body 签名验签防线（`ateng.cloud.gateway.sign.body-enabled=false`，按需开启）；
+    - 针对 POST/PUT/PATCH 请求，依托响应式缓存获取请求体字节并计算 SHA-256 十六进制摘要（`bodyHash`），以 `&bodyHash={bodyHash}` 混入规范签名串，无 Body 或 GET 请求安全忽略以向后完全兼容；
+    - 杜绝大报文字符串在内存中多次分配，兼顾极高抗篡改性与 Netty 事件循环内存安全。
+
+23. **网关全景健康与双轨动态路由运维诊断端点 (Gateway Panorama Diagnostics)**：
+    - 暴露非阻塞响应式 Actuator 端点 `@Endpoint(id = "ateng-gateway")`（`/actuator/ateng-gateway`）；
+    - 输出四大核心维度的只读聚合报告（`dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard`）；
+    - 恪守生产零泄密红线，IP 黑白名单与 AppKey 仅暴露规则总数与运行态健康状态，绝不暴露内部明细拓扑。
+
+24. **响应式访问审计安全脱敏与超长防撑爆保护 (Sanitized Query Audit)**：
+    - `GatewayAccessLogFilter` 提供可选的 Query 参数审计（`ateng.cloud.gateway.access-log.include-query=false`）；
+    - 内置高频敏感词匹配（`password`、`token`、`secret`、`mobile` 等）并支持 `mask-keys` 自定义扩展，将敏感 Value 统一打码为 `"***"`；
+    - 设置 256 字符硬截断保护（超长追加 `...(truncated)`），杜绝恶意入参撑爆日志磁盘。
+
+25. **下游连接过早中断与信道关闭的 HTTP 502 精确转译 (Premature Close Adaptation)**：
+    - `GatewayGlobalExceptionHandler` 精准捕获 `PrematureCloseException` 与 `ClosedChannelException`；
+    - 转译为统一的 HTTP 502 Bad Gateway（Result 502），明确区分网关自身内部故障（500）与下游微服务滚动重启瞬断（502），赋能前端 Axios 与上游 ALB 弹性重试。
+
+26. **验签中断场景下 Netty 堆外直接内存确定性安全释放 (Deterministic Buffer Release)**：
+    - 在 Body 验签过滤器提前熔断返回 401 时，通过响应式管道流与上下文装饰器确保 DataBuffer 引用计数确定性释放；
+    - 绝不放任缓冲区悬挂，彻底根除高并发恶意攻击下的 Netty DirectMemory 堆外泄漏隐患。
+
+27. **双轨动态路由碰撞冲突仲裁优先级 (Dual-Track Route Precedence)**：
+    - 确立“独立动态配置（Nacos `gateway-routes.json`）权威覆盖主配置基线”的规则；
+    - 当同名 `routeId` 发生碰撞时，独立动态路由优先接管流量，删除时平滑回退至主配置快照兜底（Last-Known Good Snapshot）。
+
+28. **非阻塞遥测旁路绝缘原则 (Non-Blocking Telemetry Isolation)**：
+    - 访问日志脱敏在面对非法转义或畸形 Query 字符时，采用前置防御兜底（`query="[malformed-query]"`），坚决不抛出异常阻断业务调用链；
+    - 全景诊断端点只读暴露内存无锁快照，微秒级响应，零外部网络 IO 阻塞。
+
 ## Consequences
 
 1. **运行时纯洁与高性能**：网关完全基于响应式事件循环驱动，零阻塞线程，内存开销低且吞吐量达到极致。

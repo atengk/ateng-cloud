@@ -83,6 +83,16 @@ public class MockTestController {
         throw new RuntimeException("底层未知数据库异常，禁止泄漏堆栈");
     }
 
+    @GetMapping("/premature-close")
+    public Mono<Result<Void>> prematureClose() {
+        return Mono.error(reactor.netty.http.client.PrematureCloseException.TEST_EXCEPTION);
+    }
+
+    @GetMapping("/closed-channel")
+    public Mono<Result<Void>> closedChannel() {
+        return Mono.error(new java.nio.channels.ClosedChannelException());
+    }
+
     @GetMapping(value = "/sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> sse() {
         return Flux.range(0, 3)

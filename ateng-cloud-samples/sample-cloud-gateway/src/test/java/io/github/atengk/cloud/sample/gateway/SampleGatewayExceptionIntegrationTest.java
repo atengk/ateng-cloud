@@ -104,4 +104,32 @@ public class SampleGatewayExceptionIntegrationTest {
                 .jsonPath("$.msg").value(containsString("无权限"))
                 .jsonPath("$.traceId").isNotEmpty();
     }
+
+    @Test
+    @DisplayName("测试下游连接过早关闭 PrematureCloseException 转译为 HTTP 502 Bad Gateway")
+    void testPrematureCloseTranslation() {
+        webTestClient.get()
+                .uri("/mock/premature-close")
+                .exchange()
+                .expectStatus().isEqualTo(502)
+                .expectHeader().exists("X-Trace-Id")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(502)
+                .jsonPath("$.msg").value(containsString("Bad Gateway"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("测试信道关闭 ClosedChannelException 转译为 HTTP 502 Bad Gateway")
+    void testClosedChannelTranslation() {
+        webTestClient.get()
+                .uri("/mock/closed-channel")
+                .exchange()
+                .expectStatus().isEqualTo(502)
+                .expectHeader().exists("X-Trace-Id")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(502)
+                .jsonPath("$.msg").value(containsString("Bad Gateway"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
 }

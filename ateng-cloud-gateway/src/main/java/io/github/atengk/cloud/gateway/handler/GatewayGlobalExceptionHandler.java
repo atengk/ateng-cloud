@@ -78,6 +78,10 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
         exchange.getResponse().setStatusCode(errorContext.httpStatus);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
         exchange.getResponse().getHeaders().set(GatewayConstants.X_TRACE_ID, traceId);
+        if (errorContext.httpStatus.value() == HttpStatus.TOO_MANY_REQUESTS.value()
+                && !exchange.getResponse().getHeaders().containsKey(org.springframework.http.HttpHeaders.RETRY_AFTER)) {
+            exchange.getResponse().getHeaders().set(org.springframework.http.HttpHeaders.RETRY_AFTER, "1");
+        }
 
         DataBufferFactory bufferFactory = exchange.getResponse().bufferFactory();
         byte[] bytes;
@@ -148,6 +152,12 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
             );
         }
 
+        // 模式 1.2：Sentinel 响应式微服务流控与降级异常自适应转译
+        ErrorContext sentinelContext = resolveSentinelErrorContext(ex);
+        if (sentinelContext != null) {
+            return sentinelContext;
+        }
+
         // 模式 2：Spring WebFlux 响应式状态异常 ResponseStatusException (如 NoResourceFoundException)
         if (ex instanceof ResponseStatusException rse) {
             HttpStatusCode status = rse.getStatusCode();
@@ -203,6 +213,17 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
             );
         }
 
+        // 模式 5.1：下游连接突发中断或信道关闭 (502 Bad Gateway)
+        if (isCausedBy(ex, java.nio.channels.ClosedChannelException.class)
+                || isCausedByClassName(ex, "PrematureCloseException")) {
+            return new ErrorContext(
+                    HttpStatus.BAD_GATEWAY,
+                    HttpStatus.BAD_GATEWAY.value(),
+                    "下游微服务连接异常中断或已过早关闭 (Bad Gateway)",
+                    true
+            );
+        }
+
         // 模式 6：下游调用读取超时 (504 Gateway Timeout)
         if (isCausedBy(ex, TimeoutException.class)) {
             return new ErrorContext(
@@ -232,6 +253,63 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
             current = current.getCause();
         }
         return null;
+    }
+
+    private ErrorContext resolveSentinelErrorContext(Throwable ex) {
+        Throwable blockEx = findCauseByName(ex, "com.alibaba.csp.sentinel.slots.block.BlockException");
+        if (blockEx == null) {
+            return null;
+        }
+        String className = blockEx.getClass().getName();
+        if (className.contains("DegradeException")) {
+            return new ErrorContext(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    HttpStatus.SERVICE_UNAVAILABLE.value(),
+                    "下游微服务触发熔断降级，暂不可用",
+                    false
+            );
+        }
+        if (className.contains("AuthorityException")) {
+            return new ErrorContext(
+                    HttpStatus.FORBIDDEN,
+                    HttpStatus.FORBIDDEN.value(),
+                    "网关访问权限受限，触发授权拦截",
+                    false
+            );
+        }
+        // FlowException, ParamFlowException, SystemBlockException 或基础 BlockException
+        return new ErrorContext(
+                HttpStatus.TOO_MANY_REQUESTS,
+                HttpStatus.TOO_MANY_REQUESTS.value(),
+                "当前访问过于频繁，触发流量控制",
+                false
+        );
+    }
+
+    private Throwable findCauseByName(Throwable ex, String targetClassName) {
+        Throwable current = ex;
+        while (current != null) {
+            Class<?> clazz = current.getClass();
+            while (clazz != null && clazz != Object.class) {
+                if (targetClassName.equals(clazz.getName())) {
+                    return current;
+                }
+                clazz = clazz.getSuperclass();
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private boolean isCausedByClassName(Throwable ex, String simpleOrFullPattern) {
+        Throwable current = ex;
+        while (current != null) {
+            if (current.getClass().getName().contains(simpleOrFullPattern)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private HttpStatusCode resolveHttpStatusFromCode(int code) {

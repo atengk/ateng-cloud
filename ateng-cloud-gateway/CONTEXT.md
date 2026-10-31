@@ -91,3 +91,35 @@ _Avoid_: 动态打标器, 灰度解析器, 染色策略
 **Dual-Track Dynamic Route**:
 网关同时支持从独立 Nacos 动态路由数据源（默认 `gateway-routes.json`）与微服务主配置文件（`spring.cloud.gateway.routes`）双轨并存监听与无感原子热更的路由治理机制，结合快照守卫容错与多源协同合并，彻底消除修改主配置路由后必须重启网关的心智负担。
 _Avoid_: 双轨路由, 动态路由双源, 路由双监听
+
+**Body Digest Sign Guard**:
+网关在 2MB 硬防爆边界内，利用响应式缓存机制对 POST/PUT 请求体计算 SHA-256 摘要并混入规范签名串的防篡改防御机制。
+_Avoid_: 请求体加签, Body验签, 报文哈希
+
+**Sentinel Reactive Adapter**:
+网关以非阻塞自适应探测方式，对 Sentinel 响应式流控、降级与系统保护阻断异常执行的统一强类型 Result 契约转译机制。
+_Avoid_: 阿里限流适配, 哨兵熔断处理, Sentinel拦截
+
+**Gateway Panorama Diagnostics**:
+网关基于非阻塞 Actuator 端点暴露的动态路由、双轨快照、灰度负载及边缘安全装配的多维健康度诊断机制。
+_Avoid_: 网关状态端点, 路由监控接口, Actuator路由检查
+
+**Sanitized Query Audit**:
+网关访问日志在记录请求 Query 参数时，自动对密码、令牌、密钥等敏感 Key 实施基于掩码的脱敏审计机制。
+_Avoid_: 参数日志打印, Query脱敏, 请求参数审计
+
+**Premature Close Adaptation**:
+网关对下游微服务在滚动发布或偶发网络抖动时触发的 TCP 连接过早关闭（`PrematureCloseException` / `ClosedChannelException`）实施的统一精准 HTTP 502 Bad Gateway 响应式转译机制。
+_Avoid_: 502转译, 连接中断处理, 对端断开拦截
+
+**Deterministic Buffer Release**:
+网关在对请求体执行验签或缓存过程中，针对验签失败提前熔断阻断场景构筑的 Netty 堆外直接内存确定性回收与引用安全释放机制。
+_Avoid_: 内存释放, 缓存回收, DataBuffer清理
+
+**Dual-Track Route Precedence**:
+网关在微服务主配置与独立 Nacos 动态路由发生同名 `routeId` 碰撞时，确立的“独立动态路由权威覆盖、主配置基线兜底”的仲裁优先级机制。
+_Avoid_: 路由冲突覆盖, 路由优先级, 动态路由仲裁
+
+**Non-Blocking Telemetry Isolation**:
+网关全景诊断端点与访问日志审计坚守的只读无锁、零网络阻塞、异常安全降级的绝对旁路观测隔离机制。
+_Avoid_: 旁路容错, 审计隔离, 端点无锁
