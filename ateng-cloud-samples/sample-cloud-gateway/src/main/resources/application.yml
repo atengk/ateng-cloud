@@ -74,6 +74,9 @@ ateng:
       access-log:
         enabled: true
         slow-threshold: 3s
+        include-query: true
+        mask-keys:
+          - customSecret
       sign:
         enabled: true
         body-enabled: true

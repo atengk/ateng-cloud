@@ -40,6 +40,7 @@
 | `IpMatcher` | 工具类 | 静态方法调用 | 支持 CIDR 子网段掩码与单 IP 的高效并发匹配 | 开箱即用工具类 |
 | `GatewayPanoramaEndpoint` | Actuator 端点 | `@Endpoint(id = "atengGateway")` | 网关全景健康与动态路由只读运维诊断端点，聚合双轨路由、灰度负载、边缘安全、接口验签四维全景指标 | 依赖 Actuator 且 `@ConditionalOnMissingBean` |
 | `GatewayPanoramaReport` | 报告模型 Record | 强类型数据传输 | 四维诊断聚合报告模型，包含 `dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard` 快照 | 强类型自洽 Record |
+| `GatewayQuerySanitizer` | 工具类 | 静态方法调用 | 提供响应式访问审计 Query 参数脱敏、截断与绝对旁路隔离（内置 12 类敏感词、256 字符上限、malformed 安全降级） | 开箱即用工具类 |
 
 ---
 
@@ -63,6 +64,7 @@
 | `NacosRouteDefinitionRepository` | `save(route)` | `Mono<Void>` | 内存动态追加或覆盖指定路由定义并发布刷新事件 | 操作完成后原子广播刷新 |
 | `NacosRouteDefinitionRepository` | `delete(routeId)` | `Mono<Void>` | 内存动态移除指定路由定义并发布刷新事件 | 找不到时静默完成 |
 | `GatewayPanoramaEndpoint` | `report()` | `GatewayPanoramaReport` | 读取微秒级内存原子快照，聚合输出网关四维全景健康与动态路由诊断状态 | 零外部网络 IO，快照异常平滑标记 DEGRADED |
+| `GatewayQuerySanitizer` | `sanitize(rawQuery, customMaskKeys)` | `String` | 安全解析并脱敏 Query 参数，超过 256 字符追加 `...(truncated)`，遇到畸形编码安全降级返回 `[malformed-query]` | 零异常穿透，保底返回 `-` |
 
 ---
 
@@ -111,6 +113,8 @@
 | `ateng.cloud.gateway.access-log.enabled` | `boolean` | `false` | 是否开启轻量响应式访问日志审计 |
 | `ateng.cloud.gateway.access-log.slow-threshold` | `Duration` | `3s` | 慢请求告警阈值（超过该阈值输出 WARN 级别慢请求日志） |
 | `ateng.cloud.gateway.access-log.exclude-paths` | `List<String>` | `[/actuator/**, /favicon.ico]` | 排除访问日志记录的路径列表 |
+| `ateng.cloud.gateway.access-log.include-query` | `boolean` | `false` | 是否在轻量响应式访问日志中记录 Query 参数（默认 false） |
+| `ateng.cloud.gateway.access-log.mask-keys` | `List<String>` | `[]` | 自定义敏感 Query 参数名脱敏列表（不区分大小写，值替换为 `***`） |
 | `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否开启开放接口 API 数字签名防篡改与 Nonce 防重放 |
 | `ateng.cloud.gateway.sign.timestamp-threshold` | `Duration` | `5m` | 签名时间戳允许的最大时钟偏差窗口 |
 | `ateng.cloud.gateway.sign.include-paths` | `List<String>` | `[]` | 需进行签名校验的目标路径列表（支持 AntPath，为空对全量生效） |
@@ -641,5 +645,62 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
     "includePathsCount": 1,
     "excludePathsCount": 0
   }
+}
+```
+
+### 8. 响应式访问日志审计与敏感 Query 脱敏
+
+#### 配置开启与自定义脱敏
+在 `application.yml` 中开启访问日志与 Query 审计：
+```yaml
+ateng:
+  cloud:
+    gateway:
+      access-log:
+        enabled: true
+        slow-threshold: 3s
+        include-query: true
+        mask-keys:
+          - customSecret
+          - cvv
+```
+
+#### 审计日志输出格式与脱敏样例
+- **正常请求包含敏感 Query**：
+  ```text
+  [ACCESS] method=GET, path=/api/mock/hello, status=200, duration=8ms, ip=127.0.0.1, userId=-, traceId=e3d5a8..., query=keyword=ateng&password=***&token=***&customSecret=***
+  ```
+- **超长 Query 截断防爆（>256 字符）**：
+  ```text
+  [ACCESS] method=GET, path=/api/mock/hello, status=200, duration=5ms, ip=127.0.0.1, userId=-, traceId=a1b2c3..., query=desc=xxxxxxxxxxxxxxxxxxxxxxxx...(truncated)
+  ```
+- **畸形非法字符旁路隔离**：
+  ```text
+  [ACCESS] method=GET, path=/api/mock/hello, status=200, duration=3ms, ip=127.0.0.1, userId=-, traceId=f9e8d7..., query=[malformed-query]
+  ```
+
+#### 端到端集成验证
+```java
+@Test
+@DisplayName("测试网关访问日志携带敏感 Query 参数与超长 Query 请求平滑通过且脱敏审计")
+void testAccessLogQueryMaskingAndBypassInSampleGateway() {
+    // 1. 发送携带内置敏感参数 (password, token) 与自定义敏感参数 (customSecret) 的请求
+    webTestClient.get()
+            .uri("/api/mock/hello?keyword=ateng&password=plain123&token=tok456&customSecret=sec789")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data").isEqualTo("gateway-ok");
+
+    // 2. 发送超长 Query 请求（>256 字符），验证防爆截断与请求正常处理
+    String longQuery = "desc=" + "x".repeat(300);
+    webTestClient.get()
+            .uri("/api/mock/hello?" + longQuery)
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data").isEqualTo("gateway-ok");
 }
 ```

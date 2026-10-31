@@ -3,6 +3,7 @@ package io.github.atengk.cloud.gateway.filter;
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayAccessLogProperties;
 import io.github.atengk.cloud.gateway.util.ClientIpResolver;
+import io.github.atengk.cloud.gateway.util.GatewayQuerySanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -101,12 +102,35 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
                 ? properties.getSlowThreshold().toMillis()
                 : 3000L;
 
-        if (duration >= slowThresholdMs) {
-            log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}",
-                    method, path, status, duration, slowThresholdMs, clientIp, userId, traceId);
+        if (properties.isIncludeQuery()) {
+            String query = resolveSanitizedQuery(exchange);
+            if (duration >= slowThresholdMs) {
+                log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}, query={}",
+                        method, path, status, duration, slowThresholdMs, clientIp, userId, traceId, query);
+            } else {
+                log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}, query={}",
+                        method, path, status, duration, clientIp, userId, traceId, query);
+            }
         } else {
-            log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}",
-                    method, path, status, duration, clientIp, userId, traceId);
+            if (duration >= slowThresholdMs) {
+                log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}",
+                        method, path, status, duration, slowThresholdMs, clientIp, userId, traceId);
+            } else {
+                log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}",
+                        method, path, status, duration, clientIp, userId, traceId);
+            }
+        }
+    }
+
+    /**
+     * 响应式安全解析并脱敏当前请求的 Query 参数 (绝对旁路隔离，防异常穿透)
+     */
+    private String resolveSanitizedQuery(ServerWebExchange exchange) {
+        try {
+            String rawQuery = exchange.getRequest().getURI().getRawQuery();
+            return GatewayQuerySanitizer.sanitize(rawQuery, properties.getMaskKeys());
+        } catch (Throwable t) {
+            return GatewayQuerySanitizer.MALFORMED_QUERY;
         }
     }
 

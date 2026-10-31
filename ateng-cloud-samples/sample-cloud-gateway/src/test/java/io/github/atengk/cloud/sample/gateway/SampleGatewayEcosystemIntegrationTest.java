@@ -396,6 +396,29 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
     }
 
+    @Test
+    @DisplayName("测试网关访问日志携带敏感 Query 参数与超长 Query 请求平滑通过且脱敏审计")
+    void testAccessLogQueryMaskingAndBypassInSampleGateway() {
+        // 1. 发送携带内置敏感参数 (password, token) 与自定义敏感参数 (customSecret) 的请求
+        webTestClient.get()
+                .uri("/api/mock/hello?keyword=ateng&password=plain123&token=tok456&customSecret=sec789")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data").isEqualTo("gateway-ok");
+
+        // 2. 发送超长 Query 请求（>256 字符），验证防爆截断与请求正常处理
+        String longQuery = "desc=" + "x".repeat(300);
+        webTestClient.get()
+                .uri("/api/mock/hello?" + longQuery)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data").isEqualTo("gateway-ok");
+    }
+
     private String calculateSha256(byte[] data) throws Exception {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
         return java.util.HexFormat.of().formatHex(md.digest(data));

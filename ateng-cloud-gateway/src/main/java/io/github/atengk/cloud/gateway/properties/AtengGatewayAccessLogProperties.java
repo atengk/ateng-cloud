@@ -27,6 +27,16 @@ public class AtengGatewayAccessLogProperties {
      */
     private List<String> excludePaths = new ArrayList<>(List.of("/actuator/**", "/favicon.ico"));
 
+    /**
+     * 是否在访问日志中包含请求 Query 查询参数 (默认 false)
+     */
+    private boolean includeQuery = false;
+
+    /**
+     * 自定义敏感 Query 参数名脱敏列表 (匹配到的键其参数值将被替换为 ***，不区分大小写)
+     */
+    private List<String> maskKeys = new ArrayList<>();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -49,5 +59,21 @@ public class AtengGatewayAccessLogProperties {
 
     public void setExcludePaths(List<String> excludePaths) {
         this.excludePaths = excludePaths;
+    }
+
+    public boolean isIncludeQuery() {
+        return includeQuery;
+    }
+
+    public void setIncludeQuery(boolean includeQuery) {
+        this.includeQuery = includeQuery;
+    }
+
+    public List<String> getMaskKeys() {
+        return maskKeys;
+    }
+
+    public void setMaskKeys(List<String> maskKeys) {
+        this.maskKeys = maskKeys;
     }
 }

@@ -67,4 +67,82 @@ public class GatewayAccessLogFilterTest {
         filter.filter(exchange, chain).block();
         assertTrue(executed.get());
     }
+
+    @Test
+    @DisplayName("测试开启 includeQuery 时携带敏感 Query 请求安全审计并放行")
+    void testAccessLogWithIncludeQueryAndMasking() {
+        AtengGatewayAccessLogProperties props = new AtengGatewayAccessLogProperties();
+        props.setEnabled(true);
+        props.setIncludeQuery(true);
+        props.setMaskKeys(java.util.List.of("customSecret"));
+
+        GatewayAccessLogFilter filter = new GatewayAccessLogFilter(props);
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/user/search?keyword=ateng&password=123456&customSecret=topSecret")
+                .header(GatewayConstants.X_TRACE_ID, "trace-query-mask-1")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        AtomicBoolean executed = new AtomicBoolean(false);
+        GatewayFilterChain chain = ex -> {
+            executed.set(true);
+            return Mono.empty();
+        };
+
+        filter.filter(exchange, chain).block();
+        assertTrue(executed.get());
+    }
+
+    @Test
+    @DisplayName("测试包含非法 % 转义的畸形 Query 旁路隔离且绝不中断请求")
+    void testAccessLogWithMalformedQueryNeverThrows() {
+        AtengGatewayAccessLogProperties props = new AtengGatewayAccessLogProperties();
+        props.setEnabled(true);
+        props.setIncludeQuery(true);
+
+        GatewayAccessLogFilter filter = new GatewayAccessLogFilter(props);
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/test?foo=%ZZ&bar=1")
+                .header(GatewayConstants.X_TRACE_ID, "trace-malformed-1")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        AtomicBoolean executed = new AtomicBoolean(false);
+        GatewayFilterChain chain = ex -> {
+            executed.set(true);
+            return Mono.empty();
+        };
+
+        filter.filter(exchange, chain).block();
+        assertTrue(executed.get());
+    }
+
+    @Test
+    @DisplayName("测试慢请求且包含 Query 参数审计告警")
+    void testAccessLogSlowRequestWithIncludeQuery() {
+        AtengGatewayAccessLogProperties props = new AtengGatewayAccessLogProperties();
+        props.setEnabled(true);
+        props.setIncludeQuery(true);
+        props.setSlowThreshold(Duration.ofMillis(1));
+
+        GatewayAccessLogFilter filter = new GatewayAccessLogFilter(props);
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/slow/test?key=123")
+                .header(GatewayConstants.X_TRACE_ID, "trace-slow-query-1")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        AtomicBoolean executed = new AtomicBoolean(false);
+        GatewayFilterChain chain = ex -> {
+            executed.set(true);
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException ignored) {
+            }
+            return Mono.empty();
+        };
+
+        filter.filter(exchange, chain).block();
+        assertTrue(executed.get());
+    }
 }
