@@ -1,5 +1,7 @@
 package io.github.atengk.cloud.gateway.properties;
 
+import org.springframework.util.unit.DataSize;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,6 +23,11 @@ public class AtengGatewaySignProperties {
      * 是否启用开放接口请求体 (Request Body) SHA-256 摘要加签防篡改
      */
     private boolean bodyEnabled = false;
+
+    /**
+     * 允许加签的最大请求体容量 (默认 2MB 载荷硬防爆)
+     */
+    private DataSize maxBodySize = DataSize.ofMegabytes(2);
 
     /**
      * 时间戳允许的最大时钟偏差 (默认 5 分钟)
@@ -51,6 +58,14 @@ public class AtengGatewaySignProperties {
 
     public void setBodyEnabled(boolean bodyEnabled) {
         this.bodyEnabled = bodyEnabled;
+    }
+
+    public DataSize getMaxBodySize() {
+        return maxBodySize;
+    }
+
+    public void setMaxBodySize(DataSize maxBodySize) {
+        this.maxBodySize = maxBodySize;
     }
 
     public Duration getTimestampThreshold() {

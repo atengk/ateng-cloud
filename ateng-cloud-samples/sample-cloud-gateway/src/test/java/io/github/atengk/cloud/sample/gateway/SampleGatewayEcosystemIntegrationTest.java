@@ -5,6 +5,8 @@ import io.github.atengk.cloud.gateway.loadbalancer.GrayServiceInstanceListSuppli
 import io.github.atengk.cloud.gateway.properties.AtengGatewayTrafficProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -374,11 +376,12 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .jsonPath("$.data.status").isEqualTo("empty-body");
     }
 
-    @Test
-    @DisplayName("测试网关全景诊断端点 (/actuator/atengGateway) 返回 HTTP 200 与脱敏结构化报告")
-    void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
+    @ParameterizedTest
+    @ValueSource(strings = {"/actuator/atengGateway", "/actuator/ateng-gateway"})
+    @DisplayName("测试网关全景诊断端点双命名别名路由 (/actuator/atengGateway 与 /actuator/ateng-gateway) 均平滑返回 HTTP 200 与脱敏结构化报告")
+    void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri) {
         webTestClient.get()
-                .uri("/actuator/atengGateway")
+                .uri(endpointUri)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -394,23 +397,6 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
                 .jsonPath("$.signGuard.enabled").isEqualTo(true)
                 .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
-    }
-
-    @Test
-    @DisplayName("测试中划线命名端点 (/actuator/ateng-gateway) 均可平滑访问输出四维全景结构化报告")
-    void testGatewayPanoramaEndpointHyphenatedPathReturns200() {
-        webTestClient.get()
-                .uri("/actuator/ateng-gateway")
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.status").isEqualTo("UP")
-                .jsonPath("$.gatewayId").isEqualTo("sample-cloud-gateway")
-                .jsonPath("$.dynamicRoute.totalRouteCount").isNumber()
-                .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(true)
-                .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
-                .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
-                .jsonPath("$.signGuard.enabled").isEqualTo(true);
     }
 
     @Test

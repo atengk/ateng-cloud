@@ -92,12 +92,15 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
 
         HttpHeaders headers = exchange.getRequest().getHeaders();
 
-        // 前置检查 Content-Length 是否超限 (2MB 载荷硬防爆)
-        long contentLength = headers.getContentLength();
-        if (contentLength > MAX_BODY_SIZE) {
-            log.warn("[GatewaySign] 请求体超出最大允许限制 (2MB): contentLength={}", contentLength);
-            return GatewayResponseUtils.writeJsonError(
-                    exchange, objectMapper, HttpStatus.PAYLOAD_TOO_LARGE, 413, "请求报文超出最大允许限制 (2MB)");
+        // 前置检查：若需请求体加签，前置快速防御超大报文 (默认 2MB 载荷硬防爆)
+        if (isBodyCheckNeeded(exchange)) {
+            long contentLength = headers.getContentLength();
+            long maxBodySize = resolveMaxBodySize();
+            if (contentLength > maxBodySize) {
+                log.warn("[GatewaySign] 请求体超出最大允许加签限制: contentLength={} > maxBodySize={}", contentLength, maxBodySize);
+                return GatewayResponseUtils.writeJsonError(
+                        exchange, objectMapper, HttpStatus.PAYLOAD_TOO_LARGE, 413, "请求报文超出最大允许限制 (2MB)");
+            }
         }
 
         // 1. 提取签名相关核心标头
@@ -176,13 +179,20 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
             DataBuffer dataBuffer = exchange.getAttribute(ServerWebExchangeUtils.CACHED_REQUEST_BODY_ATTR);
             String bodyHash = null;
             if (dataBuffer != null && dataBuffer.readableByteCount() > 0) {
-                if (dataBuffer.readableByteCount() > MAX_BODY_SIZE) {
-                    log.warn("[GatewaySign] 缓存请求体超出最大允许限制 (2MB): size={}", dataBuffer.readableByteCount());
+                long maxBodySize = resolveMaxBodySize();
+                if (dataBuffer.readableByteCount() > maxBodySize) {
+                    log.warn("[GatewaySign] 缓存请求体超出最大允许限制: size={} > maxBodySize={}", dataBuffer.readableByteCount(), maxBodySize);
                     ServerWebExchangeUtils.clearCachedRequestBody(exchange);
                     return GatewayResponseUtils.writeJsonError(
                             exchange, objectMapper, HttpStatus.PAYLOAD_TOO_LARGE, 413, "请求报文超出最大允许限制 (2MB)");
                 }
-                bodyHash = computeSha256Hex(dataBuffer);
+                try {
+                    bodyHash = computeSha256Hex(dataBuffer);
+                } catch (Exception e) {
+                    log.error("[GatewaySign] 计算请求体 SHA-256 摘要失败: {}", e.getMessage(), e);
+                    ServerWebExchangeUtils.clearCachedRequestBody(exchange);
+                    return writeJsonError(exchange, "计算请求体摘要失败");
+                }
             }
 
             String canonicalString = buildCanonicalString(exchange, appId.trim(), timestampStr.trim(), nonce.trim(), bodyHash);
@@ -210,6 +220,16 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
     }
 
     /**
+     * 获取允许加签的最大请求体容量 (字节)
+     */
+    private long resolveMaxBodySize() {
+        if (properties != null && properties.getMaxBodySize() != null) {
+            return properties.getMaxBodySize().toBytes();
+        }
+        return MAX_BODY_SIZE;
+    }
+
+    /**
      * 计算 DataBuffer 的 SHA-256 摘要十六进制小写字符串
      *
      * <p>依托 {@link DataBuffer#readableByteBuffers()} 进行非破坏性只读切片迭代，
@@ -231,9 +251,8 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
             }
             byte[] digest = md.digest();
             return HexFormat.of().formatHex(digest);
-        } catch (Exception e) {
-            log.error("[GatewaySign] 计算请求体 SHA-256 摘要异常: {}", e.getMessage(), e);
-            return null;
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("当前运行环境不支持 SHA-256 摘要算法", e);
         }
     }
 

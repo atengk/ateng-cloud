@@ -20,6 +20,7 @@ import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.util.ClassUtils;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -28,6 +29,7 @@ import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Predicate;
 
 /**
  * 网关全局统一响应式异常处理器
@@ -43,6 +45,14 @@ import java.util.concurrent.TimeoutException;
 public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayGlobalExceptionHandler.class);
+
+    /**
+     * Sentinel 核心异常类路径探测标记（零硬依赖，平滑自适应探测）
+     */
+    private static final boolean SENTINEL_PRESENT = ClassUtils.isPresent(
+            "com.alibaba.csp.sentinel.slots.block.BlockException",
+            GatewayGlobalExceptionHandler.class.getClassLoader()
+    );
 
     private final ObjectMapper objectMapper;
 
@@ -215,6 +225,7 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
 
         // 模式 5.1：下游连接突发中断或信道关闭 (502 Bad Gateway)
         if (isCausedBy(ex, java.nio.channels.ClosedChannelException.class)
+                || isCausedBy(ex, reactor.netty.http.client.PrematureCloseException.class)
                 || isCausedByClassName(ex, "PrematureCloseException")) {
             return new ErrorContext(
                     HttpStatus.BAD_GATEWAY,
@@ -243,19 +254,10 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
         );
     }
 
-    @SuppressWarnings("unchecked")
-    private <T extends Throwable> T findCause(Throwable ex, Class<T> targetClass) {
-        Throwable current = ex;
-        while (current != null) {
-            if (targetClass.isInstance(current)) {
-                return (T) current;
-            }
-            current = current.getCause();
-        }
-        return null;
-    }
-
     private ErrorContext resolveSentinelErrorContext(Throwable ex) {
+        if (!SENTINEL_PRESENT) {
+            return null;
+        }
         Throwable blockEx = findCauseByName(ex, "com.alibaba.csp.sentinel.slots.block.BlockException");
         if (blockEx == null) {
             return null;
@@ -286,30 +288,41 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
         );
     }
 
-    private Throwable findCauseByName(Throwable ex, String targetClassName) {
+    private Throwable findCauseByPredicate(Throwable ex, Predicate<Throwable> predicate) {
         Throwable current = ex;
         while (current != null) {
-            Class<?> clazz = current.getClass();
-            while (clazz != null && clazz != Object.class) {
-                if (targetClassName.equals(clazz.getName())) {
-                    return current;
-                }
-                clazz = clazz.getSuperclass();
+            if (predicate.test(current)) {
+                return current;
             }
             current = current.getCause();
         }
         return null;
     }
 
-    private boolean isCausedByClassName(Throwable ex, String simpleOrFullPattern) {
-        Throwable current = ex;
-        while (current != null) {
-            if (current.getClass().getName().contains(simpleOrFullPattern)) {
-                return true;
+    @SuppressWarnings("unchecked")
+    private <T extends Throwable> T findCause(Throwable ex, Class<T> targetClass) {
+        return (T) findCauseByPredicate(ex, targetClass::isInstance);
+    }
+
+    private boolean isCausedBy(Throwable ex, Class<? extends Throwable> targetClass) {
+        return findCause(ex, targetClass) != null;
+    }
+
+    private Throwable findCauseByName(Throwable ex, String targetClassName) {
+        return findCauseByPredicate(ex, current -> {
+            Class<?> clazz = current.getClass();
+            while (clazz != null && clazz != Object.class) {
+                if (targetClassName.equals(clazz.getName())) {
+                    return true;
+                }
+                clazz = clazz.getSuperclass();
             }
-            current = current.getCause();
-        }
-        return false;
+            return false;
+        });
+    }
+
+    private boolean isCausedByClassName(Throwable ex, String simpleOrFullPattern) {
+        return findCauseByPredicate(ex, current -> current.getClass().getName().contains(simpleOrFullPattern)) != null;
     }
 
     private HttpStatusCode resolveHttpStatusFromCode(int code) {
@@ -320,17 +333,6 @@ public class GatewayGlobalExceptionHandler implements ErrorWebExceptionHandler, 
             }
         }
         return HttpStatus.OK;
-    }
-
-    private boolean isCausedBy(Throwable ex, Class<? extends Throwable> targetClass) {
-        Throwable current = ex;
-        while (current != null) {
-            if (targetClass.isInstance(current)) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
     }
 
     private void logException(ServerWebExchange exchange, Throwable ex, ErrorContext ctx, String traceId) {

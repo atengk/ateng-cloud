@@ -102,23 +102,16 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
                 ? properties.getSlowThreshold().toMillis()
                 : 3000L;
 
-        if (properties.isIncludeQuery()) {
-            String query = resolveSanitizedQuery(exchange);
-            if (duration >= slowThresholdMs) {
-                log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}, query={}",
-                        method, path, status, duration, slowThresholdMs, clientIp, userId, traceId, query);
-            } else {
-                log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}, query={}",
-                        method, path, status, duration, clientIp, userId, traceId, query);
-            }
+        String querySuffix = properties.isIncludeQuery()
+                ? ", query=" + resolveSanitizedQuery(exchange)
+                : "";
+
+        if (duration >= slowThresholdMs) {
+            log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}{}",
+                    method, path, status, duration, slowThresholdMs, clientIp, userId, traceId, querySuffix);
         } else {
-            if (duration >= slowThresholdMs) {
-                log.warn("[ACCESS] SLOW REQUEST: method={}, path={}, status={}, duration={}ms > {}ms, ip={}, userId={}, traceId={}",
-                        method, path, status, duration, slowThresholdMs, clientIp, userId, traceId);
-            } else {
-                log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}",
-                        method, path, status, duration, clientIp, userId, traceId);
-            }
+            log.info("[ACCESS] method={}, path={}, status={}, duration={}ms, ip={}, userId={}, traceId={}{}",
+                    method, path, status, duration, clientIp, userId, traceId, querySuffix);
         }
     }
 

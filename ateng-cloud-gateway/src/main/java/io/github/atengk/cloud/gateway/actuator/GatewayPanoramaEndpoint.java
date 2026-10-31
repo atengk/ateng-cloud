@@ -10,7 +10,13 @@ import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
+import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.core.env.Environment;
+import org.springframework.util.StringUtils;
+
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * 网关全景健康与动态路由只读运维诊断端点
@@ -91,7 +97,19 @@ public class GatewayPanoramaEndpoint {
                 mainRefreshError
         );
 
-        int totalRouteCount = nacosRouteCount + mainRouteCount;
+        // 计算双轨路由去重仲裁后的有效总路由数 (Nacos 路由覆盖同名主配置路由)
+        Set<String> uniqueRouteIds = new HashSet<>();
+        if (nacosRepo != null) {
+            uniqueRouteIds.addAll(nacosRepo.getRoutesSnapshot().keySet());
+        }
+        if (refreshListener != null) {
+            for (RouteDefinition route : refreshListener.getLastKnownGoodRoutes()) {
+                if (route != null && StringUtils.hasText(route.getId())) {
+                    uniqueRouteIds.add(route.getId());
+                }
+            }
+        }
+        int totalRouteCount = uniqueRouteIds.size();
         boolean dualTrackEnabled = routeProps.isEnabled() && nacosRepo != null && refreshListener != null;
 
         GatewayPanoramaReport.DynamicRouteReport dynamicRouteReport = new GatewayPanoramaReport.DynamicRouteReport(
@@ -105,8 +123,7 @@ public class GatewayPanoramaEndpoint {
         // 2. 金丝雀灰度负载均衡诊断
         AtengGatewayTrafficProperties trafficProps = props.getTraffic() != null
                 ? props.getTraffic() : new AtengGatewayTrafficProperties();
-        String cacheTtlStr = trafficProps.getCacheTtl() != null
-                ? (trafficProps.getCacheTtl().toSeconds() + "s") : "3s";
+        String cacheTtlStr = formatDuration(trafficProps.getCacheTtl(), "3s");
         GatewayPanoramaReport.GrayLoadBalancerReport grayReport = new GatewayPanoramaReport.GrayLoadBalancerReport(
                 trafficProps.isEnabled(),
                 trafficProps.isFallbackToDefault(),
@@ -132,13 +149,7 @@ public class GatewayPanoramaEndpoint {
         // 4. 开放接口 API 签名防篡改诊断
         AtengGatewaySignProperties signProps = props.getSign() != null
                 ? props.getSign() : new AtengGatewaySignProperties();
-        String timestampThresholdStr = "5m";
-        if (signProps.getTimestampThreshold() != null) {
-            long seconds = signProps.getTimestampThreshold().toSeconds();
-            timestampThresholdStr = (seconds >= 60 && seconds % 60 == 0)
-                    ? (signProps.getTimestampThreshold().toMinutes() + "m")
-                    : (seconds + "s");
-        }
+        String timestampThresholdStr = formatDuration(signProps.getTimestampThreshold(), "5m");
         GatewayPanoramaReport.SignGuardReport signReport = new GatewayPanoramaReport.SignGuardReport(
                 signProps.isEnabled(),
                 signProps.isBodyEnabled(),
@@ -159,5 +170,16 @@ public class GatewayPanoramaEndpoint {
                 secReport,
                 signReport
         );
+    }
+
+    private String formatDuration(Duration duration, String defaultVal) {
+        if (duration == null) {
+            return defaultVal;
+        }
+        long seconds = duration.toSeconds();
+        if (seconds >= 60 && seconds % 60 == 0) {
+            return duration.toMinutes() + "m";
+        }
+        return seconds + "s";
     }
 }

@@ -112,23 +112,16 @@ public final class GatewayQuerySanitizer {
                 }
                 String pair = pairs[i];
                 int eqIdx = pair.indexOf('=');
-                if (eqIdx == -1) {
-                    String rawKey = pair;
-                    String decodedKey = decodeSafely(rawKey);
-                    if (isMaskKey(decodedKey, maskKeys)) {
-                        sb.append(rawKey).append('=').append(MASK_REPLACEMENT);
-                    } else {
-                        sb.append(rawKey);
-                    }
+                String rawKey = (eqIdx == -1) ? pair : pair.substring(0, eqIdx);
+                String rawVal = (eqIdx == -1) ? null : pair.substring(eqIdx + 1);
+                String decodedKey = decodeSafely(rawKey);
+
+                if (isMaskKey(decodedKey, maskKeys)) {
+                    sb.append(rawKey).append('=').append(MASK_REPLACEMENT);
+                } else if (rawVal != null) {
+                    sb.append(rawKey).append('=').append(rawVal);
                 } else {
-                    String rawKey = pair.substring(0, eqIdx);
-                    String rawVal = pair.substring(eqIdx + 1);
-                    String decodedKey = decodeSafely(rawKey);
-                    if (isMaskKey(decodedKey, maskKeys)) {
-                        sb.append(rawKey).append('=').append(MASK_REPLACEMENT);
-                    } else {
-                        sb.append(rawKey).append('=').append(rawVal);
-                    }
+                    sb.append(rawKey);
                 }
             }
 

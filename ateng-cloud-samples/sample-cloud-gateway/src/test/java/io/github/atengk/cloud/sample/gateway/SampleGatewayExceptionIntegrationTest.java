@@ -132,4 +132,62 @@ public class SampleGatewayExceptionIntegrationTest {
                 .jsonPath("$.msg").value(containsString("Bad Gateway"))
                 .jsonPath("$.traceId").isNotEmpty();
     }
+
+    @Test
+    @DisplayName("测试 Sentinel FlowException 自适应转译为 HTTP 429 且附加 Retry-After 标头")
+    void testSentinelFlowExceptionTranslation() {
+        webTestClient.get()
+                .uri("/mock/sentinel/flow")
+                .exchange()
+                .expectStatus().isEqualTo(429)
+                .expectHeader().exists("X-Trace-Id")
+                .expectHeader().valueEquals("Retry-After", "1")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(429)
+                .jsonPath("$.msg").value(containsString("流量控制"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("测试 Sentinel DegradeException 自适应转译为 HTTP 503 Service Unavailable")
+    void testSentinelDegradeExceptionTranslation() {
+        webTestClient.get()
+                .uri("/mock/sentinel/degrade")
+                .exchange()
+                .expectStatus().isEqualTo(503)
+                .expectHeader().exists("X-Trace-Id")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(503)
+                .jsonPath("$.msg").value(containsString("熔断降级"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("测试 Sentinel AuthorityException 自适应转译为 HTTP 403 Forbidden")
+    void testSentinelAuthorityExceptionTranslation() {
+        webTestClient.get()
+                .uri("/mock/sentinel/authority")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectHeader().exists("X-Trace-Id")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(403)
+                .jsonPath("$.msg").value(containsString("授权拦截"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("测试 Sentinel SystemBlockException 自适应转译为 HTTP 429 且附加 Retry-After 标头")
+    void testSentinelSystemBlockExceptionTranslation() {
+        webTestClient.get()
+                .uri("/mock/sentinel/system")
+                .exchange()
+                .expectStatus().isEqualTo(429)
+                .expectHeader().exists("X-Trace-Id")
+                .expectHeader().valueEquals("Retry-After", "1")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(429)
+                .jsonPath("$.msg").value(containsString("流量控制"))
+                .jsonPath("$.traceId").isNotEmpty();
+    }
 }

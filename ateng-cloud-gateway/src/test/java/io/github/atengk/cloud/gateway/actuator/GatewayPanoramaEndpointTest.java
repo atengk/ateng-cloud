@@ -221,4 +221,47 @@ public class GatewayPanoramaEndpointTest {
 
         assertTrue(avgMicros < 100.0, "单次内存诊断报告耗时应在微秒级 (<100us), 实际为: " + avgMicros + "us");
     }
+
+    @Test
+    @DisplayName("测试双轨路由存在同名冲突时总有效路由数准确去重")
+    void testDualTrackRouteConflictDeduplication() {
+        AtengGatewayProperties props = new AtengGatewayProperties();
+        props.getDynamicRoute().setEnabled(true);
+
+        // Nacos 动态路由包含 route-common 与 nacos-only (共 2 条)
+        NacosRouteDefinitionRepository nacosRepo = new NacosRouteDefinitionRepository(
+                null, props.getDynamicRoute(), null, null);
+        String nacosJson = """
+                [
+                    {"id": "route-common", "uri": "lb://nacos-service", "predicates": [{"name": "Path", "args": {"_genkey_0": "/common/**"}}]},
+                    {"id": "nacos-only", "uri": "lb://nacos-service-2", "predicates": [{"name": "Path", "args": {"_genkey_0": "/nacos/**"}}]}
+                ]
+                """;
+        assertTrue(nacosRepo.publishRoutes(nacosJson, false));
+
+        // 主配置路由包含同名的 route-common 与 main-only (共 2 条)
+        GatewayProperties gatewayProperties = new GatewayProperties();
+        gatewayProperties.setRoutes(Arrays.asList(
+                createRoute("route-common", "forward:/mock/common"),
+                createRoute("main-only", "forward:/mock/main")
+        ));
+        MockEnvironment env = new MockEnvironment();
+        GatewayRouteRefreshListener listener = new GatewayRouteRefreshListener(
+                gatewayProperties, env, null, props.getDynamicRoute());
+        listener.afterPropertiesSet();
+
+        GatewayPanoramaEndpoint endpoint = new GatewayPanoramaEndpoint(
+                providerOf(props),
+                providerOf(nacosRepo),
+                providerOf(listener),
+                env
+        );
+
+        GatewayPanoramaReport report = endpoint.report();
+        assertNotNull(report);
+        assertEquals(2, report.dynamicRoute().nacosRoute().routeCount());
+        assertEquals(2, report.dynamicRoute().mainConfigRoute().routeCount());
+        // 验证去重：route-common 发生碰撞，总有效路由数应为 3 而不是 4
+        assertEquals(3, report.dynamicRoute().totalRouteCount(), "总路由数在同名冲突时应准确去重为 3");
+    }
 }

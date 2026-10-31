@@ -117,6 +117,7 @@
 | `ateng.cloud.gateway.access-log.mask-keys` | `List<String>` | `[]` | 自定义敏感 Query 参数名脱敏列表（不区分大小写，值替换为 `***`） |
 | `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否开启开放接口 API 数字签名防篡改与 Nonce 防重放 |
 | `ateng.cloud.gateway.sign.body-enabled` | `boolean` | `false` | 是否开启开放接口请求体 (Request Body) SHA-256 摘要加签防篡改 |
+| `ateng.cloud.gateway.sign.max-body-size` | `DataSize` | `2MB` | 允许加签的最大请求体容量（超过直接 413 载荷防爆熔断） |
 | `ateng.cloud.gateway.sign.timestamp-threshold` | `Duration` | `5m` | 签名时间戳允许的最大时钟偏差窗口 |
 | `ateng.cloud.gateway.sign.include-paths` | `List<String>` | `[]` | 需进行签名校验的目标路径列表（支持 AntPath，为空对全量生效） |
 | `ateng.cloud.gateway.sign.exclude-paths` | `List<String>` | `[]` | 签名校验排除放行路径列表（支持 AntPath） |
@@ -567,7 +568,7 @@ void testHttpBoundaryUncoloredRequestNeverTouchesCanary() {
 }
 ```
 
-### 7. 下游连接中断与信道关闭 502 转译测试
+### 7. 下游连接中断与 Sentinel 响应式异常自适应转译测试
 ```java
 @Test
 @DisplayName("测试下游连接过早关闭 PrematureCloseException 转译为 HTTP 502 Bad Gateway")
@@ -596,20 +597,49 @@ void testClosedChannelTranslation() {
             .jsonPath("$.msg").value(containsString("Bad Gateway"))
             .jsonPath("$.traceId").isNotEmpty();
 }
+
+@Test
+@DisplayName("测试 Sentinel FlowException 自适应转译为 HTTP 429 且附加 Retry-After 标头")
+void testSentinelFlowExceptionTranslation() {
+    webTestClient.get()
+            .uri("/mock/sentinel/flow")
+            .exchange()
+            .expectStatus().isEqualTo(429)
+            .expectHeader().exists("X-Trace-Id")
+            .expectHeader().valueEquals("Retry-After", "1")
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(429)
+            .jsonPath("$.msg").value(containsString("流量控制"))
+            .jsonPath("$.traceId").isNotEmpty();
+}
+
+@Test
+@DisplayName("测试 Sentinel DegradeException 自适应转译为 HTTP 503 Service Unavailable")
+void testSentinelDegradeExceptionTranslation() {
+    webTestClient.get()
+            .uri("/mock/sentinel/degrade")
+            .exchange()
+            .expectStatus().isEqualTo(503)
+            .expectHeader().exists("X-Trace-Id")
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(503)
+            .jsonPath("$.msg").value(containsString("熔断降级"))
+            .jsonPath("$.traceId").isNotEmpty();
+}
 ```
 
 ### 8. 开放接口 Request Body SHA-256 摘要加签与防篡改测试
 ```java
 @Test
-@DisplayName("测试开放接口 POST 请求体计算 SHA-256 摘要加签通过并放行")
-void testSignGuardPostWithBodyPasses() throws Exception {
+@DisplayName("测试开放接口 POST 携带 Body 且签名包含 bodyHash 成功通过校验")
+void testSignGuardValidBodyPostPasses() throws Exception {
     String appId = "sample-app";
     String secret = "sample-secret-123456";
     String timestamp = String.valueOf(System.currentTimeMillis());
-    String nonce = "nonce-body-" + System.nanoTime();
-    String body = "{\"message\":\"hello-ateng-cloud\"}";
+    String nonce = "nonce-post-" + System.nanoTime();
+    String jsonBody = "{\"message\":\"hello-ateng-cloud\"}";
 
-    String bodyHash = calculateSha256(body.getBytes(StandardCharsets.UTF_8));
+    String bodyHash = calculateSha256(jsonBody.getBytes(StandardCharsets.UTF_8));
     String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
     String signature = calculateHmacSha256(canonical, secret);
 
@@ -620,7 +650,7 @@ void testSignGuardPostWithBodyPasses() throws Exception {
             .header(GatewayConstants.X_NONCE, nonce)
             .header(GatewayConstants.X_SIGNATURE, signature)
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(body)
+            .bodyValue(jsonBody)
             .exchange()
             .expectStatus().isOk()
             .expectBody()
@@ -680,11 +710,12 @@ ateng:
 
 #### 端点访问与强断言测试
 ```java
-@Test
-@DisplayName("测试网关全景运维诊断端点 (/actuator/atengGateway) 返回 200 与四维全景结构化报告")
-void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
+@ParameterizedTest
+@ValueSource(strings = {"/actuator/atengGateway", "/actuator/ateng-gateway"})
+@DisplayName("测试网关全景诊断端点双命名别名路由 (/actuator/atengGateway 与 /actuator/ateng-gateway) 均平滑返回 HTTP 200 与脱敏结构化报告")
+void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri) {
     webTestClient.get()
-            .uri("/actuator/atengGateway")
+            .uri(endpointUri)
             .exchange()
             .expectStatus().isOk()
             .expectBody()
@@ -700,23 +731,6 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
             .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
             .jsonPath("$.signGuard.enabled").isEqualTo(true)
             .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
-}
-
-@Test
-@DisplayName("测试中划线命名端点 (/actuator/ateng-gateway) 均可平滑访问输出四维全景结构化报告")
-void testGatewayPanoramaEndpointHyphenatedPathReturns200() {
-    webTestClient.get()
-            .uri("/actuator/ateng-gateway")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.status").isEqualTo("UP")
-            .jsonPath("$.gatewayId").isEqualTo("sample-cloud-gateway")
-            .jsonPath("$.dynamicRoute.totalRouteCount").isNumber()
-            .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(true)
-            .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
-            .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
-            .jsonPath("$.signGuard.enabled").isEqualTo(true);
 }
 ```
 
