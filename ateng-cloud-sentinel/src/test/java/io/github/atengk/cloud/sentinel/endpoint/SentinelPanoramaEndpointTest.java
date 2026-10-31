@@ -80,6 +80,7 @@ class SentinelPanoramaEndpointTest {
         assertThat(report.webMvcConfig().urlClean().enabled()).isTrue();
 
         assertThat(report.blockMetrics()).isNotNull();
+        assertThat(report.blockMetrics().blockedTotal()).isEqualTo(0);
         assertThat(report.blockMetrics().totalBlocked()).isEqualTo(0);
         assertThat(report.blockMetrics().lastBlockEvent()).isNull();
     }
@@ -235,6 +236,7 @@ class SentinelPanoramaEndpointTest {
 
         // 验证阻断统计快照
         SentinelPanoramaReport.BlockMetricsReport metrics = report.blockMetrics();
+        assertThat(metrics.blockedTotal()).isEqualTo(1);
         assertThat(metrics.totalBlocked()).isEqualTo(1);
         assertThat(metrics.flowCount()).isEqualTo(1);
         assertThat(metrics.lastBlockEvent()).isNotNull();

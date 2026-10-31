@@ -421,6 +421,7 @@ sequenceDiagram
     }
   },
   "blockMetrics": {
+    "blockedTotal": 1,
     "totalBlocked": 1,
     "flowCount": 1,
     "degradeCount": 0,

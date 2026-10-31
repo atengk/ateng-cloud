@@ -65,7 +65,13 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
             blockCounter.recordBlock(e, resourceName, clientIp);
         }
 
-        if (response != null && response.isCommitted()) {
+        if (response == null) {
+            log.warn("HttpServletResponse is null, skip Sentinel block handler response write: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
+                    resourceName, resultCode.name(), httpStatus.value(), request != null ? request.getRequestURI() : "unknown", clientIp);
+            return;
+        }
+
+        if (response.isCommitted()) {
             log.warn("Response already committed, skip Sentinel block handler response write: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
                     resourceName, resultCode.name(), httpStatus.value(), request != null ? request.getRequestURI() : "unknown", clientIp);
             return;

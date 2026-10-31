@@ -235,10 +235,7 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos 服务端连接地址
      */
     public String resolveServerAddr(Environment env) {
-        String val = resolveProperty(this.serverAddr, env,
-                "spring.cloud.nacos.config.server-addr",
-                "spring.cloud.nacos.discovery.server-addr",
-                "spring.cloud.nacos.server-addr");
+        String val = resolveNacosProperty(this.serverAddr, env, "server-addr");
         return StringUtils.hasText(val) ? val.trim() : DEFAULT_SERVER_ADDR;
     }
 
@@ -246,10 +243,7 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos 命名空间
      */
     public String resolveNamespace(Environment env) {
-        String val = resolveProperty(this.namespace, env,
-                "spring.cloud.nacos.config.namespace",
-                "spring.cloud.nacos.discovery.namespace",
-                "spring.cloud.nacos.namespace");
+        String val = resolveNacosProperty(this.namespace, env, "namespace");
         return val != null ? val.trim() : "";
     }
 
@@ -257,10 +251,7 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos 用户名
      */
     public String resolveUsername(Environment env) {
-        String val = resolveProperty(this.username, env,
-                "spring.cloud.nacos.config.username",
-                "spring.cloud.nacos.discovery.username",
-                "spring.cloud.nacos.username");
+        String val = resolveNacosProperty(this.username, env, "username");
         return val != null ? val.trim() : "";
     }
 
@@ -268,10 +259,7 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos 密码
      */
     public String resolvePassword(Environment env) {
-        String val = resolveProperty(this.password, env,
-                "spring.cloud.nacos.config.password",
-                "spring.cloud.nacos.discovery.password",
-                "spring.cloud.nacos.password");
+        String val = resolveNacosProperty(this.password, env, "password");
         return val != null ? val.trim() : "";
     }
 
@@ -279,10 +267,7 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos 上下文路径
      */
     public String resolveContextPath(Environment env) {
-        String val = resolveProperty(this.contextPath, env,
-                "spring.cloud.nacos.config.context-path",
-                "spring.cloud.nacos.discovery.context-path",
-                "spring.cloud.nacos.context-path");
+        String val = resolveNacosProperty(this.contextPath, env, "context-path");
         return val != null ? val.trim() : "";
     }
 
@@ -290,10 +275,7 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos AccessKey
      */
     public String resolveAccessKey(Environment env) {
-        String val = resolveProperty(this.accessKey, env,
-                "spring.cloud.nacos.config.access-key",
-                "spring.cloud.nacos.discovery.access-key",
-                "spring.cloud.nacos.access-key");
+        String val = resolveNacosProperty(this.accessKey, env, "access-key");
         return val != null ? val.trim() : "";
     }
 
@@ -301,11 +283,15 @@ public class AtengSentinelNacosRuleProperties {
      * 按照四级时序自适应解析 Nacos SecretKey
      */
     public String resolveSecretKey(Environment env) {
-        String val = resolveProperty(this.secretKey, env,
-                "spring.cloud.nacos.config.secret-key",
-                "spring.cloud.nacos.discovery.secret-key",
-                "spring.cloud.nacos.secret-key");
+        String val = resolveNacosProperty(this.secretKey, env, "secret-key");
         return val != null ? val.trim() : "";
+    }
+
+    private String resolveNacosProperty(String explicitVal, Environment env, String suffix) {
+        return resolveProperty(explicitVal, env,
+                "spring.cloud.nacos.config." + suffix,
+                "spring.cloud.nacos.discovery." + suffix,
+                "spring.cloud.nacos." + suffix);
     }
 
     private String resolveProperty(String explicitVal, Environment env, String... fallbackKeys) {

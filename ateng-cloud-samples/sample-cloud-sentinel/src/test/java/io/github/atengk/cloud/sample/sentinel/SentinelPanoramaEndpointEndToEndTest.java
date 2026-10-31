@@ -85,6 +85,7 @@ class SentinelPanoramaEndpointEndToEndTest {
         // 4. 阻断事件统计
         JsonNode metrics = root.get("blockMetrics");
         assertThat(metrics).isNotNull();
+        assertThat(metrics.get("blockedTotal").asLong()).isGreaterThanOrEqualTo(0);
         assertThat(metrics.get("totalBlocked").asLong()).isGreaterThanOrEqualTo(0);
     }
 
@@ -117,6 +118,7 @@ class SentinelPanoramaEndpointEndToEndTest {
 
         // 强断言：阻断统计计数器已原子递增并捕获最近一次事件
         JsonNode metrics = root.get("blockMetrics");
+        assertThat(metrics.get("blockedTotal").asLong()).isGreaterThanOrEqualTo(1);
         assertThat(metrics.get("totalBlocked").asLong()).isGreaterThanOrEqualTo(1);
         assertThat(metrics.get("flowCount").asLong()).isGreaterThanOrEqualTo(1);
 

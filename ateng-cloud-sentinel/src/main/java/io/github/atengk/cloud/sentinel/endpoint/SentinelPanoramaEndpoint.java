@@ -32,7 +32,7 @@ import java.util.List;
  * @author Ateng
  * @since 2026-10-31
  */
-@Endpoint(id = "sentinel-panorama")
+@Endpoint(id = "sentinelPanorama")
 public class SentinelPanoramaEndpoint {
 
     private final ObjectProvider<AtengSentinelProperties> propertiesProvider;
@@ -279,7 +279,7 @@ public class SentinelPanoramaEndpoint {
         }
 
         return new SentinelPanoramaReport.BlockMetricsReport(
-                counter.getTotalBlocked(),
+                counter.getBlockedTotal(),
                 counter.getFlowCount(),
                 counter.getDegradeCount(),
                 counter.getParamFlowCount(),

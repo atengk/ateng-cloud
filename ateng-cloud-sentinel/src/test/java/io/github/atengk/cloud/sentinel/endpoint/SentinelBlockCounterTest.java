@@ -42,6 +42,7 @@ class SentinelBlockCounterTest {
         counter.recordBlock(new AuthorityException("authority-limit"), "/api/admin", "192.168.1.14");
         counter.recordBlock(new CustomBlockException("custom"), "/api/other", "192.168.1.15");
 
+        assertThat(counter.getBlockedTotal()).isEqualTo(6);
         assertThat(counter.getTotalBlocked()).isEqualTo(6);
         assertThat(counter.getFlowCount()).isEqualTo(1);
         assertThat(counter.getDegradeCount()).isEqualTo(1);

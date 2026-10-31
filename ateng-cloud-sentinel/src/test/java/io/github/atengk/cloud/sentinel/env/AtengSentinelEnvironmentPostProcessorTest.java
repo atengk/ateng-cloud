@@ -36,6 +36,8 @@ class AtengSentinelEnvironmentPostProcessorTest {
 
         assertThat(environment.getProperty(AtengSentinelEnvironmentPostProcessor.FEIGN_SENTINEL_ENABLED))
                 .isEqualTo("true");
+        assertThat(environment.getProperty(AtengSentinelEnvironmentPostProcessor.PATH_MAPPING_SENTINEL_PANORAMA))
+                .isEqualTo("sentinel-panorama");
         assertThat(environment.getPropertySources().contains(AtengSentinelEnvironmentPostProcessor.PROPERTY_SOURCE_NAME))
                 .isTrue();
     }

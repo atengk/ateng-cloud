@@ -26,6 +26,8 @@ public class AtengSentinelEnvironmentPostProcessor implements EnvironmentPostPro
     public static final String PROPERTY_SOURCE_NAME = "atengSentinelDefaultProperties";
     public static final String FEIGN_SENTINEL_ENABLED = "feign.sentinel.enabled";
     public static final String FEIGN_CLIENT_CLASS = "org.springframework.cloud.openfeign.FeignClient";
+    public static final String ACTUATOR_ENDPOINT_CLASS = "org.springframework.boot.actuate.endpoint.annotation.Endpoint";
+    public static final String PATH_MAPPING_SENTINEL_PANORAMA = "management.endpoints.web.path-mapping.sentinelPanorama";
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
@@ -33,11 +35,18 @@ public class AtengSentinelEnvironmentPostProcessor implements EnvironmentPostPro
                 ? application.getClassLoader()
                 : ClassUtils.getDefaultClassLoader();
 
+        Map<String, Object> defaultProperties = new HashMap<>(4);
+
         if (ClassUtils.isPresent(FEIGN_CLIENT_CLASS, classLoader)) {
+            defaultProperties.put(FEIGN_SENTINEL_ENABLED, "true");
+        }
+        if (ClassUtils.isPresent(ACTUATOR_ENDPOINT_CLASS, classLoader)) {
+            defaultProperties.put(PATH_MAPPING_SENTINEL_PANORAMA, "sentinel-panorama");
+        }
+
+        if (!defaultProperties.isEmpty()) {
             MutablePropertySources propertySources = environment.getPropertySources();
             if (!propertySources.contains(PROPERTY_SOURCE_NAME)) {
-                Map<String, Object> defaultProperties = new HashMap<>(2);
-                defaultProperties.put(FEIGN_SENTINEL_ENABLED, "true");
                 propertySources.addLast(new MapPropertySource(PROPERTY_SOURCE_NAME, defaultProperties));
             }
         }

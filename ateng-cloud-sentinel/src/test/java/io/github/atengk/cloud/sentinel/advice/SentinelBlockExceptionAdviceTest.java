@@ -122,22 +122,24 @@ class SentinelBlockExceptionAdviceTest {
     }
 
     @Test
-    @DisplayName("关闭 HTTP 状态码物理对齐：返回 HTTP 200 OK 且 Body 携带 4201 错误码")
-    void testHttpStatusAlignDisabled() {
-        properties.getBlockHandler().setHttpStatusAlign(false);
+    @DisplayName("独立控制 HTTP 状态码物理对齐：blockAdvice 开关与 blockHandler 解耦自洽")
+    void testHttpStatusAlignIndependent() {
         FlowException ex = new FlowException("flow limited");
 
-        ResponseEntity<Result<Void>> response = advice.handleBlockException(ex, request);
+        // 1. blockAdvice 开启状态码对齐，即使 blockHandler 关闭，仍物理对齐 429
+        properties.getBlockHandler().setHttpStatusAlign(false);
+        properties.getBlockAdvice().setHttpStatusAlign(true);
+        ResponseEntity<Result<Void>> responseAligned = advice.handleBlockException(ex, request);
+        assertThat(responseAligned.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(responseAligned.getBody()).isNotNull();
+        assertThat(responseAligned.getBody().getCode()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().getCode()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
-
-        // 测试 blockAdvice 独立开关
-        properties.getBlockHandler().setHttpStatusAlign(true);
+        // 2. blockAdvice 关闭状态码对齐，返回 HTTP 200 OK
         properties.getBlockAdvice().setHttpStatusAlign(false);
-        ResponseEntity<Result<Void>> responseAdvice = advice.handleBlockException(ex, request);
-        assertThat(responseAdvice.getStatusCode()).isEqualTo(HttpStatus.OK);
+        ResponseEntity<Result<Void>> responseOk = advice.handleBlockException(ex, request);
+        assertThat(responseOk.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(responseOk.getBody()).isNotNull();
+        assertThat(responseOk.getBody().getCode()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
     }
 
     @Test

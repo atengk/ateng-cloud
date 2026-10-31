@@ -89,8 +89,18 @@ public class SentinelBlockCounter {
         lastBlockEvent.set(new BlockEventSnapshot(System.currentTimeMillis(), safeResource, ruleType, clientIp, message));
     }
 
-    public long getTotalBlocked() {
+    /**
+     * 获取累计总阻断数 (符合 Spec 契约命名)
+     */
+    public long getBlockedTotal() {
         return totalBlocked.get();
+    }
+
+    /**
+     * 获取累计总阻断数 (兼容存量 getter)
+     */
+    public long getTotalBlocked() {
+        return getBlockedTotal();
     }
 
     public long getFlowCount() {

@@ -258,8 +258,8 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
                 List<T> rules = objectMapper.readValue(source, typeReference);
                 return rules != null ? rules : Collections.emptyList();
             } catch (Exception e) {
-                log.error("CRITICAL: Failed to parse Sentinel {} from JSON due to syntax error! Aborting rule update to preserve Last Known Good Rules. Malformed payload: [{}]",
-                        ruleTypeName, source, e);
+                log.warn("Rule Fail-Safe Invariant triggered: failed to parse Sentinel {} from JSON syntax error (cause: {}), aborting update to preserve Last Known Good Rules. Malformed payload: [{}]",
+                        ruleTypeName, e.getMessage(), source);
                 throw new IllegalArgumentException("Failed to parse Sentinel " + ruleTypeName + " from JSON payload", e);
             }
         }

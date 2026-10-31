@@ -123,6 +123,14 @@ class AtengBlockExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("空响应防卫：当 response 为 null 时安全跳过写入，杜绝抛出 NPE")
+    void testHandleResponseNull() {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() ->
+                handler.handle(request, null, "order-resource", new FlowException("test flow block")));
+    }
+
+    @Test
     @DisplayName("已提交响应防卫：当 response.isCommitted() 为 true 时安全跳过写入，不抛次生异常")
     void testHandleResponseAlreadyCommitted() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");

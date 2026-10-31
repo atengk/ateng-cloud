@@ -40,9 +40,6 @@ public class AtengRequestOriginParser implements RequestOriginParser {
 
         // 1. 优先读取微服务出站注入的服务名标头 (默认 X-Origin-Service)
         String originHeader = properties.getOriginParser().getOriginHeader();
-        if (!StringUtils.hasText(originHeader)) {
-            originHeader = properties.getOriginParser().getHeaderName();
-        }
         if (StringUtils.hasText(originHeader)) {
             String originService = request.getHeader(originHeader.trim());
             if (StringUtils.hasText(originService)) {

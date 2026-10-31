@@ -1,5 +1,7 @@
 package io.github.atengk.cloud.sentinel.endpoint;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.List;
@@ -202,7 +204,8 @@ public record SentinelPanoramaReport(
      * 阻断事件统计
      */
     public record BlockMetricsReport(
-            long totalBlocked,
+            @JsonProperty("blockedTotal")
+            long blockedTotal,
             long flowCount,
             long degradeCount,
             long paramFlowCount,
@@ -210,5 +213,14 @@ public record SentinelPanoramaReport(
             long authorityCount,
             long otherCount,
             SentinelBlockCounter.BlockEventSnapshot lastBlockEvent
-    ) implements Serializable {}
+    ) implements Serializable {
+
+        /**
+         * 兼容存量 getter 与序列化，等同于 {@link #blockedTotal()}
+         */
+        @JsonProperty("totalBlocked")
+        public long totalBlocked() {
+            return blockedTotal;
+        }
+    }
 }
