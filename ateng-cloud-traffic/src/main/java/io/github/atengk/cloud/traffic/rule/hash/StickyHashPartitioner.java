@@ -1,5 +1,8 @@
 package io.github.atengk.cloud.traffic.rule.hash;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 基于 MurmurHash3 的一致性哈希粘性百分比切流分发器
  * <p>
@@ -10,6 +13,8 @@ package io.github.atengk.cloud.traffic.rule.hash;
  * @since 2026-10-29
  */
 public class StickyHashPartitioner {
+
+    private static final Logger log = LoggerFactory.getLogger(StickyHashPartitioner.class);
 
     /**
      * 默认哈希种子
@@ -64,6 +69,31 @@ public class StickyHashPartitioner {
         int bucket = calculateBucket(hashKey, SCALE);
         long threshold = Math.round(percentage * (SCALE / 100.0));
         return bucket < threshold;
+    }
+
+    /**
+     * 判定给定哈希种子键是否命中指定的百分比区间 [min, max) (左闭右开)
+     *
+     * <p>核心契约：
+     * 1. 计算 MurmurHash3 散列值并在 100 桶中离散 (0 ~ 99)；
+     * 2. 判断 min &lt;= bucket &amp;&amp; bucket &lt; max；
+     * 3. 严格防卫 0 &lt;= min &lt; max &lt;= 100；非法区间输出告警日志并保底返回 false，绝不抛出未受管异常。</p>
+     *
+     * @param hashKey 哈希种子键 (如 userId, IP 等)
+     * @param min     区间左边界 (闭区间，必须 &gt;= 0 且 &lt; max)
+     * @param max     区间右边界 (开区间，必须 &lt;= 100 且 &gt; min)
+     * @return true 表示命中该分桶区间，false 表示未命中
+     */
+    public boolean isHitRange(String hashKey, int min, int max) {
+        if (min < 0 || max > 100 || min >= max) {
+            log.warn("[StickyHashPartitioner] 非法百分比区间配置 [min={}, max={}]，严格防卫判定为未命中", min, max);
+            return false;
+        }
+        if (hashKey == null || hashKey.isBlank()) {
+            return false;
+        }
+        int bucket = calculateBucket(hashKey, 100);
+        return bucket >= min && bucket < max;
     }
 
     /**

@@ -7,6 +7,7 @@ import io.github.atengk.cloud.traffic.rule.model.TrafficConditionRelation;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
 import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -258,5 +259,153 @@ class TrafficRuleMatcherTest {
         TrafficRule rule = TrafficRule.builder().id("r1").build();
         assertThat(matcher.extractHashKey(rule, null)).isNull();
         assertThat(matcher.extractHashKey(null, SimpleTrafficEvaluationContext.builder().build())).isNull();
+    }
+
+    @Test
+    @DisplayName("percentageRange 优先级高于单值 percentage 测试")
+    void testPercentageRange_PriorityOverPercentage() {
+        // 配置了 percentageRange = [0, 20]，同时配置了 percentage = 100
+        // 必须优先按 percentageRange 进行区间判定，而不是直接因 percentage=100 全量命中
+        TrafficRule rule = TrafficRule.builder()
+                .id("rule-range-priority")
+                .targetTag("canary-v2")
+                .percentageRange(0, 20)
+                .percentage(100)
+                .hashKeySource(TrafficFieldSource.USER_ID)
+                .build();
+
+        // 找出一个落在 [20, 100) 的用户
+        String userNotInRange = null;
+        for (int i = 0; i < 100; i++) {
+            String uid = "uid_test_" + i;
+            if (!matcher.getStickyHashPartitioner().isHitRange(uid, 0, 20)) {
+                userNotInRange = uid;
+                break;
+            }
+        }
+        assertThat(userNotInRange).isNotNull();
+
+        TrafficEvaluationContext ctx = SimpleTrafficEvaluationContext.builder()
+                .userId(userNotInRange)
+                .build();
+        // 验证：尽管 percentage=100，但因为 percentageRange=[0, 20]，该用户依然未命中
+        assertThat(matcher.matches(rule, ctx)).isFalse();
+    }
+
+    @Test
+    @DisplayName("多版本金丝雀并行分桶互斥放量测试 (v2、v3、基线三向隔离)")
+    void testPercentageRange_MultiCanaryMutualExclusion() {
+        TrafficRule ruleV2 = TrafficRule.builder()
+                .id("rule-canary-v2")
+                .priority(1)
+                .targetTag("v2")
+                .percentageRange(0, 20)
+                .hashKeySource(TrafficFieldSource.USER_ID)
+                .build();
+
+        TrafficRule ruleV3 = TrafficRule.builder()
+                .id("rule-canary-v3")
+                .priority(2)
+                .targetTag("v3")
+                .percentageRange(20, 50)
+                .hashKeySource(TrafficFieldSource.USER_ID)
+                .build();
+
+        List<TrafficRule> rules = List.of(ruleV2, ruleV3);
+
+        int sampleCount = 3000;
+        int hitV2 = 0;
+        int hitV3 = 0;
+        int hitBaseline = 0;
+
+        for (int i = 0; i < sampleCount; i++) {
+            String userId = "canary_user_" + i;
+            TrafficEvaluationContext ctx = SimpleTrafficEvaluationContext.builder()
+                    .userId(userId)
+                    .build();
+
+            String tag = matcher.matchTag(rules, ctx);
+            if ("v2".equals(tag)) {
+                hitV2++;
+            } else if ("v3".equals(tag)) {
+                hitV3++;
+            } else {
+                assertThat(tag).isNull(); // 走基线
+                hitBaseline++;
+            }
+        }
+
+        assertThat((double) hitV2 / sampleCount).isBetween(0.18, 0.22);
+        assertThat((double) hitV3 / sampleCount).isBetween(0.28, 0.32);
+        assertThat((double) hitBaseline / sampleCount).isBetween(0.48, 0.52);
+    }
+
+    @Test
+    @DisplayName("percentageRange 格式非法与越界防御测试 (绝不抛出异常，安全判定为未命中)")
+    void testPercentageRange_InvalidRangeDefenses() {
+        // 1. 数组长度不是 2
+        TrafficRule invalidLengthRule = TrafficRule.builder()
+                .id("r-len")
+                .targetTag("v2")
+                .percentageRange(new int[]{10})
+                .build();
+        assertThat(matcher.matches(invalidLengthRule, SimpleTrafficEvaluationContext.builder().userId("u1").build())).isFalse();
+
+        // 2. min < 0
+        TrafficRule negativeRule = TrafficRule.builder()
+                .id("r-neg")
+                .targetTag("v2")
+                .percentageRange(new int[]{-5, 50})
+                .build();
+        assertThat(matcher.matches(negativeRule, SimpleTrafficEvaluationContext.builder().userId("u1").build())).isFalse();
+
+        // 3. max > 100
+        TrafficRule overflowRule = TrafficRule.builder()
+                .id("r-overflow")
+                .targetTag("v2")
+                .percentageRange(new int[]{10, 105})
+                .build();
+        assertThat(matcher.matches(overflowRule, SimpleTrafficEvaluationContext.builder().userId("u1").build())).isFalse();
+
+        // 4. min >= max (颠倒)
+        TrafficRule invertedRule = TrafficRule.builder()
+                .id("r-inverted")
+                .targetTag("v2")
+                .percentageRange(new int[]{60, 40})
+                .build();
+        assertThat(matcher.matches(invertedRule, SimpleTrafficEvaluationContext.builder().userId("u1").build())).isFalse();
+
+        // 5. 缺少 hashKey
+        TrafficRule noKeyRule = TrafficRule.builder()
+                .id("r-nokey")
+                .targetTag("v2")
+                .percentageRange(0, 50)
+                .build();
+        assertThat(matcher.matches(noKeyRule, SimpleTrafficEvaluationContext.builder().build())).isFalse();
+    }
+
+    @Test
+    @DisplayName("TrafficRule percentageRange 序列化与反序列化及模型方法测试")
+    void testTrafficRule_SerializationAndRangeEquals() throws Exception {
+        TrafficRule rule = TrafficRule.builder()
+                .id("rule-json")
+                .name("JSON Range Rule")
+                .priority(5)
+                .targetTag("v2")
+                .percentageRange(10, 30)
+                .build();
+
+        assertThat(rule.hasPercentageRange()).isTrue();
+        assertThat(rule.getPercentageRange()).containsExactly(10, 30);
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        String json = objectMapper.writeValueAsString(rule);
+        assertThat(json).contains("\"percentageRange\":[10,30]");
+
+        TrafficRule deserialized = objectMapper.readValue(json, TrafficRule.class);
+        assertThat(deserialized.getPercentageRange()).containsExactly(10, 30);
+        assertThat(deserialized).isEqualTo(rule);
+        assertThat(deserialized.hashCode()).isEqualTo(rule.hashCode());
+        assertThat(deserialized.toString()).contains("percentageRange=[10, 30]");
     }
 }

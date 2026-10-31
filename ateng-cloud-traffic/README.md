@@ -23,7 +23,8 @@
 | `TrafficFeignRequestInterceptor` | 核心拦截器 | 出站 Feign 请求头流量染色标头注入 | 独立引入 Feign 时激活，最高优先级透传当前流量标签并清洗脏值 |
 | `AtengTrafficFeignAutoConfiguration` | 自动装配类 | Feign 出站流量染色拦截器独立自动装配 | 当 Classpath 存在 `RequestInterceptor` 且缺失全量 Feign 拦截器时激活 |
 | `TrafficTagServiceInstanceListSupplier` | 负载均衡供应商 | 灰度版本隔离第一层责任链，按 `metadata.tag` 精准过滤 | 支持全下线平滑降级（`fallbackToDefault`）与严格隔离阻断（`strictLane`） |
-| `StickyHashPartitioner` | 核心分发器 | 基于 MurmurHash3 的 0~100% 一致性哈希百分比分发器 | 保证单用户单调放量与多次请求绝对会话粘性，杜绝版本横跳 |
+| `StickyHashPartitioner` | 核心分发器 | 基于 MurmurHash3 的一致性哈希百分比分发器 | 支持单值比例放量与多版本 percentageRange [min, max) 互斥分桶切流，保障会话粘性 |
+| `TrafficRule` | 核心模型类 | 流量染色与金丝雀分流规则领域模型 | 支持多维谓词条件、percentage 单值切流与 percentageRange 互斥区间分桶 |
 | `TrafficPredicateMatcher` | 核心匹配器 | 无 SpEL 纳秒级轻量字段谓词匹配引擎 | 支持 EXACT、IN、PREFIX、REGEX（内建正则预编译 LRU 缓存） |
 | `TrafficRuleMatcher` | 核心决策器 | 流量分流规则综合判定决策引擎 | 结合谓词匹配器与哈希分发器对入站请求进行标签判定 |
 | `TrafficRuleProvider` | 扩展点 SPI | 流量分流生效规则统一提取提供者 SPI 契约 | 标配 `@ConditionalOnMissingBean`，支持下游通过 SPI 或测试桩平滑接管 |

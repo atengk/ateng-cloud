@@ -9,6 +9,7 @@ import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.nacos.NacosTrafficRuleListener;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
 import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
@@ -443,6 +444,140 @@ class SampleCloudTrafficIntegrationTest {
 
         // 断言测试线程上下文零污染
         assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("场景 10: 多金丝雀分支 (v2、v3 与基线) percentageRange 互斥区间放量与会话粘性端到端集成测试")
+    void testMultiCanaryPercentageRangeMutualExclusion() {
+        // 1. 在拓扑中扩展注入 v3 灰度实例节点
+        discoveryClient.setInstances("service-a", List.of(
+                new DefaultServiceInstance("inst-a-base", "service-a", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-a-gray", "service-a", "127.0.0.1", port, false, Map.of("tag", "v2")),
+                new DefaultServiceInstance("inst-a-v3", "service-a", "127.0.0.1", port, false, Map.of("tag", "v3"))
+        ));
+        discoveryClient.setInstances("service-c", List.of(
+                new DefaultServiceInstance("inst-c-base", "service-c", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-c-gray", "service-c", "127.0.0.1", port, false, Map.of("tag", "v2")),
+                new DefaultServiceInstance("inst-c-v3", "service-c", "127.0.0.1", port, false, Map.of("tag", "v3"))
+        ));
+
+        // 2. 配置两条互斥百分比区间规则：
+        // 规则 1: v2 灰度分支命中 [0, 20)
+        // 规则 2: v3 灰度分支命中 [20, 50)
+        // 基线分支: 占据剩余 [50, 100)
+        TrafficRule ruleV2 = TrafficRule.builder()
+                .id("rule-canary-v2-range")
+                .name("Canary V2 Range [0, 20)")
+                .priority(1)
+                .targetTag("v2")
+                .percentageRange(0, 20)
+                .hashKeySource(TrafficFieldSource.HEADER)
+                .hashKeyName("X-Client-Uid")
+                .build();
+
+        TrafficRule ruleV3 = TrafficRule.builder()
+                .id("rule-canary-v3-range")
+                .name("Canary V3 Range [20, 50)")
+                .priority(2)
+                .targetTag("v3")
+                .percentageRange(20, 50)
+                .hashKeySource(TrafficFieldSource.HEADER)
+                .hashKeyName("X-Client-Uid")
+                .build();
+
+        if (nacosRuleListener != null) {
+            nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(ruleV2, ruleV3)));
+        }
+
+        StickyHashPartitioner partitioner = new StickyHashPartitioner();
+
+        // 3. 寻找测试用户种子
+        String userV2 = null;
+        String userV3 = null;
+        String userBase = null;
+
+        for (int i = 0; i < 500; i++) {
+            String uid = "test_user_bucket_" + i;
+            if (userV2 == null && partitioner.isHitRange(uid, 0, 20)) {
+                userV2 = uid;
+            } else if (userV3 == null && partitioner.isHitRange(uid, 20, 50)) {
+                userV3 = uid;
+            } else if (userBase == null && partitioner.isHitRange(uid, 50, 100)) {
+                userBase = uid;
+            }
+            if (userV2 != null && userV3 != null && userBase != null) {
+                break;
+            }
+        }
+
+        assertThat(userV2).isNotNull();
+        assertThat(userV3).isNotNull();
+        assertThat(userBase).isNotNull();
+
+        // 4. 验证 userV2 命中 v2 泳道
+        HttpHeaders headersV2 = new HttpHeaders();
+        headersV2.set("X-Client-Uid", userV2);
+        TrafficTraceReport reportV2 = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(headersV2),
+                RESULT_TYPE_REF
+        ));
+        assertThat(reportV2.getTrafficTag()).isEqualTo("v2");
+        assertThat(reportV2.getVisitedNodes()).contains(
+                "ServiceA[inst=inst-a-gray, tag=v2]",
+                "ServiceB[inst=inst-b-base, tag=default]",
+                "ServiceC[inst=inst-c-gray, tag=v2]"
+        );
+
+        // 5. 验证 userV3 命中 v3 泳道
+        HttpHeaders headersV3 = new HttpHeaders();
+        headersV3.set("X-Client-Uid", userV3);
+        TrafficTraceReport reportV3 = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(headersV3),
+                RESULT_TYPE_REF
+        ));
+        assertThat(reportV3.getTrafficTag()).isEqualTo("v3");
+        assertThat(reportV3.getVisitedNodes()).contains(
+                "ServiceA[inst=inst-a-v3, tag=v3]",
+                "ServiceB[inst=inst-b-base, tag=default]",
+                "ServiceC[inst=inst-c-v3, tag=v3]"
+        );
+
+        // 6. 验证 userBase 命中基线泳道
+        HttpHeaders headersBase = new HttpHeaders();
+        headersBase.set("X-Client-Uid", userBase);
+        TrafficTraceReport reportBase = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(headersBase),
+                RESULT_TYPE_REF
+        ));
+        assertThat(reportBase.getTrafficTag()).isNull();
+        assertThat(reportBase.getVisitedNodes()).contains(
+                "ServiceA[inst=inst-a-base, tag=default]",
+                "ServiceB[inst=inst-b-base, tag=default]",
+                "ServiceC[inst=inst-c-base, tag=default]"
+        );
+
+        // 7. 验证会话粘性：同一客户端再次调用结果保持绝对稳定
+        TrafficTraceReport reportV2Again = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(headersV2),
+                RESULT_TYPE_REF
+        ));
+        assertThat(reportV2Again.getTrafficTag()).isEqualTo("v2");
+
+        TrafficTraceReport reportV3Again = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(headersV3),
+                RESULT_TYPE_REF
+        ));
+        assertThat(reportV3Again.getTrafficTag()).isEqualTo("v3");
     }
 
     /**

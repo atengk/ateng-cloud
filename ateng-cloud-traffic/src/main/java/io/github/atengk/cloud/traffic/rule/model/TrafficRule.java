@@ -2,6 +2,7 @@ package io.github.atengk.cloud.traffic.rule.model;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -50,6 +51,11 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
      * 百分比粘性切流阈值 (0~100，为 null 或 100 时全量放行)
      */
     private Integer percentage;
+
+    /**
+     * 百分比区间粘性切流配置 [min, max] (左闭右开区间 [min, max)，取值 0 <= min < max <= 100)
+     */
+    private int[] percentageRange;
 
     /**
      * 百分比切流哈希种子来源 (默认 USER_ID)
@@ -129,6 +135,18 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
         this.percentage = percentage;
     }
 
+    public int[] getPercentageRange() {
+        return percentageRange != null ? percentageRange.clone() : null;
+    }
+
+    public void setPercentageRange(int[] percentageRange) {
+        this.percentageRange = percentageRange != null ? percentageRange.clone() : null;
+    }
+
+    public boolean hasPercentageRange() {
+        return percentageRange != null && percentageRange.length == 2;
+    }
+
     public TrafficFieldSource getHashKeySource() {
         return hashKeySource;
     }
@@ -177,13 +195,16 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
                 && conditionRelation == that.conditionRelation
                 && Objects.equals(conditions, that.conditions)
                 && Objects.equals(percentage, that.percentage)
+                && Arrays.equals(percentageRange, that.percentageRange)
                 && hashKeySource == that.hashKeySource
                 && Objects.equals(hashKeyName, that.hashKeyName);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, name, priority, targetTag, conditionRelation, conditions, percentage, hashKeySource, hashKeyName, enabled);
+        int result = Objects.hash(id, name, priority, targetTag, conditionRelation, conditions, percentage, hashKeySource, hashKeyName, enabled);
+        result = 31 * result + Arrays.hashCode(percentageRange);
+        return result;
     }
 
     @Override
@@ -196,6 +217,7 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
                 ", conditionRelation=" + conditionRelation +
                 ", conditions=" + conditions +
                 ", percentage=" + percentage +
+                ", percentageRange=" + Arrays.toString(percentageRange) +
                 ", hashKeySource=" + hashKeySource +
                 ", hashKeyName='" + hashKeyName + '\'' +
                 ", enabled=" + enabled +
@@ -213,6 +235,7 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
         private TrafficConditionRelation conditionRelation = TrafficConditionRelation.AND;
         private List<TrafficCondition> conditions = new ArrayList<>();
         private Integer percentage;
+        private int[] percentageRange;
         private TrafficFieldSource hashKeySource = TrafficFieldSource.USER_ID;
         private String hashKeyName;
         private boolean enabled = true;
@@ -265,6 +288,16 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
             return this;
         }
 
+        public Builder percentageRange(int min, int max) {
+            this.percentageRange = new int[]{min, max};
+            return this;
+        }
+
+        public Builder percentageRange(int[] percentageRange) {
+            this.percentageRange = percentageRange != null ? percentageRange.clone() : null;
+            return this;
+        }
+
         public Builder hashKeySource(TrafficFieldSource hashKeySource) {
             this.hashKeySource = hashKeySource;
             return this;
@@ -289,6 +322,7 @@ public class TrafficRule implements Serializable, Comparable<TrafficRule> {
             rule.setConditionRelation(this.conditionRelation);
             rule.setConditions(this.conditions);
             rule.setPercentage(this.percentage);
+            rule.setPercentageRange(this.percentageRange);
             rule.setHashKeySource(this.hashKeySource);
             rule.setHashKeyName(this.hashKeyName);
             rule.setEnabled(this.enabled);

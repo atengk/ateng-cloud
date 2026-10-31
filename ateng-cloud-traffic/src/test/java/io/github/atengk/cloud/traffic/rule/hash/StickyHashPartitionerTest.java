@@ -115,4 +115,64 @@ class StickyHashPartitionerTest {
         assertThat(partitioner.calculateBucket(null, 10)).isEqualTo(0);
         assertThat(partitioner.getSeed()).isEqualTo(0);
     }
+
+    @Test
+    @DisplayName("isHitRange 正常区间分桶与完全覆盖互斥测试")
+    void testIsHitRangeNormalAndExclusion() {
+        // [0, 100) 必须 100% 命中所有非空用户
+        assertThat(partitioner.isHitRange("user_abc", 0, 100)).isTrue();
+        assertThat(partitioner.isHitRange("user_xyz", 0, 100)).isTrue();
+
+        // 验证三段区间 [0, 20), [20, 50), [50, 100) 互斥且完备
+        int sampleCount = 5000;
+        int hitRange1 = 0;
+        int hitRange2 = 0;
+        int hitRange3 = 0;
+
+        for (int i = 0; i < sampleCount; i++) {
+            String userId = "range_user_" + i;
+            boolean in1 = partitioner.isHitRange(userId, 0, 20);
+            boolean in2 = partitioner.isHitRange(userId, 20, 50);
+            boolean in3 = partitioner.isHitRange(userId, 50, 100);
+
+            // 严格互斥：任何用户必须且只能命中其中一段
+            int hitCount = (in1 ? 1 : 0) + (in2 ? 1 : 0) + (in3 ? 1 : 0);
+            assertThat(hitCount).as("用户 %s 必须且只能命中一个分桶区间", userId).isEqualTo(1);
+
+            if (in1) hitRange1++;
+            if (in2) hitRange2++;
+            if (in3) hitRange3++;
+        }
+
+        // 验证各区间占比接近理论值 (20%, 30%, 50%)
+        assertThat((double) hitRange1 / sampleCount).isBetween(0.18, 0.22);
+        assertThat((double) hitRange2 / sampleCount).isBetween(0.28, 0.32);
+        assertThat((double) hitRange3 / sampleCount).isBetween(0.48, 0.52);
+    }
+
+    @Test
+    @DisplayName("isHitRange 非法区间与边界越界防御测试 (绝不抛出未受管异常)")
+    void testIsHitRangeInvalidRangesDefenses() {
+        // min 负数
+        assertThat(partitioner.isHitRange("user_1", -1, 50)).isFalse();
+        // max 超过 100
+        assertThat(partitioner.isHitRange("user_1", 10, 101)).isFalse();
+        // min >= max (颠倒或相等)
+        assertThat(partitioner.isHitRange("user_1", 50, 50)).isFalse();
+        assertThat(partitioner.isHitRange("user_1", 60, 40)).isFalse();
+        // 空或空白 hashKey
+        assertThat(partitioner.isHitRange(null, 0, 50)).isFalse();
+        assertThat(partitioner.isHitRange("", 0, 50)).isFalse();
+        assertThat(partitioner.isHitRange("   ", 0, 50)).isFalse();
+    }
+
+    @Test
+    @DisplayName("isHitRange 会话粘性保障测试")
+    void testIsHitRangeSessionStickiness() {
+        String userId = "sticky_range_user_999";
+        boolean firstResult = partitioner.isHitRange(userId, 15, 35);
+        for (int i = 0; i < 50; i++) {
+            assertThat(partitioner.isHitRange(userId, 15, 35)).isEqualTo(firstResult);
+        }
+    }
 }

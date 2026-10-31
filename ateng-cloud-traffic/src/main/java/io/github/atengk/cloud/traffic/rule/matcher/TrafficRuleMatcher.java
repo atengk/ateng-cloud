@@ -160,13 +160,40 @@ public class TrafficRuleMatcher {
     }
 
     /**
-     * 判定规则的百分比粘性抽样是否命中
+     * 判定规则的百分比粘性抽样是否命中 (优先判定 percentageRange，缺省回退至 percentage)
      *
      * @param rule    流量规则
      * @param context 评估上下文
      * @return true 表示命中放量
      */
     public boolean matchesPercentage(TrafficRule rule, TrafficEvaluationContext context) {
+        // 1. 优先判定多版本并行分桶 percentageRange [min, max)
+        int[] range = rule.getPercentageRange();
+        if (range != null) {
+            if (range.length != 2) {
+                log.warn("[TrafficRuleMatcher] 规则 percentageRange 配置格式非法 (期望长度为 2 的数组 [min, max]，实际长度={})，判定为未命中 [ruleId='{}']",
+                        range.length, rule.getId());
+                return false;
+            }
+            int min = range[0];
+            int max = range[1];
+            if (min < 0 || max > 100 || min >= max) {
+                log.warn("[TrafficRuleMatcher] 规则 percentageRange 越界或颠倒 (要求 0 <= min < max <= 100，实际 [{}, {}])，判定为未命中 [ruleId='{}']",
+                        min, max, rule.getId());
+                return false;
+            }
+
+            String hashKey = extractHashKey(rule, context);
+            if (hashKey == null || hashKey.isBlank()) {
+                log.debug("[TrafficRuleMatcher] 规则要求百分比区间切流但无法从上下文中提取哈希键，未命中放量 [ruleId='{}', source={}]",
+                        rule.getId(), rule.getHashKeySource());
+                return false;
+            }
+
+            return stickyHashPartitioner.isHitRange(hashKey, min, max);
+        }
+
+        // 2. 平滑回退至既有单值 percentage [0, percentage)
         Integer percentage = rule.getPercentage();
         if (percentage == null || percentage >= 100) {
             return true;
