@@ -5,6 +5,8 @@ import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOrigin
 import com.alibaba.csp.sentinel.adapter.web.common.UrlCleaner;
 import io.github.atengk.cloud.sentinel.advice.SentinelBlockExceptionAdvice;
 import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelPanoramaEndpoint;
 import io.github.atengk.cloud.sentinel.handler.AtengBlockExceptionHandler;
 import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
@@ -42,6 +44,8 @@ class AtengSentinelAutoConfigurationTest {
             assertThat(context).hasSingleBean(RequestOriginParser.class);
 
             assertThat(context).hasSingleBean(SentinelBlockExceptionAdvice.class);
+            assertThat(context).hasSingleBean(SentinelBlockCounter.class);
+            assertThat(context).hasSingleBean(SentinelPanoramaEndpoint.class);
         });
     }
 
@@ -54,6 +58,18 @@ class AtengSentinelAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(AtengUrlCleaner.class);
                     assertThat(context).doesNotHaveBean(AtengRequestOriginParser.class);
                     assertThat(context).doesNotHaveBean(SentinelBlockExceptionAdvice.class);
+                    assertThat(context).doesNotHaveBean(SentinelBlockCounter.class);
+                    assertThat(context).doesNotHaveBean(SentinelPanoramaEndpoint.class);
+                });
+    }
+
+    @Test
+    @DisplayName("端点局部禁用：ateng.cloud.sentinel.endpoint.enabled=false 时跳过全景端点装配")
+    void testEndpointDisabled() {
+        contextRunner.withPropertyValues("ateng.cloud.sentinel.endpoint.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(SentinelBlockCounter.class);
+                    assertThat(context).doesNotHaveBean(SentinelPanoramaEndpoint.class);
                 });
     }
 

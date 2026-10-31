@@ -3,6 +3,7 @@ package io.github.atengk.cloud.sentinel.advice;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import io.github.atengk.cloud.sentinel.handler.AtengBlockExceptionHandler;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
@@ -35,9 +36,15 @@ public class SentinelBlockExceptionAdvice {
     private static final Logger log = LoggerFactory.getLogger(SentinelBlockExceptionAdvice.class);
 
     private final AtengSentinelProperties properties;
+    private final SentinelBlockCounter blockCounter;
 
     public SentinelBlockExceptionAdvice(AtengSentinelProperties properties) {
+        this(properties, null);
+    }
+
+    public SentinelBlockExceptionAdvice(AtengSentinelProperties properties, SentinelBlockCounter blockCounter) {
         this.properties = properties != null ? properties : new AtengSentinelProperties();
+        this.blockCounter = blockCounter;
     }
 
     /**
@@ -74,6 +81,10 @@ public class SentinelBlockExceptionAdvice {
         String path = request != null ? request.getRequestURI() : "unknown";
         String clientIp = SentinelServletUtil.resolveClientIp(request);
         String resource = resolveResource(ex);
+
+        if (blockCounter != null) {
+            blockCounter.recordBlock(ex, resource, clientIp);
+        }
 
         log.warn("Sentinel @SentinelResource block triggered: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
                 resource, ex.getClass().getSimpleName(), httpStatus.value(), path, clientIp);

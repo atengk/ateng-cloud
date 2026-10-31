@@ -7,6 +7,7 @@ import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowException;
 import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -137,5 +138,21 @@ class SentinelBlockExceptionAdviceTest {
         properties.getBlockAdvice().setHttpStatusAlign(false);
         ResponseEntity<Result<Void>> responseAdvice = advice.handleBlockException(ex, request);
         assertThat(responseAdvice.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    @DisplayName("阻断计数器联动：验证 @SentinelResource 切面兜底拦截时计数器递增且快照准确")
+    void testBlockCounterLinkage() {
+        SentinelBlockCounter counter = new SentinelBlockCounter();
+        SentinelBlockExceptionAdvice adviceWithCounter = new SentinelBlockExceptionAdvice(properties, counter);
+
+        DegradeException ex = new DegradeException("circuit-breaker-open");
+        adviceWithCounter.handleBlockException(ex, request);
+
+        assertThat(counter.getTotalBlocked()).isEqualTo(1);
+        assertThat(counter.getDegradeCount()).isEqualTo(1);
+        assertThat(counter.getLastBlockEvent()).isNotNull();
+        assertThat(counter.getLastBlockEvent().ruleType()).isEqualTo("DEGRADE");
+        assertThat(counter.getLastBlockEvent().clientIp()).isEqualTo("192.168.1.100");
     }
 }

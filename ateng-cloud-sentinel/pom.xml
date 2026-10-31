@@ -55,6 +55,13 @@
             <artifactId>sentinel-datasource-nacos</artifactId>
         </dependency>
 
+        <!-- Spring Boot Actuator 运维与全景诊断端点支持 (可选依赖，零臃肿底座) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Spring Cloud OpenFeign 可选依赖 (用于 AtengFallbackFactory 与防呆注入) -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

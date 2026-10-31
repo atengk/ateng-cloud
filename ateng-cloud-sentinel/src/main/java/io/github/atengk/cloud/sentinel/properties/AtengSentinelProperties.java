@@ -44,6 +44,12 @@ public class AtengSentinelProperties {
     @NestedConfigurationProperty
     private BlockAdviceProperties blockAdvice = new BlockAdviceProperties();
 
+    /**
+     * Sentinel 全景健康与规则自省 Actuator 端点配置
+     */
+    @NestedConfigurationProperty
+    private EndpointProperties endpoint = new EndpointProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -82,6 +88,14 @@ public class AtengSentinelProperties {
 
     public void setBlockAdvice(BlockAdviceProperties blockAdvice) {
         this.blockAdvice = blockAdvice;
+    }
+
+    public EndpointProperties getEndpoint() {
+        return endpoint;
+    }
+
+    public void setEndpoint(EndpointProperties endpoint) {
+        this.endpoint = endpoint;
     }
 
     /**
@@ -296,6 +310,25 @@ public class AtengSentinelProperties {
 
         public void setHttpStatusAlign(boolean httpStatusAlign) {
             this.httpStatusAlign = httpStatusAlign;
+        }
+    }
+
+    /**
+     * Sentinel 全景健康与规则自省 Actuator 端点配置
+     */
+    public static class EndpointProperties {
+
+        /**
+         * 是否启用 Sentinel 全景健康与动态规则自省端点 (/actuator/sentinel-panorama)
+         */
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

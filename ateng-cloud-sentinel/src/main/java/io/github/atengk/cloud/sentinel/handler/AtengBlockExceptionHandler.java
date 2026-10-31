@@ -10,6 +10,7 @@ import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,19 +43,29 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
 
     private final ObjectMapper objectMapper;
     private final AtengSentinelProperties properties;
+    private final SentinelBlockCounter blockCounter;
 
     public AtengBlockExceptionHandler(ObjectMapper objectMapper, AtengSentinelProperties properties) {
+        this(objectMapper, properties, null);
+    }
+
+    public AtengBlockExceptionHandler(ObjectMapper objectMapper, AtengSentinelProperties properties, SentinelBlockCounter blockCounter) {
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
         this.properties = properties != null ? properties : new AtengSentinelProperties();
+        this.blockCounter = blockCounter;
     }
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response, String resourceName, BlockException e) throws Exception {
         SentinelResultCode resultCode = determineResultCode(e);
         HttpStatus httpStatus = determineHttpStatus(e);
+        String clientIp = SentinelServletUtil.resolveClientIp(request);
+
+        if (blockCounter != null) {
+            blockCounter.recordBlock(e, resourceName, clientIp);
+        }
 
         if (response != null && response.isCommitted()) {
-            String clientIp = SentinelServletUtil.resolveClientIp(request);
             log.warn("Response already committed, skip Sentinel block handler response write: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
                     resourceName, resultCode.name(), httpStatus.value(), request != null ? request.getRequestURI() : "unknown", clientIp);
             return;
@@ -71,9 +82,8 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
 
         Result<Void> result = Result.fail(resultCode.getCode(), resultCode.getMsg());
 
-        String clientIp = SentinelServletUtil.resolveClientIp(request);
         log.warn("Sentinel block triggered: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
-                resourceName, resultCode.name(), response.getStatus(), request.getRequestURI(), clientIp);
+                resourceName, resultCode.name(), response.getStatus(), request != null ? request.getRequestURI() : "unknown", clientIp);
 
         response.getWriter().write(objectMapper.writeValueAsString(result));
         response.getWriter().flush();

@@ -8,6 +8,7 @@ import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -132,5 +133,25 @@ class AtengBlockExceptionHandlerTest {
 
         // 验证未覆盖状态码与写入内容
         assertThat(response.getContentAsString()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("阻断计数器联动：验证阻断时原子计数器递增且上下文快照记录成功")
+    void testBlockCounterLinkage() throws Exception {
+        SentinelBlockCounter counter = new SentinelBlockCounter();
+        AtengBlockExceptionHandler handlerWithCounter = new AtengBlockExceptionHandler(objectMapper, properties, counter);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/goods/999");
+        request.addHeader("X-Forwarded-For", "198.51.100.22");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        handlerWithCounter.handle(request, response, "goods-detail", new ParamFlowException("goods-detail", "999"));
+
+        assertThat(counter.getTotalBlocked()).isEqualTo(1);
+        assertThat(counter.getParamFlowCount()).isEqualTo(1);
+        assertThat(counter.getLastBlockEvent()).isNotNull();
+        assertThat(counter.getLastBlockEvent().resource()).isEqualTo("goods-detail");
+        assertThat(counter.getLastBlockEvent().ruleType()).isEqualTo("PARAM_FLOW");
+        assertThat(counter.getLastBlockEvent().clientIp()).isEqualTo("198.51.100.22");
     }
 }
