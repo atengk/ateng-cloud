@@ -3,11 +3,22 @@ package io.github.atengk.cloud.sentinel.properties;
 import com.alibaba.nacos.api.PropertyKeyConst;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
+import org.springframework.core.env.Environment;
+import org.springframework.util.StringUtils;
 
 import java.util.Properties;
 
 /**
  * Sentinel Nacos 规则持久化与动态订阅配置属性
+ *
+ * <p>支持 Nacos 连接参数四级自适应平滑继承：
+ * <ul>
+ *     <li>第一级（最高）：{@code ateng.cloud.sentinel.nacos-rules.*} 显式声明的参数；</li>
+ *     <li>第二级：Spring Cloud Nacos 配置中心参数（{@code spring.cloud.nacos.config.*}）；</li>
+ *     <li>第三级：Spring Cloud Nacos 全局/注册中心参数（{@code spring.cloud.nacos.discovery.*} 或 {@code spring.cloud.nacos.*}）；</li>
+ *     <li>第四级（保底）：框架合理生产默认值（如 {@code 127.0.0.1:8848}）。</li>
+ * </ul>
+ * </p>
  *
  * @author Ateng
  * @since 2026-10-29
@@ -16,19 +27,24 @@ import java.util.Properties;
 public class AtengSentinelNacosRuleProperties {
 
     /**
+     * 默认 Nacos 服务端连接地址
+     */
+    public static final String DEFAULT_SERVER_ADDR = "127.0.0.1:8848";
+
+    /**
      * 是否启用 Sentinel Nacos 规则动态订阅与持久化桥接 (默认关闭以保障离线单测自洽)
      */
     private boolean enabled = false;
 
     /**
-     * Nacos 服务端连接地址 (例如 127.0.0.1:8848 或 nacos-cluster:8848)
+     * Nacos 服务端连接地址 (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos 连接配置，保底 127.0.0.1:8848)
      */
-    private String serverAddr = "127.0.0.1:8848";
+    private String serverAddr;
 
     /**
-     * Nacos 租户或命名空间 ID (默认为空字符串表示 public 命名空间)
+     * Nacos 租户或命名空间 ID (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos 命名空间，保底空字符串表示 public)
      */
-    private String namespace = "";
+    private String namespace;
 
     /**
      * Nacos 配置分组 GroupId (默认 SENTINEL_GROUP)
@@ -41,29 +57,29 @@ public class AtengSentinelNacosRuleProperties {
     private String dataIdPrefix;
 
     /**
-     * Nacos 访问鉴权用户名
+     * Nacos 访问鉴权用户名 (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos 用户名)
      */
-    private String username = "";
+    private String username;
 
     /**
-     * Nacos 访问鉴权密码
+     * Nacos 访问鉴权密码 (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos 密码)
      */
-    private String password = "";
+    private String password;
 
     /**
-     * Nacos 上下文路径 (默认空字符串)
+     * Nacos 上下文路径 (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos 上下文路径，保底空字符串)
      */
-    private String contextPath = "";
+    private String contextPath;
 
     /**
-     * 阿里云 RAM 或自定义鉴权 AccessKey
+     * 阿里云 RAM 或自定义鉴权 AccessKey (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos AccessKey)
      */
-    private String accessKey = "";
+    private String accessKey;
 
     /**
-     * 阿里云 RAM 或自定义鉴权 SecretKey
+     * 阿里云 RAM 或自定义鉴权 SecretKey (显式指定优先，缺省时自动回退继承 Spring Cloud Nacos SecretKey)
      */
-    private String secretKey = "";
+    private String secretKey;
 
     /**
      * 流控规则 (FlowRule) 订阅配置
@@ -104,7 +120,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getServerAddr() {
-        return serverAddr;
+        return this.serverAddr != null ? this.serverAddr : DEFAULT_SERVER_ADDR;
     }
 
     public void setServerAddr(String serverAddr) {
@@ -112,7 +128,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getNamespace() {
-        return namespace;
+        return this.namespace != null ? this.namespace : "";
     }
 
     public void setNamespace(String namespace) {
@@ -136,7 +152,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getUsername() {
-        return username;
+        return this.username != null ? this.username : "";
     }
 
     public void setUsername(String username) {
@@ -144,7 +160,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getPassword() {
-        return password;
+        return this.password != null ? this.password : "";
     }
 
     public void setPassword(String password) {
@@ -152,7 +168,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getContextPath() {
-        return contextPath;
+        return this.contextPath != null ? this.contextPath : "";
     }
 
     public void setContextPath(String contextPath) {
@@ -160,7 +176,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getAccessKey() {
-        return accessKey;
+        return this.accessKey != null ? this.accessKey : "";
     }
 
     public void setAccessKey(String accessKey) {
@@ -168,7 +184,7 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     public String getSecretKey() {
-        return secretKey;
+        return this.secretKey != null ? this.secretKey : "";
     }
 
     public void setSecretKey(String secretKey) {
@@ -216,33 +232,152 @@ public class AtengSentinelNacosRuleProperties {
     }
 
     /**
-     * 将当前配置转换为 Nacos 客户端原生属性对象
+     * 按照四级时序自适应解析 Nacos 服务端连接地址
+     */
+    public String resolveServerAddr(Environment env) {
+        String val = resolveProperty(this.serverAddr, env,
+                "spring.cloud.nacos.config.server-addr",
+                "spring.cloud.nacos.discovery.server-addr",
+                "spring.cloud.nacos.server-addr");
+        return StringUtils.hasText(val) ? val.trim() : DEFAULT_SERVER_ADDR;
+    }
+
+    /**
+     * 按照四级时序自适应解析 Nacos 命名空间
+     */
+    public String resolveNamespace(Environment env) {
+        String val = resolveProperty(this.namespace, env,
+                "spring.cloud.nacos.config.namespace",
+                "spring.cloud.nacos.discovery.namespace",
+                "spring.cloud.nacos.namespace");
+        return val != null ? val.trim() : "";
+    }
+
+    /**
+     * 按照四级时序自适应解析 Nacos 用户名
+     */
+    public String resolveUsername(Environment env) {
+        String val = resolveProperty(this.username, env,
+                "spring.cloud.nacos.config.username",
+                "spring.cloud.nacos.discovery.username",
+                "spring.cloud.nacos.username");
+        return val != null ? val.trim() : "";
+    }
+
+    /**
+     * 按照四级时序自适应解析 Nacos 密码
+     */
+    public String resolvePassword(Environment env) {
+        String val = resolveProperty(this.password, env,
+                "spring.cloud.nacos.config.password",
+                "spring.cloud.nacos.discovery.password",
+                "spring.cloud.nacos.password");
+        return val != null ? val.trim() : "";
+    }
+
+    /**
+     * 按照四级时序自适应解析 Nacos 上下文路径
+     */
+    public String resolveContextPath(Environment env) {
+        String val = resolveProperty(this.contextPath, env,
+                "spring.cloud.nacos.config.context-path",
+                "spring.cloud.nacos.discovery.context-path",
+                "spring.cloud.nacos.context-path");
+        return val != null ? val.trim() : "";
+    }
+
+    /**
+     * 按照四级时序自适应解析 Nacos AccessKey
+     */
+    public String resolveAccessKey(Environment env) {
+        String val = resolveProperty(this.accessKey, env,
+                "spring.cloud.nacos.config.access-key",
+                "spring.cloud.nacos.discovery.access-key",
+                "spring.cloud.nacos.access-key");
+        return val != null ? val.trim() : "";
+    }
+
+    /**
+     * 按照四级时序自适应解析 Nacos SecretKey
+     */
+    public String resolveSecretKey(Environment env) {
+        String val = resolveProperty(this.secretKey, env,
+                "spring.cloud.nacos.config.secret-key",
+                "spring.cloud.nacos.discovery.secret-key",
+                "spring.cloud.nacos.secret-key");
+        return val != null ? val.trim() : "";
+    }
+
+    private String resolveProperty(String explicitVal, Environment env, String... fallbackKeys) {
+        if (StringUtils.hasText(explicitVal)) {
+            return explicitVal.trim();
+        }
+        if (env != null && fallbackKeys != null) {
+            for (String key : fallbackKeys) {
+                if (key != null) {
+                    String val = env.getProperty(key);
+                    if (StringUtils.hasText(val)) {
+                        return val.trim();
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 将当前配置转换为 Nacos 客户端原生属性对象 (无环境上下文回退)
      *
      * @return Nacos 属性配置
      */
     public Properties toNacosProperties() {
+        return toNacosProperties(null);
+    }
+
+    /**
+     * 支持自适应继承环境上下文参数的 Nacos 属性转换
+     *
+     * @param environment Spring 运行环境上下文
+     * @return 最终生效的 Nacos 原生属性配置
+     */
+    public Properties toNacosProperties(Environment environment) {
         Properties properties = new Properties();
-        if (serverAddr != null && !serverAddr.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.SERVER_ADDR, serverAddr.trim());
+
+        String resolvedServerAddr = resolveServerAddr(environment);
+        if (StringUtils.hasText(resolvedServerAddr)) {
+            properties.put(PropertyKeyConst.SERVER_ADDR, resolvedServerAddr.trim());
         }
-        if (namespace != null && !namespace.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.NAMESPACE, namespace.trim());
+
+        String resolvedNamespace = resolveNamespace(environment);
+        if (StringUtils.hasText(resolvedNamespace)) {
+            properties.put(PropertyKeyConst.NAMESPACE, resolvedNamespace.trim());
         }
-        if (username != null && !username.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.USERNAME, username.trim());
+
+        String resolvedUsername = resolveUsername(environment);
+        if (StringUtils.hasText(resolvedUsername)) {
+            properties.put(PropertyKeyConst.USERNAME, resolvedUsername.trim());
         }
-        if (password != null && !password.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.PASSWORD, password.trim());
+
+        String resolvedPassword = resolvePassword(environment);
+        if (StringUtils.hasText(resolvedPassword)) {
+            properties.put(PropertyKeyConst.PASSWORD, resolvedPassword.trim());
         }
-        if (contextPath != null && !contextPath.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.CONTEXT_PATH, contextPath.trim());
+
+        String resolvedContextPath = resolveContextPath(environment);
+        if (StringUtils.hasText(resolvedContextPath)) {
+            properties.put(PropertyKeyConst.CONTEXT_PATH, resolvedContextPath.trim());
         }
-        if (accessKey != null && !accessKey.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.ACCESS_KEY, accessKey.trim());
+
+        String resolvedAccessKey = resolveAccessKey(environment);
+        if (StringUtils.hasText(resolvedAccessKey)) {
+            properties.put(PropertyKeyConst.ACCESS_KEY, resolvedAccessKey.trim());
         }
-        if (secretKey != null && !secretKey.trim().isEmpty()) {
-            properties.put(PropertyKeyConst.SECRET_KEY, secretKey.trim());
+
+        String resolvedSecretKey = resolveSecretKey(environment);
+        if (StringUtils.hasText(resolvedSecretKey)) {
+            properties.put(PropertyKeyConst.SECRET_KEY, resolvedSecretKey.trim());
         }
+
         return properties;
     }
 

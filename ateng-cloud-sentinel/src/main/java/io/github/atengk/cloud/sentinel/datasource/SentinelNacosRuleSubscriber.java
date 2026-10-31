@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.core.env.Environment;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,6 +33,7 @@ import java.util.Properties;
  * <p>
  * 基于约定的命名规范，一次性自动建立并监听 Flow、Degrade、ParamFlow、System、Authority 5 种规则数据源，
  * 并将其 SentinelProperty 桥接注册至对应的 RuleManager。
+ * 遵循 {@code Rule Fail-Safe Invariant} 防暴毙容错防线与 Nacos 连接参数四级平滑自适应继承。
  * </p>
  *
  * @author Ateng
@@ -45,6 +47,7 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
     private final NacosDataSourceFactory dataSourceFactory;
     private final ObjectProvider<ObjectMapper> objectMapperProvider;
     private final String defaultAppName;
+    private final Environment environment;
 
     private final List<ReadableDataSource<?, ?>> dataSources = new ArrayList<>();
     private String resolvedDataIdPrefix;
@@ -54,10 +57,20 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
             NacosDataSourceFactory dataSourceFactory,
             ObjectProvider<ObjectMapper> objectMapperProvider,
             String defaultAppName) {
+        this(properties, dataSourceFactory, objectMapperProvider, defaultAppName, null);
+    }
+
+    public SentinelNacosRuleSubscriber(
+            AtengSentinelNacosRuleProperties properties,
+            NacosDataSourceFactory dataSourceFactory,
+            ObjectProvider<ObjectMapper> objectMapperProvider,
+            String defaultAppName,
+            Environment environment) {
         this.properties = properties;
         this.dataSourceFactory = dataSourceFactory;
         this.objectMapperProvider = objectMapperProvider;
         this.defaultAppName = defaultAppName;
+        this.environment = environment;
     }
 
     @Override
@@ -67,9 +80,9 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
             return;
         }
 
-        // 1. 确定 DataId 前缀契约
+        // 1. 确定 DataId 前缀契约与四级自适应继承的 Nacos 连接参数
         this.resolvedDataIdPrefix = resolvePrefix();
-        Properties nacosProps = properties.toNacosProperties();
+        Properties nacosProps = properties.toNacosProperties(environment);
         ObjectMapper objectMapper = resolveObjectMapper();
 
         // 2. 依次注册 5 大规则数据源
@@ -111,12 +124,30 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
         return properties;
     }
 
+    public Environment getEnvironment() {
+        return environment;
+    }
+
+    public String getEffectiveServerAddr() {
+        return properties.resolveServerAddr(environment);
+    }
+
+    public String getEffectiveNamespace() {
+        return properties.resolveNamespace(environment);
+    }
+
     private String resolvePrefix() {
         if (properties.getDataIdPrefix() != null && !properties.getDataIdPrefix().trim().isEmpty()) {
             return properties.getDataIdPrefix().trim();
         }
         if (defaultAppName != null && !defaultAppName.trim().isEmpty()) {
             return defaultAppName.trim();
+        }
+        if (environment != null) {
+            String appName = environment.getProperty("spring.application.name");
+            if (appName != null && !appName.trim().isEmpty()) {
+                return appName.trim();
+            }
         }
         return "sentinel";
     }
@@ -201,7 +232,7 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
     }
 
     /**
-     * 通用强类型规则反序列化转换器 (带容错防卫与空安全保底)
+     * 通用强类型规则反序列化转换器 (带 Rule Fail-Safe 防暴毙容错防卫与空安全保底)
      *
      * @param <T> 规则类型
      */
@@ -227,8 +258,9 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
                 List<T> rules = objectMapper.readValue(source, typeReference);
                 return rules != null ? rules : Collections.emptyList();
             } catch (Exception e) {
-                log.warn("Failed to parse Sentinel {} from JSON: {}, fallback to empty list", ruleTypeName, source, e);
-                return Collections.emptyList();
+                log.error("CRITICAL: Failed to parse Sentinel {} from JSON due to syntax error! Aborting rule update to preserve Last Known Good Rules. Malformed payload: [{}]",
+                        ruleTypeName, source, e);
+                throw new IllegalArgumentException("Failed to parse Sentinel " + ruleTypeName + " from JSON payload", e);
             }
         }
     }

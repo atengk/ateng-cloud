@@ -23,6 +23,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
+import org.springframework.mock.env.MockEnvironment;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -33,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Sentinel Nacos 规则全家桶动态订阅器单元测试 (100% 离线自洽)
@@ -239,18 +241,24 @@ class SentinelNacosRuleSubscriberTest {
     }
 
     @Test
-    @DisplayName("测试 RuleListConverter 容错防护与空安全保底")
-    void testRuleListConverterDefensive() {
+    @DisplayName("测试 RuleListConverter 容错防护与 Rule Fail-Safe 防暴毙防线")
+    void testRuleListConverterFailSafe() {
         ObjectMapper mapper = new ObjectMapper();
         SentinelNacosRuleSubscriber.RuleListConverter<FlowRule> converter =
                 new SentinelNacosRuleSubscriber.RuleListConverter<>(mapper, new TypeReference<>() {}, "FlowRule");
 
-        // 空入参保底返回空列表
+        // 空入参保底返回空列表 (合法主动清空规则)
         assertThat(converter.convert(null)).isEmpty();
         assertThat(converter.convert("   ")).isEmpty();
+        assertThat(converter.convert("[]")).isEmpty();
 
-        // 格式非法 JSON 优雅捕获返回空列表，不抛异常中断
-        assertThat(converter.convert("{invalid-json}")).isEmpty();
+        // 格式非法 JSON 触发 Rule Fail-Safe 防线，抛出 IllegalArgumentException，拒绝覆盖内存有效规则
+        assertThatThrownBy(() -> converter.convert("{invalid-json}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Failed to parse Sentinel FlowRule from JSON payload");
+
+        assertThatThrownBy(() -> converter.convert("[{ \"resource\": unquoted-bad-json }"))
+                .isInstanceOf(IllegalArgumentException.class);
 
         // 包含未知字段的合法 JSON 能平滑反序列化
         String jsonWithUnknownFields = """
@@ -265,6 +273,77 @@ class SentinelNacosRuleSubscriberTest {
         List<FlowRule> result = converter.convert(jsonWithUnknownFields);
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getResource()).isEqualTo("/test");
+    }
+
+    @Test
+    @DisplayName("测试动态推送异常报文时严格保留最后有效规则 (Last Known Good Rules Invariant)")
+    void testRuleFailSafePreservesActiveRules() {
+        SentinelNacosRuleSubscriber.RuleListConverter<FlowRule> converter =
+                new SentinelNacosRuleSubscriber.RuleListConverter<>(new ObjectMapper(), new TypeReference<>() {}, "FlowRule");
+        MockReadableDataSource<List<FlowRule>> flowDs = new MockReadableDataSource<>(converter);
+        FlowRuleManager.register2Property(flowDs.getProperty());
+
+        // 1. 推送初始有效规则
+        String validJson = """
+                [
+                    {
+                        "resource": "/api/orders",
+                        "count": 20.0,
+                        "grade": 1
+                    }
+                ]
+                """;
+        flowDs.pushValue(validJson);
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/api/orders");
+
+        // 2. 模拟运维推送了非法语法的 JSON (缺少闭合括号等)
+        assertThatThrownBy(() -> flowDs.pushValue("{ \"malformed\": [ invalid json"))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // 3. 强断言：内存中已生效的规则坚决不被清空，严格保留上一版有效规则
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/api/orders");
+        assertThat(FlowRuleManager.getRules().get(0).getCount()).isEqualTo(20.0);
+
+        // 4. 模拟运维推送合法清空报文 "[]"
+        flowDs.pushValue("[]");
+        assertThat(FlowRuleManager.getRules()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("测试环境上下文四级连接继承与前缀解析")
+    void testEnvironmentInheritance() {
+        AtengSentinelNacosRuleProperties properties = new AtengSentinelNacosRuleProperties();
+        properties.setEnabled(true);
+
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("spring.cloud.nacos.config.server-addr", "10.0.0.88:8848");
+        env.setProperty("spring.cloud.nacos.config.namespace", "custom-ns");
+        env.setProperty("spring.application.name", "my-service");
+
+        List<Properties> passedProps = new ArrayList<>();
+        NacosDataSourceFactory factory = new NacosDataSourceFactory() {
+            @Override
+            public <T> ReadableDataSource<String, T> createDataSource(
+                    Properties props, String groupId, String dataId, Converter<String, T> converter) {
+                passedProps.add(props);
+                return new MockReadableDataSource<>(converter);
+            }
+        };
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory(Map.of("objectMapper", new ObjectMapper()));
+        SentinelNacosRuleSubscriber subscriber = new SentinelNacosRuleSubscriber(
+                properties, factory, beanFactory.getBeanProvider(ObjectMapper.class), null, env);
+
+        subscriber.afterPropertiesSet();
+
+        assertThat(subscriber.getResolvedDataIdPrefix()).isEqualTo("my-service");
+        assertThat(subscriber.getEffectiveServerAddr()).isEqualTo("10.0.0.88:8848");
+        assertThat(subscriber.getEffectiveNamespace()).isEqualTo("custom-ns");
+        assertThat(passedProps).isNotEmpty();
+        assertThat(passedProps.get(0).getProperty("serverAddr")).isEqualTo("10.0.0.88:8848");
+        assertThat(passedProps.get(0).getProperty("namespace")).isEqualTo("custom-ns");
     }
 
     /**

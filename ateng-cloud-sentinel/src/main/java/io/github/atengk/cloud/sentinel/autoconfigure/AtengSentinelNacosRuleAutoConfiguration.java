@@ -9,6 +9,7 @@ import io.github.atengk.cloud.sentinel.datasource.SentinelNacosRuleSubscriber;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelNacosRuleProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -48,7 +49,8 @@ public class AtengSentinelNacosRuleAutoConfiguration {
             AtengSentinelNacosRuleProperties properties,
             NacosDataSourceFactory dataSourceFactory,
             ObjectProvider<ObjectMapper> objectMapperProvider,
-            @Value("${spring.application.name:}") String appName) {
-        return new SentinelNacosRuleSubscriber(properties, dataSourceFactory, objectMapperProvider, appName);
+            @Value("${spring.application.name:}") String appName,
+            Environment environment) {
+        return new SentinelNacosRuleSubscriber(properties, dataSourceFactory, objectMapperProvider, appName, environment);
     }
 }
