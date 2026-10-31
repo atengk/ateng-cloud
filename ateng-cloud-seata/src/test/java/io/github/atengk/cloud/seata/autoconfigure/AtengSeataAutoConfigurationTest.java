@@ -16,6 +16,7 @@ import io.github.atengk.cloud.seata.tcc.JdbcTccFenceRepository;
 import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
 import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
 import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
+import io.github.atengk.cloud.seata.tcc.TccFenceTableInitializer;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
 import org.apache.seata.rm.GlobalLockTemplate;
 import org.apache.seata.rm.fence.SpringFenceConfig;
@@ -64,6 +65,7 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(TccFenceBarrier.class);
             assertThat(context).hasSingleBean(SeataTccFenceTemplate.class);
             assertThat(context).doesNotHaveBean(SeataWebHandlerInterceptor.class);
+            assertThat(context).doesNotHaveBean(TccFenceTableInitializer.class);
 
             SeataProperties properties = context.getBean(SeataProperties.class);
             assertThat(properties.isEnabled()).isTrue();
@@ -71,6 +73,7 @@ class AtengSeataAutoConfigurationTest {
             assertThat(properties.getLock().getRetryInterval()).isEqualTo(Duration.ofMillis(50));
             assertThat(properties.getLock().getRetryTimes()).isEqualTo(30);
             assertThat(properties.getTcc().isFenceEnabled()).isTrue();
+            assertThat(properties.getTcc().isAutoInitTable()).isFalse();
             assertThat(properties.getDynamicDatasource().isEnabled()).isTrue();
             assertThat(properties.getDynamicDatasource().isGuardEnabled()).isTrue();
             assertThat(properties.getDynamicDatasource().isAutoProxy()).isTrue();
@@ -203,6 +206,30 @@ class AtengSeataAutoConfigurationTest {
                     assertThat(context).hasSingleBean(SeataTenantLineHandlerPostProcessor.class);
                     SeataTenantLineHandlerPostProcessor processor = context.getBean(SeataTenantLineHandlerPostProcessor.class);
                     assertThat(processor.getCustomTccTableName()).isEqualTo("my_custom_fence_tbl");
+                });
+    }
+
+    @Test
+    @DisplayName("测试 auto-init-table 条件装配：仅当配置为 true 且存在 DataSource 时才装配初始化器")
+    void testAutoInitTableConditionalRegistration() {
+        org.h2.jdbcx.JdbcDataSource realDs = new org.h2.jdbcx.JdbcDataSource();
+        realDs.setURL("jdbc:h2:mem:auto_init_cfg_test;DB_CLOSE_DELAY=-1");
+        realDs.setUser("sa");
+        realDs.setPassword("");
+
+        // 默认情况下（未配置或为 false）不装配
+        nonWebRunner
+                .withBean(javax.sql.DataSource.class, () -> realDs)
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean(TccFenceTableInitializer.class);
+                });
+
+        // 显式开启 auto-init-table=true 时成功装配
+        nonWebRunner
+                .withPropertyValues("ateng.cloud.seata.tcc.auto-init-table=true")
+                .withBean(javax.sql.DataSource.class, () -> realDs)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(TccFenceTableInitializer.class);
                 });
     }
 }

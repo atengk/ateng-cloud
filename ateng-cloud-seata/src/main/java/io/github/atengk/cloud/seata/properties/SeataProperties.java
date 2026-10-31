@@ -171,6 +171,11 @@ public class SeataProperties {
         private int suspendedRetentionMultiplier = 3;
 
         /**
+         * 是否开启 TCC 防卫日志表自动安全自愈初始化建表（生产环境坚决默认 false，仅推荐在开发/沙箱/H2 内存库中开启）
+         */
+        private boolean autoInitTable = false;
+
+        /**
          * TCC 防卫日志存储数据表名
          */
         private String tableName = SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME;
@@ -221,6 +226,14 @@ public class SeataProperties {
 
         public void setSuspendedRetentionMultiplier(int suspendedRetentionMultiplier) {
             this.suspendedRetentionMultiplier = suspendedRetentionMultiplier;
+        }
+
+        public boolean isAutoInitTable() {
+            return autoInitTable;
+        }
+
+        public void setAutoInitTable(boolean autoInitTable) {
+            this.autoInitTable = autoInitTable;
         }
 
         public String getTableName() {

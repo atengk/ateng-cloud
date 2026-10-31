@@ -17,6 +17,7 @@ import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
 import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
 import io.github.atengk.cloud.seata.tcc.TccFenceLogCleanScheduler;
 import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
+import io.github.atengk.cloud.seata.tcc.TccFenceTableInitializer;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
 import org.apache.seata.common.holder.ObjectHolder;
 import org.apache.seata.rm.GlobalLockTemplate;
@@ -233,17 +234,38 @@ public class AtengSeataAutoConfiguration {
     }
 
     /**
-     * 注册基于 JDBC 数据源的 TCC Fence 本地日志仓储
+     * 注册 TCC 防卫日志数据表按需安全自愈建表初始化器（生产环境默认关闭）
      *
      * @param dataSource 数据源
-     * @param properties 配置属性
+     * @param properties Seata 配置属性
+     * @return TccFenceTableInitializer 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(DataSource.class)
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "auto-init-table", havingValue = "true")
+    public TccFenceTableInitializer tccFenceTableInitializer(DataSource dataSource, SeataProperties properties) {
+        log.debug("装配 TccFenceTableInitializer TCC 防卫表安全自愈初始化器");
+        return new TccFenceTableInitializer(dataSource, properties);
+    }
+
+    /**
+     * 注册基于 JDBC 数据源的 TCC Fence 本地日志仓储
+     *
+     * @param dataSource                 数据源
+     * @param properties                 配置属性
+     * @param tableInitializerProvider  可选的自愈建表初始化器提供者
      * @return JdbcTccFenceRepository 实例
      */
     @Bean
     @ConditionalOnMissingBean(TccFenceRepository.class)
     @ConditionalOnBean(DataSource.class)
     @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
-    public TccFenceRepository jdbcTccFenceRepository(DataSource dataSource, SeataProperties properties) {
+    public TccFenceRepository jdbcTccFenceRepository(
+            DataSource dataSource,
+            SeataProperties properties,
+            ObjectProvider<TccFenceTableInitializer> tableInitializerProvider) {
+        tableInitializerProvider.ifAvailable(init -> {});
         String tableName = (properties != null && properties.getTcc() != null)
                 ? properties.getTcc().getTableName()
                 : null;
