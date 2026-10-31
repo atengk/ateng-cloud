@@ -3,6 +3,9 @@ package io.github.atengk.cloud.sentinel.properties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Sentinel 流量防卫底座核心配置属性
  *
@@ -124,12 +127,58 @@ public class AtengSentinelProperties {
          */
         private boolean enabled = true;
 
+        /**
+         * 路径中纯数字 ID 替换占位符 (默认 "{id}")
+         */
+        private String numberReplacement = "{id}";
+
+        /**
+         * 路径中 UUID 字符串替换占位符 (默认 "{uuid}")
+         */
+        private String uuidReplacement = "{uuid}";
+
+        /**
+         * 排除白名单路径列表 (支持 AntPathMatcher 语法，匹配路径直接返回空字符串跳过创建资源节点)
+         */
+        private List<String> excludePatterns = new ArrayList<>(List.of(
+                "/actuator/**",
+                "/v3/api-docs/**",
+                "/swagger-ui/**",
+                "/doc.html",
+                "/webjars/**",
+                "/favicon.ico"
+        ));
+
         public boolean isEnabled() {
             return enabled;
         }
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+
+        public String getNumberReplacement() {
+            return numberReplacement;
+        }
+
+        public void setNumberReplacement(String numberReplacement) {
+            this.numberReplacement = numberReplacement;
+        }
+
+        public String getUuidReplacement() {
+            return uuidReplacement;
+        }
+
+        public void setUuidReplacement(String uuidReplacement) {
+            this.uuidReplacement = uuidReplacement;
+        }
+
+        public List<String> getExcludePatterns() {
+            return excludePatterns;
+        }
+
+        public void setExcludePatterns(List<String> excludePatterns) {
+            this.excludePatterns = excludePatterns != null ? excludePatterns : new ArrayList<>();
         }
     }
 
@@ -144,9 +193,24 @@ public class AtengSentinelProperties {
         private boolean enabled = true;
 
         /**
-         * 优先提取的服务名请求头名称
+         * 优先提取的服务名请求头名称 (默认 "X-Origin-Service")
          */
-        private String headerName = "X-Origin-Service";
+        private String originHeader = "X-Origin-Service";
+
+        /**
+         * 第二优先级网关透传来源请求头 (默认 "X-Gateway-Caller")
+         */
+        private String gatewayHeader = "X-Gateway-Caller";
+
+        /**
+         * 无来源标识且未启用 IP 保底时的默认回退来源 (默认 "default")
+         */
+        private String defaultOrigin = "default";
+
+        /**
+         * 当请求头缺失时是否回退至远端客户端 IP 作为来源标识 (默认 true)
+         */
+        private boolean enableClientIpFallback = true;
 
         public boolean isEnabled() {
             return enabled;
@@ -156,12 +220,50 @@ public class AtengSentinelProperties {
             this.enabled = enabled;
         }
 
-        public String getHeaderName() {
-            return headerName;
+        public String getOriginHeader() {
+            return originHeader;
         }
 
+        public void setOriginHeader(String originHeader) {
+            this.originHeader = originHeader;
+        }
+
+        /**
+         * 兼容存量 getter，等同于 {@link #getOriginHeader()}
+         */
+        public String getHeaderName() {
+            return getOriginHeader();
+        }
+
+        /**
+         * 兼容存量 setter，等同于 {@link #setOriginHeader(String)}
+         */
         public void setHeaderName(String headerName) {
-            this.headerName = headerName;
+            setOriginHeader(headerName);
+        }
+
+        public String getGatewayHeader() {
+            return gatewayHeader;
+        }
+
+        public void setGatewayHeader(String gatewayHeader) {
+            this.gatewayHeader = gatewayHeader;
+        }
+
+        public String getDefaultOrigin() {
+            return defaultOrigin;
+        }
+
+        public void setDefaultOrigin(String defaultOrigin) {
+            this.defaultOrigin = defaultOrigin;
+        }
+
+        public boolean isEnableClientIpFallback() {
+            return enableClientIpFallback;
+        }
+
+        public void setEnableClientIpFallback(boolean enableClientIpFallback) {
+            this.enableClientIpFallback = enableClientIpFallback;
         }
     }
 
@@ -175,12 +277,25 @@ public class AtengSentinelProperties {
          */
         private boolean enabled = true;
 
+        /**
+         * 切面兜底拦截时是否物理对齐 HTTP 状态码 (默认 true)
+         */
+        private boolean httpStatusAlign = true;
+
         public boolean isEnabled() {
             return enabled;
         }
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+
+        public boolean isHttpStatusAlign() {
+            return httpStatusAlign;
+        }
+
+        public void setHttpStatusAlign(boolean httpStatusAlign) {
+            this.httpStatusAlign = httpStatusAlign;
         }
     }
 }

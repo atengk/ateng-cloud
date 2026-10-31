@@ -131,5 +131,11 @@ class SentinelBlockExceptionAdviceTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getCode()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
+
+        // 测试 blockAdvice 独立开关
+        properties.getBlockHandler().setHttpStatusAlign(true);
+        properties.getBlockAdvice().setHttpStatusAlign(false);
+        ResponseEntity<Result<Void>> responseAdvice = advice.handleBlockException(ex, request);
+        assertThat(responseAdvice.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 }

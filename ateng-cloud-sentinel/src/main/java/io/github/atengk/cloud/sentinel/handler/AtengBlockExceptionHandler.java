@@ -53,6 +53,13 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
         SentinelResultCode resultCode = determineResultCode(e);
         HttpStatus httpStatus = determineHttpStatus(e);
 
+        if (response != null && response.isCommitted()) {
+            String clientIp = SentinelServletUtil.resolveClientIp(request);
+            log.warn("Response already committed, skip Sentinel block handler response write: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
+                    resourceName, resultCode.name(), httpStatus.value(), request != null ? request.getRequestURI() : "unknown", clientIp);
+            return;
+        }
+
         if (properties.getBlockHandler().isHttpStatusAlign()) {
             response.setStatus(httpStatus.value());
         } else {

@@ -68,7 +68,7 @@ public class SentinelBlockExceptionAdvice {
         SentinelResultCode resultCode = AtengBlockExceptionHandler.determineResultCode(ex);
         HttpStatus targetStatus = AtengBlockExceptionHandler.determineHttpStatus(ex);
 
-        boolean align = properties.getBlockHandler().isHttpStatusAlign();
+        boolean align = properties.getBlockAdvice().isHttpStatusAlign() && properties.getBlockHandler().isHttpStatusAlign();
         HttpStatus httpStatus = align ? targetStatus : HttpStatus.OK;
 
         String path = request != null ? request.getRequestURI() : "unknown";

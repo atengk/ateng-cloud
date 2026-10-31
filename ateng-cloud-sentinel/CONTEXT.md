@@ -23,3 +23,11 @@ _Avoid_: 注解异常处理, AOP报错捕获, 切面补丁
 **Full-Spectrum Nacos Rule Bridge**:
 通过统一命名契约 `${prefix}-{type}.json`，一次性自动注册与动态监听 Flow、Degrade、ParamFlow、System、Authority 全量 5 种规则数据源的开箱即用持久化治理机制。
 _Avoid_: 规则配置同步, Nacos规则推送, 动态规则监听
+
+**Rule Fail-Safe Invariant**:
+当 Nacos 推送的规则报文解析异常（语法错误或结构非法）时，拒绝更新规则属性并严格保留最后已知有效规则（Last Known Good Rules），杜绝误语法配置将运行中全量规则清空引发流量暴击的容错防线。
+_Avoid_: 规则清空, 空列表容错, 格式报错降级
+
+**Sentinel Panorama Diagnostics**:
+通过暴露受管 Actuator 监控端点 `/actuator/sentinel-panorama`，实时输出微服务内存中 5 大规则全家桶快照、Nacos 动态数据源订阅状态、路径清洗器配置及阻断事件统计的运维自省可观测机制。
+_Avoid_: 规则查看器, 控制台诊断, 状态打印接口

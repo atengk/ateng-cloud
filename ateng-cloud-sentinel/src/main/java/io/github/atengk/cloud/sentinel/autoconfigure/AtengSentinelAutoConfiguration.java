@@ -48,8 +48,8 @@ public class AtengSentinelAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(UrlCleaner.class)
     @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.url-clean", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public AtengUrlCleaner atengUrlCleaner() {
-        return new AtengUrlCleaner();
+    public AtengUrlCleaner atengUrlCleaner(AtengSentinelProperties properties) {
+        return new AtengUrlCleaner(properties);
     }
 
     /**

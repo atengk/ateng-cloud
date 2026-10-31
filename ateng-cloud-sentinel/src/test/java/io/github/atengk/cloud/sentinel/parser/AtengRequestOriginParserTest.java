@@ -37,18 +37,19 @@ class AtengRequestOriginParserTest {
     }
 
     @Test
-    @DisplayName("自定义服务标头配置：修改 headerName 时按自定义标头解析")
-    void testCustomHeaderName() {
-        properties.getOriginParser().setHeaderName("X-Custom-Client");
+    @DisplayName("自定义服务标头配置：修改 originHeader / headerName 时按自定义标头解析")
+    void testCustomOriginHeader() {
+        properties.getOriginParser().setOriginHeader("X-Custom-Client");
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/data");
         request.addHeader("X-Custom-Client", "payment-service");
         request.addHeader("X-Origin-Service", "ignore-me");
 
         assertThat(parser.parseOrigin(request)).isEqualTo("payment-service");
+        assertThat(properties.getOriginParser().getHeaderName()).isEqualTo("X-Custom-Client");
     }
 
     @Test
-    @DisplayName("网关调用源回溯：无微服务标头时回退到 X-Gateway-Caller")
+    @DisplayName("网关调用源回溯：无微服务标头时回退到 gatewayHeader (默认 X-Gateway-Caller)")
     void testGatewayCallerFallback() {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/data");
         request.addHeader("X-Gateway-Caller", "api-gateway");
@@ -58,8 +59,18 @@ class AtengRequestOriginParserTest {
     }
 
     @Test
-    @DisplayName("客户端 IP 兜底：无服务标头时回退到客户端 IP")
-    void testClientIpFallback() {
+    @DisplayName("自定义网关标头：修改 gatewayHeader 时按自定义标头回溯")
+    void testCustomGatewayHeader() {
+        properties.getOriginParser().setGatewayHeader("X-My-Gateway");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/data");
+        request.addHeader("X-My-Gateway", "edge-router");
+
+        assertThat(parser.parseOrigin(request)).isEqualTo("edge-router");
+    }
+
+    @Test
+    @DisplayName("客户端 IP 兜底：启用 IP 回退时，无服务标头回退到客户端真实 IP")
+    void testClientIpFallbackEnabled() {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/data");
         request.addHeader("X-Forwarded-For", "203.0.113.195, 10.0.0.1");
 
@@ -75,11 +86,27 @@ class AtengRequestOriginParserTest {
     }
 
     @Test
-    @DisplayName("默认来源保底：空请求或全空标头且无远端地址时返回 default")
+    @DisplayName("禁用客户端 IP 兜底：无服务标头且关闭 IP 回退时直接返回 defaultOrigin")
+    void testClientIpFallbackDisabled() {
+        properties.getOriginParser().setEnableClientIpFallback(false);
+        properties.getOriginParser().setDefaultOrigin("anonymous");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/data");
+        request.addHeader("X-Forwarded-For", "203.0.113.195");
+        request.setRemoteAddr("10.0.0.1");
+
+        assertThat(parser.parseOrigin(request)).isEqualTo("anonymous");
+    }
+
+    @Test
+    @DisplayName("默认来源保底：空请求或全空标头且无远端地址时返回配置的 defaultOrigin")
     void testDefaultFallback() {
         MockHttpServletRequest emptyRequest = new MockHttpServletRequest("GET", "/api/data");
         emptyRequest.setRemoteAddr(null);
         assertThat(parser.parseOrigin(emptyRequest)).isEqualTo("default");
         assertThat(parser.parseOrigin(null)).isEqualTo("default");
+
+        properties.getOriginParser().setDefaultOrigin("unknown-caller");
+        assertThat(parser.parseOrigin(emptyRequest)).isEqualTo("unknown-caller");
     }
 }

@@ -120,4 +120,17 @@ class AtengBlockExceptionHandlerTest {
         JsonNode json = objectMapper.readTree(response.getContentAsString());
         assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
     }
+
+    @Test
+    @DisplayName("已提交响应防卫：当 response.isCommitted() 为 true 时安全跳过写入，不抛次生异常")
+    void testHandleResponseAlreadyCommitted() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setCommitted(true);
+
+        handler.handle(request, response, "order-resource", new FlowException("test flow block"));
+
+        // 验证未覆盖状态码与写入内容
+        assertThat(response.getContentAsString()).isEmpty();
+    }
 }
