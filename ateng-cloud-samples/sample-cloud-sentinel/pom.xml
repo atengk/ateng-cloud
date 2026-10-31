@@ -35,6 +35,12 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
+        <!-- Spring Boot Actuator Starter (用于端到端验证 /actuator/sentinel-panorama 诊断端点) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- Spring Boot Test 离线测试套件 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

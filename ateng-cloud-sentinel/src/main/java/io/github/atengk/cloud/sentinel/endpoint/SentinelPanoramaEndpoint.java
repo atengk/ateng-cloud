@@ -32,7 +32,7 @@ import java.util.List;
  * @author Ateng
  * @since 2026-10-31
  */
-@Endpoint(id = "sentinelPanorama")
+@Endpoint(id = "sentinel-panorama")
 public class SentinelPanoramaEndpoint {
 
     private final ObjectProvider<AtengSentinelProperties> propertiesProvider;

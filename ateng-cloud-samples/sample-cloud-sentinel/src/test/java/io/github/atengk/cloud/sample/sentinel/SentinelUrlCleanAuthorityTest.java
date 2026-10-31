@@ -7,13 +7,16 @@ import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -39,6 +42,12 @@ class SentinelUrlCleanAuthorityTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private AtengUrlCleaner urlCleaner;
+
+    @Autowired
+    private AtengRequestOriginParser originParser;
 
     @AfterEach
     void tearDown() {
@@ -103,5 +112,37 @@ class SentinelUrlCleanAuthorityTest {
         JsonNode blockJson = objectMapper.readTree(blockResult.getResponse().getContentAsString());
         assertThat(blockJson.get("code").asInt()).isEqualTo(SentinelResultCode.AUTHORITY_BLOCK.getCode());
         assertThat(blockJson.get("msg").asText()).isEqualTo(SentinelResultCode.AUTHORITY_BLOCK.getMsg());
+    }
+
+    @Test
+    @DisplayName("白名单路径排除实测：/actuator/** 与 /v3/api-docs/** 绕过 Sentinel 资源创建，同时常规业务路径正常归一化")
+    void testUrlCleanExcludePatternsAndNormalization() {
+        // 白名单路径返回空字符串，Sentinel 框架将跳过资源 Entry 创建
+        assertThat(urlCleaner.clean("/actuator/health")).isEmpty();
+        assertThat(urlCleaner.clean("/actuator/sentinel-panorama")).isEmpty();
+        assertThat(urlCleaner.clean("/v3/api-docs/swagger-config")).isEmpty();
+
+        // 常规业务 RESTful 数字 ID 与 UUID 均被模板化
+        assertThat(urlCleaner.clean("/api/users/10086")).isEqualTo("/api/users/{id}");
+        assertThat(urlCleaner.clean("/api/orders/e0b11568-1cdb-4028-a400-9892ee510fa6")).isEqualTo("/api/orders/{uuid}");
+    }
+
+    @Test
+    @DisplayName("请求来源解析实测：Header 优先级契约 (X-Origin-Service > X-Gateway-From > 客户端 IP)")
+    void testOriginParserHeaderPrecedenceAndFallback() {
+        // 场景 1: 仅携带网关专有标头，识别为网关来源
+        MockHttpServletRequest requestWithGateway = new MockHttpServletRequest();
+        requestWithGateway.addHeader("X-Gateway-From", "edge-gateway");
+        assertThat(originParser.parseOrigin(requestWithGateway)).isEqualTo("edge-gateway");
+
+        // 场景 2: 携带微服务调用方服务标头，识别为服务来源
+        MockHttpServletRequest requestWithService = new MockHttpServletRequest();
+        requestWithService.addHeader("X-Origin-Service", "internal-order");
+        assertThat(originParser.parseOrigin(requestWithService)).isEqualTo("internal-order");
+
+        // 场景 3: 无标头时，回退提取真实客户端 IP
+        MockHttpServletRequest requestFallbackIp = new MockHttpServletRequest();
+        requestFallbackIp.addHeader("X-Forwarded-For", "203.0.113.195, 10.0.0.1");
+        assertThat(originParser.parseOrigin(requestFallbackIp)).isEqualTo("203.0.113.195");
     }
 }

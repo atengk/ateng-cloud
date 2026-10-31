@@ -232,6 +232,40 @@ class SentinelNacosRuleDynamicRefreshTest {
         assertThat(SystemRuleManager.getRules().get(0).getHighestSystemLoad()).isEqualTo(3.5);
     }
 
+    @Test
+    @DisplayName("Rule Fail-Safe Invariant 实测：推送语法损坏 JSON 时，坚决保留内存已有有效规则，不暴毙清空")
+    void testRuleFailSafeInvariantWhenPushingMalformedJson() throws Exception {
+        // 1. 先推送合法的 FlowRule 限流规则 (QPS = 0)
+        String validFlowJson = """
+                [
+                    {
+                        "resource": "/api/test/flow",
+                        "grade": 1,
+                        "count": 0.0,
+                        "limitApp": "default"
+                    }
+                ]
+                """;
+        mockNacosFactory.push("sample-cloud-sentinel-flow.json", validFlowJson);
+
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        // 验证当前请求已被限流
+        mockMvc.perform(get("/api/test/flow"))
+                .andExpect(status().isTooManyRequests());
+
+        // 2. 模拟运维人员误发布损坏的 JSON (语法错误)
+        String malformedJson = "[ { resource: broken-json-without-quotes ...";
+        mockNacosFactory.push("sample-cloud-sentinel-flow.json", malformedJson);
+
+        // 3. 强断言：Rule Fail-Safe 抛出受控异常阻止 updateValue，内存规则坚决保留，不被清空为 0
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/api/test/flow");
+
+        // 4. 请求仍然受限流保护，坚决杜绝因规则被清空导致流量打穿
+        mockMvc.perform(get("/api/test/flow"))
+                .andExpect(status().isTooManyRequests());
+    }
+
     /**
      * 测试配置类：注入离线自洽 Mock Nacos 数据源工厂
      */
@@ -297,8 +331,12 @@ class SentinelNacosRuleDynamicRefreshTest {
         }
 
         public void push(String source) {
-            T value = converter.convert(source);
-            property.updateValue(value);
+            try {
+                T value = converter.convert(source);
+                property.updateValue(value);
+            } catch (Exception ignored) {
+                // 模拟 Sentinel NacosDataSource 捕获 RuleListConverter 抛出的 IllegalArgumentException，中断向 RuleManager 广播更新
+            }
         }
 
         @Override

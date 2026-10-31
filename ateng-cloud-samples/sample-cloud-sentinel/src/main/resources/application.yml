@@ -1,6 +1,15 @@
 server:
   port: 8080
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    sentinelPanorama:
+      enabled: true
+
 spring:
   application:
     name: sample-cloud-sentinel
@@ -23,3 +32,20 @@ ateng:
       block-handler:
         enabled: true
         http-status-align: true
+      url-clean:
+        enabled: true
+        number-replacement: "{id}"
+        uuid-replacement: "{uuid}"
+        exclude-patterns:
+          - "/actuator/**"
+          - "/v3/api-docs/**"
+      origin-parser:
+        origin-header: "X-Origin-Service"
+        gateway-header: "X-Gateway-From"
+        default-origin: "gateway"
+        enable-client-ip-fallback: true
+      block-advice:
+        enabled: true
+        http-status-align: true
+      endpoint:
+        enabled: true
