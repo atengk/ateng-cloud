@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sentinel.endpoint;
 
+import com.alibaba.csp.sentinel.property.DynamicSentinelProperty;
 import com.alibaba.csp.sentinel.slots.block.authority.AuthorityRule;
 import com.alibaba.csp.sentinel.slots.block.authority.AuthorityRuleManager;
 import com.alibaba.csp.sentinel.slots.block.degrade.DegradeRule;
@@ -47,7 +48,13 @@ class SentinelPanoramaEndpointTest {
 
     @AfterEach
     void tearDown() {
-        // 遵循上下文零污染铁律：测试结束后无条件清空所有 Sentinel 内存规则
+        // 遵循上下文零污染铁律：彻底恢复 Sentinel RuleManager 静态委托属性与内存规则
+        FlowRuleManager.register2Property(new DynamicSentinelProperty<>());
+        DegradeRuleManager.register2Property(new DynamicSentinelProperty<>());
+        ParamFlowRuleManager.register2Property(new DynamicSentinelProperty<>());
+        SystemRuleManager.register2Property(new DynamicSentinelProperty<>());
+        AuthorityRuleManager.register2Property(new DynamicSentinelProperty<>());
+
         FlowRuleManager.loadRules(Collections.emptyList());
         DegradeRuleManager.loadRules(Collections.emptyList());
         ParamFlowRuleManager.loadRules(Collections.emptyList());

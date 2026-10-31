@@ -1,13 +1,22 @@
 package io.github.atengk.cloud.sentinel.autoconfigure;
 
 import com.alibaba.csp.sentinel.datasource.ReadableDataSource;
+import com.alibaba.csp.sentinel.property.DynamicSentinelProperty;
 import com.alibaba.csp.sentinel.property.SentinelProperty;
+import com.alibaba.csp.sentinel.slots.block.authority.AuthorityRuleManager;
+import com.alibaba.csp.sentinel.slots.block.degrade.DegradeRuleManager;
+import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
+import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRuleManager;
+import com.alibaba.csp.sentinel.slots.system.SystemRuleManager;
 import io.github.atengk.cloud.sentinel.datasource.NacosDataSourceFactory;
 import io.github.atengk.cloud.sentinel.datasource.SentinelNacosRuleSubscriber;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+
+import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -26,6 +35,22 @@ class AtengSentinelNacosRuleAutoConfigurationTest {
             .withConfiguration(AutoConfigurations.of(
                     AtengSentinelAutoConfiguration.class,
                     AtengSentinelNacosRuleAutoConfiguration.class));
+
+    @AfterEach
+    void tearDown() {
+        // 上下文零污染铁律：彻底恢复 Sentinel RuleManager 静态委托属性与内存规则
+        FlowRuleManager.register2Property(new DynamicSentinelProperty<>());
+        DegradeRuleManager.register2Property(new DynamicSentinelProperty<>());
+        ParamFlowRuleManager.register2Property(new DynamicSentinelProperty<>());
+        SystemRuleManager.register2Property(new DynamicSentinelProperty<>());
+        AuthorityRuleManager.register2Property(new DynamicSentinelProperty<>());
+
+        FlowRuleManager.loadRules(Collections.emptyList());
+        DegradeRuleManager.loadRules(Collections.emptyList());
+        ParamFlowRuleManager.loadRules(Collections.emptyList());
+        SystemRuleManager.loadRules(Collections.emptyList());
+        AuthorityRuleManager.loadRules(Collections.emptyList());
+    }
 
     @Test
     @DisplayName("默认情况下(未配enabled)不装配 Nacos 规则订阅器(离线自洽守卫)")
@@ -53,7 +78,7 @@ class AtengSentinelNacosRuleAutoConfigurationTest {
     void shouldLoadWhenEnabledWithMockFactory() {
         NacosDataSourceFactory customFactory = mock(NacosDataSourceFactory.class);
         ReadableDataSource mockDs = mock(ReadableDataSource.class);
-        SentinelProperty mockProperty = mock(SentinelProperty.class);
+        SentinelProperty mockProperty = new DynamicSentinelProperty();
         when(mockDs.getProperty()).thenReturn(mockProperty);
         when(customFactory.createDataSource(any(), any(), any(), any())).thenReturn(mockDs);
 

@@ -46,7 +46,13 @@ class SentinelNacosRuleSubscriberTest {
 
     @AfterEach
     void tearDown() {
-        // 上下文零污染铁律：重置各 RuleManager 内存规则
+        // 上下文零污染铁律：彻底恢复 Sentinel RuleManager 静态委托属性与内存规则
+        FlowRuleManager.register2Property(new DynamicSentinelProperty<>());
+        DegradeRuleManager.register2Property(new DynamicSentinelProperty<>());
+        ParamFlowRuleManager.register2Property(new DynamicSentinelProperty<>());
+        SystemRuleManager.register2Property(new DynamicSentinelProperty<>());
+        AuthorityRuleManager.register2Property(new DynamicSentinelProperty<>());
+
         FlowRuleManager.loadRules(Collections.emptyList());
         DegradeRuleManager.loadRules(Collections.emptyList());
         ParamFlowRuleManager.loadRules(Collections.emptyList());
