@@ -1,8 +1,10 @@
 package io.github.atengk.cloud.traffic.filter;
 
+import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.properties.TrafficWhitelistAction;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
@@ -20,6 +22,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.io.IOException;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -301,5 +305,142 @@ class TrafficContextFilterTest {
         filterWithRules.doFilter(request, response, filterChain);
 
         assertThat(tagInsideChain.get()).isEqualTo("explicit-override-tag");
+    }
+
+    @Test
+    @DisplayName("测试白名单校验：授权白名单内的标签正常放行染色")
+    void testAllowedTags_AuthorizedTagAllowed() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2", "v3", "canary"));
+        filter = new TrafficContextFilter(properties);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/users");
+        request.addHeader(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>();
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(tagInsideChain.get()).isEqualTo("v2");
+    }
+
+    @Test
+    @DisplayName("测试白名单校验：未授权标签默认 STRIP 模式下安全清洗剥离降级至基线")
+    void testAllowedTags_UnauthorizedTag_DefaultStrip() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2", "v3"));
+        properties.setWhitelistAction(TrafficWhitelistAction.STRIP);
+        filter = new TrafficContextFilter(properties);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/users");
+        request.addHeader(TrafficConstants.HEADER_TRAFFIC_TAG, "unauthorized-malicious-tag");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>("init");
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        // 未授权标签被剥离，按基线放行（上下文为 null）
+        assertThat(tagInsideChain.get()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试白名单校验：未授权标签在 REJECT 模式下直接阻断并输出 4211 JSON 响应")
+    void testAllowedTags_UnauthorizedTag_Reject() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2", "v3"));
+        properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+        filter = new TrafficContextFilter(properties);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/users");
+        request.addHeader(TrafficConstants.HEADER_TRAFFIC_TAG, "forged-canary-lane");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                chainCalled.set(true);
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(chainCalled.get()).isFalse();
+        assertThat(response.getContentAsString()).contains("4211").contains("forged-canary-lane");
+    }
+
+    @Test
+    @DisplayName("测试白名单校验：Query 参数未授权标签分别支持 STRIP 与 REJECT 处置")
+    void testAllowedTags_QueryParam_Unauthorized_StripAndReject() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2"));
+        filter = new TrafficContextFilter(properties);
+
+        // 1. STRIP 剥离模式
+        MockHttpServletRequest reqStrip = new MockHttpServletRequest("GET", "/api/users");
+        reqStrip.setParameter(TrafficConstants.PARAM_TRAFFIC_TAG, "evil-param");
+        MockHttpServletResponse respStrip = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>("init");
+        MockFilterChain chainStrip = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+        filter.doFilter(reqStrip, respStrip, chainStrip);
+        assertThat(tagInsideChain.get()).isNull();
+
+        // 2. REJECT 阻断模式
+        properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+        filter = new TrafficContextFilter(properties);
+        MockHttpServletRequest reqReject = new MockHttpServletRequest("GET", "/api/users");
+        reqReject.setParameter(TrafficConstants.PARAM_TRAFFIC_TAG, "evil-param");
+        MockHttpServletResponse respReject = new MockHttpServletResponse();
+        AtomicBoolean chainCalledReject = new AtomicBoolean(false);
+        MockFilterChain chainReject = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                chainCalledReject.set(true);
+            }
+        };
+
+        filter.doFilter(reqReject, respReject, chainReject);
+        assertThat(chainCalledReject.get()).isFalse();
+        assertThat(respReject.getContentAsString()).contains("4211").contains("evil-param");
+    }
+
+    @Test
+    @DisplayName("测试白名单校验：基线标签 (default/baseline) 豁免白名单校验安全放行")
+    void testAllowedTags_BaselineTagAlwaysAllowed() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2"));
+        properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+        filter = new TrafficContextFilter(properties);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/users");
+        request.addHeader(TrafficConstants.HEADER_TRAFFIC_TAG, "default");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>("init");
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        // 基线标签不触发 REJECT，上下文安全置空
+        assertThat(tagInsideChain.get()).isNull();
     }
 }

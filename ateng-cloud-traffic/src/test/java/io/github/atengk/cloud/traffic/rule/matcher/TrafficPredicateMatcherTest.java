@@ -149,4 +149,67 @@ class TrafficPredicateMatcherTest {
         assertThat(matcher.matches(invalidRegex, "abc")).isFalse();
         matcher.clearCache();
     }
+
+    @Test
+    @DisplayName("SUFFIX 后缀匹配测试 (区分大小写与忽略大小写)")
+    void testSuffixMatch() {
+        TrafficCondition sensitiveSuffix = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.SUFFIX)
+                .expectedValue(".internal")
+                .caseSensitive(true)
+                .build();
+
+        assertThat(matcher.matches(sensitiveSuffix, "api.service.internal")).isTrue();
+        assertThat(matcher.matches(sensitiveSuffix, ".internal")).isTrue();
+        assertThat(matcher.matches(sensitiveSuffix, "api.service.INTERNAL")).isFalse();
+        assertThat(matcher.matches(sensitiveSuffix, "api.service.com")).isFalse();
+        assertThat(matcher.matches(sensitiveSuffix, "short")).isFalse();
+        assertThat(matcher.matches(sensitiveSuffix, null)).isFalse();
+
+        TrafficCondition insensitiveSuffix = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.SUFFIX)
+                .expectedValue(".internal")
+                .caseSensitive(false)
+                .build();
+
+        assertThat(matcher.matches(insensitiveSuffix, "API.SERVICE.INTERNAL")).isTrue();
+        assertThat(matcher.matches(insensitiveSuffix, "api.service.Internal")).isTrue();
+
+        TrafficCondition nullSuffix = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.SUFFIX)
+                .expectedValue(null)
+                .build();
+        assertThat(matcher.matches(nullSuffix, "test")).isFalse();
+    }
+
+    @Test
+    @DisplayName("CONTAINS 包含匹配测试 (区分大小写与忽略大小写)")
+    void testContainsMatch() {
+        TrafficCondition sensitiveContains = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.CONTAINS)
+                .expectedValue("OrderService")
+                .caseSensitive(true)
+                .build();
+
+        assertThat(matcher.matches(sensitiveContains, "PreOrderServicePost")).isTrue();
+        assertThat(matcher.matches(sensitiveContains, "OrderService")).isTrue();
+        assertThat(matcher.matches(sensitiveContains, "orderservice")).isFalse();
+        assertThat(matcher.matches(sensitiveContains, "Other")).isFalse();
+        assertThat(matcher.matches(sensitiveContains, null)).isFalse();
+
+        TrafficCondition insensitiveContains = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.CONTAINS)
+                .expectedValue("OrderService")
+                .caseSensitive(false)
+                .build();
+
+        assertThat(matcher.matches(insensitiveContains, "PRE_orderservice_POST")).isTrue();
+        assertThat(matcher.matches(insensitiveContains, "ORDERSERVICE")).isTrue();
+
+        TrafficCondition nullContains = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.CONTAINS)
+                .expectedValue(null)
+                .build();
+        assertThat(matcher.matches(nullContains, "test")).isFalse();
+    }
 }

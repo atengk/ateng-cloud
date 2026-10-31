@@ -18,9 +18,14 @@ public enum TrafficResultCode implements IResultCode {
     STRICT_LANE_BLOCK(4210, "严格泳道隔离阻断：目标服务无匹配的灰度可用实例"),
 
     /**
+     * 未授权的非法流量染色标签阻断
+     */
+    UNAUTHORIZED_TRAFFIC_TAG(4211, "未授权的非法流量染色标签 (unauthorized traffic-tag rejected)"),
+
+    /**
      * 流量染色与灰度调度异常
      */
-    TRAFFIC_ROUTING_ERROR(4211, "流量染色与灰度调度异常");
+    TRAFFIC_ROUTING_ERROR(4212, "流量染色与灰度调度异常");
 
     private final Integer code;
     private final String msg;

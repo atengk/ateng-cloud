@@ -24,6 +24,16 @@ public enum TrafficMatchOperator {
     PREFIX,
 
     /**
+     * 后缀匹配 (实际值以指定字符串结尾)
+     */
+    SUFFIX,
+
+    /**
+     * 包含匹配 (实际值包含指定子串)
+     */
+    CONTAINS,
+
+    /**
      * 正则表达式匹配 (实际值匹配指定正则规则)
      */
     REGEX

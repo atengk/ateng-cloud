@@ -56,6 +56,8 @@ public class TrafficPredicateMatcher {
             case EXACT -> matchExact(condition, actualValue);
             case IN -> matchIn(condition, actualValue);
             case PREFIX -> matchPrefix(condition, actualValue);
+            case SUFFIX -> matchSuffix(condition, actualValue);
+            case CONTAINS -> matchContains(condition, actualValue);
             case REGEX -> matchRegex(condition, actualValue);
         };
     }
@@ -129,6 +131,53 @@ public class TrafficPredicateMatcher {
             return actualValue.startsWith(prefix);
         }
         return actualValue.regionMatches(true, 0, prefix, 0, prefix.length());
+    }
+
+    /**
+     * 后缀匹配
+     */
+    private boolean matchSuffix(TrafficCondition condition, String actualValue) {
+        if (actualValue == null) {
+            return false;
+        }
+        String suffix = condition.getExpectedValue();
+        if (suffix == null) {
+            return false;
+        }
+        if (condition.isCaseSensitive()) {
+            return actualValue.endsWith(suffix);
+        }
+        int toffset = actualValue.length() - suffix.length();
+        if (toffset < 0) {
+            return false;
+        }
+        return actualValue.regionMatches(true, toffset, suffix, 0, suffix.length());
+    }
+
+    /**
+     * 包含匹配 (子串包含)
+     */
+    private boolean matchContains(TrafficCondition condition, String actualValue) {
+        if (actualValue == null) {
+            return false;
+        }
+        String sub = condition.getExpectedValue();
+        if (sub == null) {
+            return false;
+        }
+        if (condition.isCaseSensitive()) {
+            return actualValue.contains(sub);
+        }
+        int max = actualValue.length() - sub.length();
+        if (max < 0) {
+            return false;
+        }
+        for (int i = 0; i <= max; i++) {
+            if (actualValue.regionMatches(true, i, sub, 0, sub.length())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

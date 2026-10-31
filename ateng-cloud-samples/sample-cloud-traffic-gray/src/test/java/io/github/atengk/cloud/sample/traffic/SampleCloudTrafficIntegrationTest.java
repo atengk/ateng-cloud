@@ -9,6 +9,7 @@ import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.nacos.NacosTrafficRuleListener;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.properties.TrafficWhitelistAction;
 import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
@@ -41,6 +42,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -108,6 +110,8 @@ class SampleCloudTrafficIntegrationTest {
         trafficProperties.setStrictLane(false);
         trafficProperties.setFallbackToDefault(true);
         trafficProperties.setLaneContinuity(true);
+        trafficProperties.setAllowedTags(Collections.emptySet());
+        trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
 
         // 初始化微服务沙箱拓扑
         // Service A: 同时拥有基线与 v2 灰度节点
@@ -140,6 +144,8 @@ class SampleCloudTrafficIntegrationTest {
         UserContextHolder.clear();
         trafficProperties.setStrictLane(false);
         trafficProperties.setFallbackToDefault(true);
+        trafficProperties.setAllowedTags(Collections.emptySet());
+        trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
     }
 
     @Test
@@ -578,6 +584,109 @@ class SampleCloudTrafficIntegrationTest {
                 RESULT_TYPE_REF
         ));
         assertThat(reportV3Again.getTrafficTag()).isEqualTo("v3");
+    }
+
+    @Test
+    @DisplayName("场景 11: SUFFIX 与 CONTAINS 谓词规则动态匹配灰度泳道")
+    void testSuffixAndContainsPredicateRouting() {
+        TrafficRule rule = TrafficRule.builder()
+                .id("rule-suffix-contains")
+                .name("Suffix and Contains Demo")
+                .targetTag("v2")
+                .conditions(List.of(
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Tenant-Domain")
+                                .operator(TrafficMatchOperator.SUFFIX)
+                                .expectedValue(".internal")
+                                .build(),
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Channel-Code")
+                                .operator(TrafficMatchOperator.CONTAINS)
+                                .expectedValue("CANARY")
+                                .build()
+                ))
+                .build();
+
+        if (nacosRuleListener != null) {
+            nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(rule)));
+        }
+
+        // 1. 同时满足 SUFFIX 与 CONTAINS
+        HttpHeaders hitHeaders = new HttpHeaders();
+        hitHeaders.set("X-Tenant-Domain", "app.corp.internal");
+        hitHeaders.set("X-Channel-Code", "PRE_CANARY_ONLINE");
+        TrafficTraceReport hitReport = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(hitHeaders),
+                RESULT_TYPE_REF
+        ));
+        assertThat(hitReport.getTrafficTag()).isEqualTo("v2");
+        assertThat(hitReport.getVisitedNodes()).contains(
+                "ServiceA[inst=inst-a-gray, tag=v2]",
+                "ServiceC[inst=inst-c-gray, tag=v2]"
+        );
+
+        // 2. 不满足 SUFFIX (域名后缀不符)
+        HttpHeaders missHeaders = new HttpHeaders();
+        missHeaders.set("X-Tenant-Domain", "app.corp.external");
+        missHeaders.set("X-Channel-Code", "PRE_CANARY_ONLINE");
+        TrafficTraceReport missReport = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(missHeaders),
+                RESULT_TYPE_REF
+        ));
+        assertThat(missReport.getTrafficTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("场景 12: 应用层外部标签白名单防线 (STRIP 剥离清洗与 REJECT 4211 阻断)")
+    void testAllowedTagsWhitelistDefense() {
+        // 配置白名单仅允许 v2
+        trafficProperties.setAllowedTags(Set.of("v2"));
+
+        // 1. STRIP 模式：携带未授权标签 'forged-tag'，应被安全剥离降级至基线
+        trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
+        HttpHeaders stripHeaders = new HttpHeaders();
+        stripHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "forged-tag");
+        TrafficTraceReport stripReport = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(stripHeaders),
+                RESULT_TYPE_REF
+        ));
+        assertThat(stripReport.getTrafficTag()).isNull();
+        assertThat(stripReport.getVisitedNodes()).contains(
+                "ServiceA[inst=inst-a-base, tag=default]",
+                "ServiceC[inst=inst-c-base, tag=default]"
+        );
+
+        // 2. REJECT 模式：携带未授权标签 'forged-tag'，必须直接 4211 阻断
+        trafficProperties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+        HttpHeaders rejectHeaders = new HttpHeaders();
+        rejectHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "forged-tag");
+        ResponseEntity<String> rejectResponse = restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(rejectHeaders),
+                String.class
+        );
+        assertThat(rejectResponse.getBody()).isNotNull();
+        assertThat(rejectResponse.getBody()).contains("4211");
+
+        // 3. 携带已授权标签 'v2'，不受阻断正常放行
+        HttpHeaders allowedHeaders = new HttpHeaders();
+        allowedHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        TrafficTraceReport allowedReport = extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(allowedHeaders),
+                RESULT_TYPE_REF
+        ));
+        assertThat(allowedReport.getTrafficTag()).isEqualTo("v2");
     }
 
     /**

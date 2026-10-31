@@ -1,9 +1,14 @@
 package io.github.atengk.cloud.traffic.filter;
 
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.boot.core.util.JsonUtil;
+import io.github.atengk.cloud.traffic.code.TrafficResultCode;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContext;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
+import io.github.atengk.cloud.traffic.properties.TrafficWhitelistAction;
 import io.github.atengk.cloud.traffic.rule.matcher.ServletTrafficEvaluationContext;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
@@ -18,7 +23,9 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Servlet 入站流量染色与全生命周期清理过滤器
@@ -80,8 +87,23 @@ public class TrafficContextFilter extends OncePerRequestFilter {
                 TrafficContextHolder.clear();
             }
             filterChain.doFilter(request, response);
+        } catch (BusinessException be) {
+            writeErrorResponse(response, be);
         } finally {
             TrafficContextHolder.clear();
+        }
+    }
+
+    private void writeErrorResponse(HttpServletResponse response, BusinessException be) throws IOException {
+        if (!response.isCommitted()) {
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.setContentType("application/json;charset=UTF-8");
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+            Result<?> result = Result.failure(
+                    be.getResultCode() != null ? be.getResultCode() : TrafficResultCode.UNAUTHORIZED_TRAFFIC_TAG,
+                    be.getMessage());
+            response.getWriter().write(JsonUtil.toJsonString(result));
+            response.getWriter().flush();
         }
     }
 
@@ -95,17 +117,26 @@ public class TrafficContextFilter extends OncePerRequestFilter {
         // 1. 优先读取 Header
         String headerName = StringUtils.hasText(properties.getHeaderName())
                 ? properties.getHeaderName() : TrafficConstants.HEADER_TRAFFIC_TAG;
-        String tag = request.getHeader(headerName);
-        if (StringUtils.hasText(tag)) {
-            return TrafficContext.of(tag.trim());
+        String headerTag = request.getHeader(headerName);
+        if (StringUtils.hasText(headerTag)) {
+            String sanitizedTag = validateAndSanitizeTag(headerTag.trim(), request);
+            if (StringUtils.hasText(sanitizedTag)) {
+                return TrafficContext.of(sanitizedTag);
+            }
+            // 若 Header 存在但被剥离清洗，直接按基线放行，避免二次从 Query 意外回填
+            return null;
         }
 
         // 2. 备选读取 URL Query 参数
         String paramName = StringUtils.hasText(properties.getParamName())
                 ? properties.getParamName() : TrafficConstants.PARAM_TRAFFIC_TAG;
-        tag = request.getParameter(paramName);
-        if (StringUtils.hasText(tag)) {
-            return TrafficContext.of(tag.trim());
+        String paramTag = request.getParameter(paramName);
+        if (StringUtils.hasText(paramTag)) {
+            String sanitizedTag = validateAndSanitizeTag(paramTag.trim(), request);
+            if (StringUtils.hasText(sanitizedTag)) {
+                return TrafficContext.of(sanitizedTag);
+            }
+            return null;
         }
 
         // 3. 动态流量分流规则匹配判定 (由 Nacos 动态推送或静态规则提供)
@@ -128,5 +159,57 @@ public class TrafficContextFilter extends OncePerRequestFilter {
         }
 
         return null;
+    }
+
+    /**
+     * 执行应用层外部流量染色标签白名单合法性校验与安全处置
+     *
+     * @param tag     提取到的入站流量标签
+     * @param request HTTP 请求
+     * @return 校验通过后的合法标签，若被剥离清洗或为基线标签则返回 null
+     * @throws BusinessException 当白名单策略为 REJECT 且标签未授权时抛出 4211 业务异常
+     */
+    private String validateAndSanitizeTag(String tag, HttpServletRequest request) {
+        if (!StringUtils.hasText(tag) || isBaselineTag(tag)) {
+            return null;
+        }
+
+        Set<String> allowedTags = properties.getAllowedTags();
+        if (allowedTags == null || allowedTags.isEmpty() || allowedTags.contains(tag)) {
+            return tag;
+        }
+
+        TrafficWhitelistAction action = properties.getWhitelistAction();
+        if (action == TrafficWhitelistAction.REJECT) {
+            log.warn("[TrafficFilter] 拒绝未授权的非法流量染色标签 (REJECT) [unauthorizedTag='{}', uri='{}', clientIp='{}', allowedTags={}]",
+                    tag, request.getRequestURI(), resolveClientIp(request), allowedTags);
+            throw new BusinessException(TrafficResultCode.UNAUTHORIZED_TRAFFIC_TAG,
+                    String.format("未授权的非法流量染色标签 '%s'，已被安全防卫阻断 (unauthorized traffic-tag rejected)", tag));
+        }
+
+        // 默认 STRIP 剥离模式
+        log.warn("[TrafficFilter] 检测到未授权流量染色标签，执行安全剥离降级至基线 (STRIP) [unauthorizedTag='{}', uri='{}', clientIp='{}', allowedTags={}]",
+                tag, request.getRequestURI(), resolveClientIp(request), allowedTags);
+        return null;
+    }
+
+    private boolean isBaselineTag(String tag) {
+        return "default".equalsIgnoreCase(tag) || "baseline".equalsIgnoreCase(tag) || "none".equalsIgnoreCase(tag);
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return "unknown";
+        }
+        String ip = request.getHeader("X-Forwarded-For");
+        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
+            int idx = ip.indexOf(',');
+            return idx != -1 ? ip.substring(0, idx).trim() : ip.trim();
+        }
+        ip = request.getHeader("X-Real-IP");
+        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
+            return ip.trim();
+        }
+        return request.getRemoteAddr() != null ? request.getRemoteAddr() : "unknown";
     }
 }
