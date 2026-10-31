@@ -8,6 +8,9 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -168,5 +171,55 @@ class JdbcTccFenceRepositoryTest {
                 stmt.execute("DROP TABLE IF EXISTS " + customTable);
             }
         }
+    }
+
+    @Test
+    @DisplayName("通过 JDBC 按截止时间与状态批量物理清理")
+    void shouldDeleteExpiredRecordsViaJdbc() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime oldTime = now.minusDays(5);
+        LocalDateTime recentTime = now.minusHours(1);
+
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-old-1", 1L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-old-2", 2L, "action", TccFenceStatus.ROLLBACKED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-old-3", 3L, "action", TccFenceStatus.TRIED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-recent-1", 4L, "action", TccFenceStatus.COMMITTED, recentTime, recentTime));
+
+        List<TccFenceStatus> targetStatuses = List.of(TccFenceStatus.COMMITTED, TccFenceStatus.ROLLBACKED);
+        int deleted = repository.deleteExpiredRecords(now.minusDays(3), targetStatuses, 10);
+
+        assertThat(deleted).isEqualTo(2);
+        assertThat(repository.findByXidAndBranchId("xid-jdbc-old-1", 1L)).isEmpty();
+        assertThat(repository.findByXidAndBranchId("xid-jdbc-old-2", 2L)).isEmpty();
+        assertThat(repository.findByXidAndBranchId("xid-jdbc-old-3", 3L)).isPresent();
+        assertThat(repository.findByXidAndBranchId("xid-jdbc-recent-1", 4L)).isPresent();
+    }
+
+    @Test
+    @DisplayName("JDBC 批量清理受 limit 阈值硬限制")
+    void shouldRespectLimitOnDeleteExpiredViaJdbc() {
+        LocalDateTime oldTime = LocalDateTime.now().minusDays(5);
+
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-limit-1", 1L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-limit-2", 2L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-jdbc-limit-3", 3L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+
+        int deleted = repository.deleteExpiredRecords(LocalDateTime.now(), List.of(TccFenceStatus.COMMITTED), 2);
+        assertThat(deleted).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("JDBC 批量清理非法参数防卫校验")
+    void shouldValidateArgumentsOnDeleteExpiredViaJdbc() {
+        assertThatThrownBy(() -> repository.deleteExpiredRecords(null, List.of(TccFenceStatus.COMMITTED), 10))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("beforeTime 必须非空");
+
+        assertThatThrownBy(() -> repository.deleteExpiredRecords(LocalDateTime.now(), List.of(TccFenceStatus.COMMITTED), 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("limit 必须大于 0");
+
+        assertThat(repository.deleteExpiredRecords(LocalDateTime.now(), Collections.emptyList(), 10)).isEqualTo(0);
+        assertThat(repository.deleteExpiredRecords(LocalDateTime.now(), null, 10)).isEqualTo(0);
     }
 }

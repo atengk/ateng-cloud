@@ -9,10 +9,14 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * 基于 JDBC 数据源的 TCC Fence 本地日志仓储实现
@@ -142,6 +146,67 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
                 ps.setString(1, xid);
                 ps.setLong(2, branchId);
                 return ps.executeUpdate() > 0;
+            }
+        });
+    }
+
+    private record FenceKey(String xid, Long branchId) {}
+
+    @Override
+    public int deleteExpiredRecords(LocalDateTime beforeTime, List<TccFenceStatus> statuses, int limit) {
+        if (beforeTime == null) {
+            throw new IllegalArgumentException("beforeTime 必须非空");
+        }
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit 必须大于 0");
+        }
+        if (statuses == null || statuses.isEmpty()) {
+            return 0;
+        }
+
+        String placeholders = statuses.stream().map(s -> "?").collect(Collectors.joining(", "));
+        String selectSql = "SELECT xid, branch_id FROM " + tableName
+                + " WHERE status IN (" + placeholders + ") AND ((gmt_modified IS NOT NULL AND gmt_modified < ?) OR (gmt_modified IS NULL AND gmt_create < ?))";
+
+        return executeInConnection("批量清理 TCC Fence 过期日志", null, null, conn -> {
+            List<FenceKey> keys = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
+                ps.setMaxRows(limit);
+                int idx = 1;
+                for (TccFenceStatus status : statuses) {
+                    ps.setInt(idx++, status.getCode());
+                }
+                Timestamp threshold = Timestamp.valueOf(beforeTime);
+                ps.setTimestamp(idx++, threshold);
+                ps.setTimestamp(idx, threshold);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next() && keys.size() < limit) {
+                        keys.add(new FenceKey(rs.getString("xid"), rs.getLong("branch_id")));
+                    }
+                }
+            }
+
+            if (keys.isEmpty()) {
+                return 0;
+            }
+
+            String deleteSql = "DELETE FROM " + tableName + " WHERE xid = ? AND branch_id = ?";
+            try (PreparedStatement ps = conn.prepareStatement(deleteSql)) {
+                for (FenceKey key : keys) {
+                    ps.setString(1, key.xid());
+                    ps.setLong(2, key.branchId());
+                    ps.addBatch();
+                }
+                int[] affected = ps.executeBatch();
+                int totalDeleted = 0;
+                for (int count : affected) {
+                    if (count >= 0) {
+                        totalDeleted += count;
+                    } else if (count == Statement.SUCCESS_NO_INFO) {
+                        totalDeleted++;
+                    }
+                }
+                return totalDeleted;
             }
         });
     }

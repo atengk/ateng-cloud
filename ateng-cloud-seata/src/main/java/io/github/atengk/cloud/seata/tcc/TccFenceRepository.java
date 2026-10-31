@@ -50,4 +50,14 @@ public interface TccFenceRepository {
      * @return 删除成功返回 true，不存在返回 false
      */
     boolean deleteRecord(String xid, Long branchId);
+
+    /**
+     * 批量删除满足截止时间与指定状态列表的防卫日志记录
+     *
+     * @param beforeTime 截止时间（修改时间或创建时间早于此时间的记录将被清理）
+     * @param statuses   目标状态列表（如 COMMITTED, ROLLBACKED 或 SUSPENDED）
+     * @param limit      单批次最大删除记录数（必须大于 0）
+     * @return 实际物理删除的记录条数
+     */
+    int deleteExpiredRecords(java.time.LocalDateTime beforeTime, java.util.List<TccFenceStatus> statuses, int limit);
 }

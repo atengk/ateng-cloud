@@ -1,9 +1,13 @@
 package io.github.atengk.cloud.seata.tcc;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -86,6 +90,38 @@ public class InMemoryTccFenceRepository implements TccFenceRepository {
             return false;
         }
         return store.remove(buildKey(xid, branchId)) != null;
+    }
+
+    @Override
+    public int deleteExpiredRecords(LocalDateTime beforeTime, List<TccFenceStatus> statuses, int limit) {
+        if (beforeTime == null) {
+            throw new IllegalArgumentException("beforeTime 必须非空");
+        }
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit 必须大于 0");
+        }
+        if (statuses == null || statuses.isEmpty()) {
+            return 0;
+        }
+        Set<TccFenceStatus> statusSet = EnumSet.copyOf(statuses);
+        List<String> keysToDelete = new ArrayList<>();
+        for (Map.Entry<String, TccFenceRecord> entry : store.entrySet()) {
+            if (keysToDelete.size() >= limit) {
+                break;
+            }
+            TccFenceRecord record = entry.getValue();
+            LocalDateTime recordTime = record.getGmtModified() != null ? record.getGmtModified() : record.getGmtCreate();
+            if (recordTime != null && recordTime.isBefore(beforeTime) && statusSet.contains(record.getStatus())) {
+                keysToDelete.add(entry.getKey());
+            }
+        }
+        int count = 0;
+        for (String key : keysToDelete) {
+            if (store.remove(key) != null) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

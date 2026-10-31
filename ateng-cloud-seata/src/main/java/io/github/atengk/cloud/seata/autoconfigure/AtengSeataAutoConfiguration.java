@@ -15,6 +15,7 @@ import io.github.atengk.cloud.seata.tcc.InMemoryTccFenceRepository;
 import io.github.atengk.cloud.seata.tcc.JdbcTccFenceRepository;
 import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
 import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
+import io.github.atengk.cloud.seata.tcc.TccFenceLogCleanScheduler;
 import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
 import org.apache.seata.common.holder.ObjectHolder;
@@ -24,6 +25,7 @@ import org.apache.seata.spring.annotation.GlobalLock;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -37,6 +39,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * 分布式事务增强底座自动装配类
@@ -287,6 +290,27 @@ public class AtengSeataAutoConfiguration {
     public SeataTccFenceTemplate seataTccFenceTemplate(TccFenceBarrier barrier) {
         log.debug("装配 SeataTccFenceTemplate 编程式防卫执行模板");
         return new SeataTccFenceTemplate(barrier);
+    }
+
+    /**
+     * 注册 TCC 防卫日志分级生命周期定时清理调度器
+     *
+     * @param repository       TCC 防卫日志仓储
+     * @param properties       Seata 配置属性
+     * @param executorProvider 可选的自定义调度执行器提供者
+     * @return TccFenceLogCleanScheduler 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
+    public TccFenceLogCleanScheduler tccFenceLogCleanScheduler(
+            TccFenceRepository repository,
+            SeataProperties properties,
+            ObjectProvider<ScheduledExecutorService> executorProvider) {
+        ScheduledExecutorService executor = executorProvider.getIfAvailable();
+        log.debug("装配 TccFenceLogCleanScheduler 定时清理调度器, cleanEnabled: {}, 自定义调度器: {}",
+                properties.getTcc().isCleanEnabled(), executor != null);
+        return new TccFenceLogCleanScheduler(repository, properties, executor);
     }
 
     /**

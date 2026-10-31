@@ -27,12 +27,16 @@ public class TccFenceRecord {
     }
 
     public TccFenceRecord(String xid, Long branchId, String actionName, TccFenceStatus status) {
+        this(xid, branchId, actionName, status, LocalDateTime.now(), LocalDateTime.now());
+    }
+
+    public TccFenceRecord(String xid, Long branchId, String actionName, TccFenceStatus status, LocalDateTime gmtCreate, LocalDateTime gmtModified) {
         this.xid = Objects.requireNonNull(xid, "xid 必须非空");
         this.branchId = Objects.requireNonNull(branchId, "branchId 必须非空");
         this.actionName = actionName != null ? actionName : "";
         this.status = Objects.requireNonNull(status, "status 必须非空");
-        this.gmtCreate = LocalDateTime.now();
-        this.gmtModified = this.gmtCreate;
+        this.gmtCreate = gmtCreate != null ? gmtCreate : LocalDateTime.now();
+        this.gmtModified = gmtModified != null ? gmtModified : this.gmtCreate;
     }
 
     public String getXid() {

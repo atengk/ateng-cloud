@@ -5,9 +5,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * TCC Fence 仓储组件离线测试
@@ -83,5 +86,58 @@ class TccFenceRepositoryTest {
         assertThat(repository.deleteRecord("xid-1004", 104L)).isTrue();
         assertThat(repository.findByXidAndBranchId("xid-1004", 104L)).isEmpty();
         assertThat(repository.deleteRecord("xid-1004", 104L)).isFalse();
+    }
+
+    @Test
+    @DisplayName("按截止时间与状态批量清理过期内存日志")
+    void shouldDeleteExpiredRecordsInMemory() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime oldTime = now.minusDays(5);
+        LocalDateTime recentTime = now.minusHours(1);
+
+        // 插入 2 条已过期终态记录
+        repository.insertRecord(new TccFenceRecord("xid-old-1", 1L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-old-2", 2L, "action", TccFenceStatus.ROLLBACKED, oldTime, oldTime));
+        // 插入 1 条已过期但状态为 TRIED 的记录（不应被终态清理）
+        repository.insertRecord(new TccFenceRecord("xid-old-3", 3L, "action", TccFenceStatus.TRIED, oldTime, oldTime));
+        // 插入 1 条近期 COMMITTED 记录（未过期）
+        repository.insertRecord(new TccFenceRecord("xid-recent-1", 4L, "action", TccFenceStatus.COMMITTED, recentTime, recentTime));
+
+        List<TccFenceStatus> targetStatuses = List.of(TccFenceStatus.COMMITTED, TccFenceStatus.ROLLBACKED);
+        int deleted = repository.deleteExpiredRecords(now.minusDays(3), targetStatuses, 10);
+
+        assertThat(deleted).isEqualTo(2);
+        assertThat(repository.findByXidAndBranchId("xid-old-1", 1L)).isEmpty();
+        assertThat(repository.findByXidAndBranchId("xid-old-2", 2L)).isEmpty();
+        assertThat(repository.findByXidAndBranchId("xid-old-3", 3L)).isPresent();
+        assertThat(repository.findByXidAndBranchId("xid-recent-1", 4L)).isPresent();
+    }
+
+    @Test
+    @DisplayName("批量清理受 limit 阈值硬限制")
+    void shouldRespectLimitThresholdInMemory() {
+        LocalDateTime oldTime = LocalDateTime.now().minusDays(5);
+
+        repository.insertRecord(new TccFenceRecord("xid-limit-1", 1L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-limit-2", 2L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+        repository.insertRecord(new TccFenceRecord("xid-limit-3", 3L, "action", TccFenceStatus.COMMITTED, oldTime, oldTime));
+
+        int deleted = repository.deleteExpiredRecords(LocalDateTime.now(), List.of(TccFenceStatus.COMMITTED), 2);
+        assertThat(deleted).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("批量清理非法参数防卫校验")
+    void shouldValidateArgumentsOnDeleteExpired() {
+        assertThatThrownBy(() -> repository.deleteExpiredRecords(null, List.of(TccFenceStatus.COMMITTED), 10))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("beforeTime 必须非空");
+
+        assertThatThrownBy(() -> repository.deleteExpiredRecords(LocalDateTime.now(), List.of(TccFenceStatus.COMMITTED), 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("limit 必须大于 0");
+
+        assertThat(repository.deleteExpiredRecords(LocalDateTime.now(), Collections.emptyList(), 10)).isEqualTo(0);
+        assertThat(repository.deleteExpiredRecords(LocalDateTime.now(), null, 10)).isEqualTo(0);
     }
 }

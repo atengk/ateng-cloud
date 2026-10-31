@@ -156,6 +156,21 @@ public class SeataProperties {
         private Duration logTtl = Duration.ofDays(3);
 
         /**
+         * 是否开启 TCC 防卫日志历史记录定时清理调度（默认 true）
+         */
+        private boolean cleanEnabled = true;
+
+        /**
+         * TCC 防卫日志单批次物理清理最大记录数（防御锁表与慢查询，默认 500）
+         */
+        private int cleanBatchSize = 500;
+
+        /**
+         * 悬挂状态（SUSPENDED）防卫日志超长保留时长倍数（默认 3 倍 logTtl，即 9 天）
+         */
+        private int suspendedRetentionMultiplier = 3;
+
+        /**
          * TCC 防卫日志存储数据表名
          */
         private String tableName = SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME;
@@ -166,6 +181,14 @@ public class SeataProperties {
 
         public void setFenceEnabled(boolean fenceEnabled) {
             this.fenceEnabled = fenceEnabled;
+        }
+
+        public boolean isCleanEnabled() {
+            return cleanEnabled;
+        }
+
+        public void setCleanEnabled(boolean cleanEnabled) {
+            this.cleanEnabled = cleanEnabled;
         }
 
         public Duration getCleanPeriod() {
@@ -182,6 +205,22 @@ public class SeataProperties {
 
         public void setLogTtl(Duration logTtl) {
             this.logTtl = logTtl;
+        }
+
+        public int getCleanBatchSize() {
+            return cleanBatchSize;
+        }
+
+        public void setCleanBatchSize(int cleanBatchSize) {
+            this.cleanBatchSize = cleanBatchSize;
+        }
+
+        public int getSuspendedRetentionMultiplier() {
+            return suspendedRetentionMultiplier;
+        }
+
+        public void setSuspendedRetentionMultiplier(int suspendedRetentionMultiplier) {
+            this.suspendedRetentionMultiplier = suspendedRetentionMultiplier;
         }
 
         public String getTableName() {
