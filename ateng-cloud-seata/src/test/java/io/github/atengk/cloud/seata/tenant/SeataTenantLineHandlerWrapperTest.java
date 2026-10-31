@@ -89,4 +89,42 @@ class SeataTenantLineHandlerWrapperTest {
         String stringBean = "otherBean";
         assertThat(postProcessor.postProcessAfterInitialization(stringBean, "stringBean")).isSameAs(stringBean);
     }
+
+    @Test
+    @DisplayName("测试自定义 TCC 防卫表名动态排除与多租户忽略保护")
+    void testCustomTccFenceTableIgnored() {
+        TenantLineHandler mockDelegate = mock(TenantLineHandler.class);
+        when(mockDelegate.ignoreTable("t_order")).thenReturn(false);
+
+        SeataTenantLineHandlerWrapper wrapper = new SeataTenantLineHandlerWrapper(mockDelegate, "my_custom_tcc_fence");
+
+        // 默认内部表仍受保护
+        assertThat(wrapper.ignoreTable("undo_log")).isTrue();
+        assertThat(wrapper.ignoreTable("tcc_fence_log")).isTrue();
+
+        // 自定义表名及其各种格式自动忽略
+        assertThat(wrapper.ignoreTable("my_custom_tcc_fence")).isTrue();
+        assertThat(wrapper.ignoreTable("MY_CUSTOM_TCC_FENCE")).isTrue();
+        assertThat(wrapper.ignoreTable("`my_custom_tcc_fence`")).isTrue();
+        assertThat(wrapper.ignoreTable("\"my_custom_tcc_fence\"")).isTrue();
+
+        // 普通业务表正常委托
+        assertThat(wrapper.ignoreTable("t_order")).isFalse();
+    }
+
+    @Test
+    @DisplayName("测试 SeataTenantLineHandlerPostProcessor 携带自定义表名包装")
+    void testPostProcessorWithCustomTable() {
+        SeataTenantLineHandlerPostProcessor postProcessor = new SeataTenantLineHandlerPostProcessor("custom_fence_table");
+        assertThat(postProcessor.getCustomTccTableName()).isEqualTo("custom_fence_table");
+
+        TenantLineHandler mockDelegate = mock(TenantLineHandler.class);
+        Object processed = postProcessor.postProcessAfterInitialization(mockDelegate, "tenantLineHandler");
+        assertThat(processed).isInstanceOf(SeataTenantLineHandlerWrapper.class);
+
+        SeataTenantLineHandlerWrapper wrapper = (SeataTenantLineHandlerWrapper) processed;
+        assertThat(wrapper.ignoreTable("custom_fence_table")).isTrue();
+        assertThat(wrapper.ignoreTable("`custom_fence_table`")).isTrue();
+        assertThat(wrapper.ignoreTable("undo_log")).isTrue();
+    }
 }

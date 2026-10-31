@@ -186,4 +186,23 @@ class AtengSeataAutoConfigurationTest {
                     assertThat(context).hasSingleBean(SpringFenceConfig.class);
                 });
     }
+
+    @Test
+    @DisplayName("测试配置自定义 TCC 表名时自动注入 JdbcTccFenceRepository 与多租户后置处理器")
+    void testCustomTableNameInjection() {
+        javax.sql.DataSource mockDs = org.mockito.Mockito.mock(javax.sql.DataSource.class);
+
+        nonWebRunner
+                .withPropertyValues("ateng.cloud.seata.tcc.table-name=my_custom_fence_tbl")
+                .withBean(javax.sql.DataSource.class, () -> mockDs)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(TccFenceRepository.class);
+                    JdbcTccFenceRepository repo = (JdbcTccFenceRepository) context.getBean(TccFenceRepository.class);
+                    assertThat(repo.getTableName()).isEqualTo("my_custom_fence_tbl");
+
+                    assertThat(context).hasSingleBean(SeataTenantLineHandlerPostProcessor.class);
+                    SeataTenantLineHandlerPostProcessor processor = context.getBean(SeataTenantLineHandlerPostProcessor.class);
+                    assertThat(processor.getCustomTccTableName()).isEqualTo("my_custom_fence_tbl");
+                });
+    }
 }

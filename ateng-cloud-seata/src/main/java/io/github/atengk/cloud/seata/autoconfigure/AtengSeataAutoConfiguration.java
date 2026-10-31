@@ -33,6 +33,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
@@ -141,9 +142,12 @@ public class AtengSeataAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean
-        public static SeataTenantLineHandlerPostProcessor seataTenantLineHandlerPostProcessor() {
-            log.debug("装配 SeataTenantLineHandlerPostProcessor 多租户内部表排除后置处理器");
-            return new SeataTenantLineHandlerPostProcessor();
+        public static SeataTenantLineHandlerPostProcessor seataTenantLineHandlerPostProcessor(Environment env) {
+            String customTccTableName = env != null
+                    ? env.getProperty("ateng.cloud.seata.tcc.table-name", SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME)
+                    : SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME;
+            log.debug("装配 SeataTenantLineHandlerPostProcessor 多租户内部表排除后置处理器，自定义 TCC 表: {}", customTccTableName);
+            return new SeataTenantLineHandlerPostProcessor(customTccTableName);
         }
     }
 
@@ -229,15 +233,19 @@ public class AtengSeataAutoConfiguration {
      * 注册基于 JDBC 数据源的 TCC Fence 本地日志仓储
      *
      * @param dataSource 数据源
+     * @param properties 配置属性
      * @return JdbcTccFenceRepository 实例
      */
     @Bean
     @ConditionalOnMissingBean(TccFenceRepository.class)
     @ConditionalOnBean(DataSource.class)
     @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".tcc", name = "fence-enabled", havingValue = "true", matchIfMissing = true)
-    public TccFenceRepository jdbcTccFenceRepository(DataSource dataSource) {
-        log.debug("装配 JdbcTccFenceRepository 本地数据库防卫仓储");
-        return new JdbcTccFenceRepository(dataSource);
+    public TccFenceRepository jdbcTccFenceRepository(DataSource dataSource, SeataProperties properties) {
+        String tableName = (properties != null && properties.getTcc() != null)
+                ? properties.getTcc().getTableName()
+                : null;
+        log.debug("装配 JdbcTccFenceRepository 本地数据库防卫仓储，表名: {}", tableName);
+        return new JdbcTccFenceRepository(dataSource, tableName);
     }
 
     /**

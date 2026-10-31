@@ -131,4 +131,42 @@ class JdbcTccFenceRepositoryTest {
                 .isInstanceOf(TccFenceHangingException.class)
                 .hasMessageContaining("悬挂");
     }
+
+    @Test
+    @DisplayName("测试自定义表名下 JDBC 仓储读写操作自洽")
+    void shouldSupportCustomTableName() throws Exception {
+        String customTable = "custom_fence_test_tbl";
+        try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE IF NOT EXISTS " + customTable + " (" +
+                    "xid VARCHAR(128) NOT NULL, " +
+                    "branch_id BIGINT NOT NULL, " +
+                    "action_name VARCHAR(64) NOT NULL, " +
+                    "status INT NOT NULL, " +
+                    "gmt_create TIMESTAMP NOT NULL, " +
+                    "gmt_modified TIMESTAMP NOT NULL, " +
+                    "PRIMARY KEY (xid, branch_id)" +
+                    ")");
+        }
+
+        try {
+            JdbcTccFenceRepository customRepo = new JdbcTccFenceRepository(dataSource, customTable);
+            assertThat(customRepo.getTableName()).isEqualTo(customTable);
+
+            TccFenceRecord record = new TccFenceRecord("xid-custom-1", 999L, "customAction", TccFenceStatus.TRIED);
+            assertThat(customRepo.insertRecord(record)).isTrue();
+
+            Optional<TccFenceRecord> found = customRepo.findByXidAndBranchId("xid-custom-1", 999L);
+            assertThat(found).isPresent();
+            assertThat(found.get().getActionName()).isEqualTo("customAction");
+            assertThat(found.get().getStatus()).isEqualTo(TccFenceStatus.TRIED);
+
+            assertThat(customRepo.updateStatus("xid-custom-1", 999L, TccFenceStatus.TRIED, TccFenceStatus.COMMITTED)).isTrue();
+            assertThat(customRepo.deleteRecord("xid-custom-1", 999L)).isTrue();
+            assertThat(customRepo.findByXidAndBranchId("xid-custom-1", 999L)).isEmpty();
+        } finally {
+            try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
+                stmt.execute("DROP TABLE IF EXISTS " + customTable);
+            }
+        }
+    }
 }
