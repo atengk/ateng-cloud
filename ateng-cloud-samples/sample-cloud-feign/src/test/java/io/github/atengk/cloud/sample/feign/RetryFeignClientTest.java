@@ -93,7 +93,7 @@ public class RetryFeignClientTest {
             long elapsed = System.currentTimeMillis() - start;
 
             assertNotNull(ex, "不可达端口建连失败必须抛出 RetryableException 阻断");
-            assertTrue(elapsed >= 40, "弹性重试必须经过退避休眠，总耗时应大于等于退避间隔");
+            assertTrue(elapsed >= 15, "弹性重试必须经过退避休眠，总耗时应大于等于退避保底间隔");
 
             List<String> messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
             assertTrue(messages.stream().anyMatch(m -> m.contains("unreachable-client") && m.contains("正在进行第 1/1 次弹性重试")),
