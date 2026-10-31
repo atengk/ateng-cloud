@@ -179,10 +179,10 @@ class SeataDubboFilterTest {
     }
 
     @Test
-    @DisplayName("自适应幂等防卫：当前线程已被外部过滤器绑定相同时，静默放行且不执行二次解绑")
+    @DisplayName("自适应幂等防卫：当前线程已被外部过滤器绑定相同时，静默放行且不执行二次解绑，出口确定性清理 MDC")
     void testAdaptiveIdempotencyWhenAlreadyBound() {
         String testXid = "192.168.1.100:8091:idempotent-xid";
-        // 模拟外部过滤器（如 DubboContextPropagationFilter）先行完成了 XID 绑定
+        // 模拟外部过滤器先行完成了 XID 绑定，但未设置 MDC
         RootContext.bind(testXid);
 
         @SuppressWarnings("unchecked")
@@ -196,14 +196,47 @@ class SeataDubboFilterTest {
         Result mockResult = mock(Result.class);
         when(invoker.invoke(invocation)).thenAnswer(inv -> {
             assertThat(RootContext.getXID()).isEqualTo(testXid);
+            assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(testXid);
             return mockResult;
         });
 
         Result result = filter.invoke(invoker, invocation);
 
         assertThat(result).isSameAs(mockResult);
-        // 关键断言：因为本过滤器识别到了外部已绑定，激活自适应幂等防卫，因此出口不执行解绑，外层绑定的 XID 依然有效保留！
+        // 关键断言 1：因为本过滤器识别到了外部已绑定，激活自适应幂等防卫，因此出口不执行解绑，外层绑定的 XID 依然有效保留！
         assertThat(RootContext.getXID()).isEqualTo(testXid);
+        // 关键断言 2：出口确定性对称清理本次填充的 MDC，杜绝线程池跨任务脏读
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isNull();
+    }
+
+    @Test
+    @DisplayName("自适应幂等防卫：外部已有先前 MDC 时，出口保真还原先前 MDC")
+    void testAdaptiveIdempotencyPreservesPriorMdcWhenAlreadyBound() {
+        String testXid = "192.168.1.100:8091:idempotent-xid";
+        String priorMdc = "prior-custom-mdc-xid";
+        RootContext.bind(testXid);
+        MDC.put(SeataConstants.MDC_KEY_XID, priorMdc);
+
+        @SuppressWarnings("unchecked")
+        Invoker<Object> invoker = mock(Invoker.class);
+        URL providerUrl = URL.valueOf("tri://127.0.0.1:20880/DemoService?" + CommonConstants.SIDE_KEY + "=" + CommonConstants.PROVIDER_SIDE);
+        when(invoker.getUrl()).thenReturn(providerUrl);
+
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setAttachment(SeataConstants.TX_XID, testXid);
+
+        Result mockResult = mock(Result.class);
+        when(invoker.invoke(invocation)).thenAnswer(inv -> {
+            assertThat(RootContext.getXID()).isEqualTo(testXid);
+            assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(priorMdc);
+            return mockResult;
+        });
+
+        Result result = filter.invoke(invoker, invocation);
+
+        assertThat(result).isSameAs(mockResult);
+        assertThat(RootContext.getXID()).isEqualTo(testXid);
+        assertThat(MDC.get(SeataConstants.MDC_KEY_XID)).isEqualTo(priorMdc);
     }
 
     @Test

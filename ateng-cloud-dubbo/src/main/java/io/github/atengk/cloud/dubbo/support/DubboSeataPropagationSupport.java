@@ -33,6 +33,11 @@ public final class DubboSeataPropagationSupport {
      */
     public static final String TX_XID_LOWERCASE = "tx_xid";
 
+    /**
+     * SLF4J MDC 全链路 XID 黄金关联标准键名
+     */
+    public static final String MDC_KEY_XID = "xid";
+
     private static final boolean SEATA_AVAILABLE;
     private static final Method GET_XID_METHOD;
     private static final Method BIND_METHOD;
@@ -125,7 +130,7 @@ public final class DubboSeataPropagationSupport {
             String currentXid = getXID();
             if (currentXid == null) {
                 BIND_METHOD.invoke(null, trimmedXid);
-                MDC.put("xid", trimmedXid);
+                MDC.put(MDC_KEY_XID, trimmedXid);
                 if (log.isDebugEnabled()) {
                     log.debug("[DUBBO-SEATA] 成功为当前线程绑定全局事务 XID 与 MDC 黄金关联: [{}]", trimmedXid);
                 }
@@ -160,7 +165,7 @@ public final class DubboSeataPropagationSupport {
         } catch (Throwable t) {
             log.warn("[DUBBO-SEATA] 对称解绑 Seata 全局事务 XID 异常: {}", t.getMessage());
         } finally {
-            MDC.remove("xid");
+            MDC.remove(MDC_KEY_XID);
         }
     }
 }

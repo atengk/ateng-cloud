@@ -27,6 +27,41 @@ public final class SeataAssert {
 
     /**
      * 断言当前不存在活跃的全局分布式事务，若存在则立即阻断并抛出 BusinessException
+     */
+    public static void assertNoActiveTransaction() {
+        failOnActiveTransaction();
+    }
+
+    /**
+     * 断言当前不存在活跃的全局分布式事务（附带业务动作说明）
+     *
+     * @param actionDesc 下游调用业务动作描述
+     */
+    public static void assertNoActiveTransaction(String actionDesc) {
+        failOnActiveTransaction(actionDesc);
+    }
+
+    /**
+     * 断言当前不存在活跃的全局分布式事务（保留原始异常因果）
+     *
+     * @param cause 原始异常
+     */
+    public static void assertNoActiveTransaction(Throwable cause) {
+        failOnActiveTransaction(cause);
+    }
+
+    /**
+     * 断言当前不存在活跃的全局分布式事务（附带业务动作说明并保留原始因果）
+     *
+     * @param actionDesc 下游调用业务动作描述
+     * @param cause      原始异常
+     */
+    public static void assertNoActiveTransaction(String actionDesc, Throwable cause) {
+        failOnActiveTransaction(actionDesc, cause);
+    }
+
+    /**
+     * 断言当前不存在活跃的全局分布式事务，若存在则立即阻断并抛出 BusinessException
      *
      * @see SeataFallbackDefense#failOnActiveTransaction()
      */

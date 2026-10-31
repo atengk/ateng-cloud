@@ -127,10 +127,35 @@ class SeataFallbackDefenseTest {
     @Test
     @DisplayName("测试 SeataAssert 门面语义化断言完整委托")
     void testSeataAssertDelegation() {
+        // 无事务状态下，assertNoActiveTransaction 静默放行
+        RootContext.unbind();
+        SeataAssert.assertNoActiveTransaction();
+        SeataAssert.assertNoActiveTransaction("测试动作");
+        SeataAssert.assertNoActiveTransaction(new RuntimeException("普通异常"));
+        SeataAssert.assertNoActiveTransaction("测试动作", new RuntimeException("普通异常"));
+
         RootContext.bind(TEST_XID);
         String action = "创建物流运单";
         RuntimeException rootCause = new RuntimeException("SocketTimeout");
 
+        assertThatThrownBy(SeataAssert::assertNoActiveTransaction)
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining(TEST_XID);
+
+        assertThatThrownBy(() -> SeataAssert.assertNoActiveTransaction(action))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining(action);
+
+        assertThatThrownBy(() -> SeataAssert.assertNoActiveTransaction(rootCause))
+                .isInstanceOf(BusinessException.class)
+                .hasCause(rootCause);
+
+        assertThatThrownBy(() -> SeataAssert.assertNoActiveTransaction(action, rootCause))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining(action)
+                .hasCause(rootCause);
+
+        // 兼容别名方法测试
         assertThatThrownBy(SeataAssert::failOnActiveTransaction)
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining(TEST_XID);

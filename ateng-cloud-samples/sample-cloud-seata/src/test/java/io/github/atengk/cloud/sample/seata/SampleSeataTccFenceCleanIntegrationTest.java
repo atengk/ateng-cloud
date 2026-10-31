@@ -4,6 +4,7 @@ import io.github.atengk.cloud.seata.tcc.TccFenceCleanResult;
 import io.github.atengk.cloud.seata.tcc.TccFenceLogCleanScheduler;
 import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
 import io.github.atengk.cloud.seata.tcc.TccFenceStatus;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,11 @@ class SampleSeataTccFenceCleanIntegrationTest {
 
     @BeforeEach
     void cleanFenceTable() {
+        jdbcTemplate.update("DELETE FROM tcc_fence_log");
+    }
+
+    @AfterEach
+    void tearDown() {
         jdbcTemplate.update("DELETE FROM tcc_fence_log");
     }
 

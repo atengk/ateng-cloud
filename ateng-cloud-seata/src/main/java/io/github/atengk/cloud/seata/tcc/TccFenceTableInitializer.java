@@ -13,6 +13,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -82,7 +83,6 @@ public class TccFenceTableInitializer implements InitializingBean {
             log.info("TCC 防卫表 [{}] ANSI-SQL 安全自愈建表成功", tableName);
             return true;
         } catch (Exception e) {
-            log.error("TCC 防卫表 [{}] 安全自愈建表失败: {}", tableName, e.getMessage(), e);
             throw new TccFenceException("TCC 防卫表自愈建表失败: " + e.getMessage(), null, null, e);
         } finally {
             if (conn != null) {
@@ -111,12 +111,22 @@ public class TccFenceTableInitializer implements InitializingBean {
                 return true;
             }
         }
-        // 4. 全表通配防卫扫描 (防止特定数据库驱动 catalog/schema 传参歧义导致的漏检)
-        try (ResultSet rs = metaData.getTables(null, null, "%", types)) {
-            while (rs.next()) {
-                String actualName = rs.getString("TABLE_NAME");
-                if (tableName.equalsIgnoreCase(actualName)) {
-                    return true;
+        // 4. 忽略 catalog/schema 传参歧义的候选表名探测（防御部分特定驱动忽略当前 catalog/schema 参数导致的漏检）
+        List<String> candidates = List.of(tableName, tableName.toUpperCase(Locale.ROOT), tableName.toLowerCase(Locale.ROOT));
+        for (String candidate : candidates) {
+            try (ResultSet rs = metaData.getTables(null, null, candidate, types)) {
+                while (rs.next()) {
+                    String tableCat = rs.getString("TABLE_CAT");
+                    String tableSchem = rs.getString("TABLE_SCHEM");
+                    String actualName = rs.getString("TABLE_NAME");
+                    if (candidate.equalsIgnoreCase(actualName)) {
+                        // 防御多数据库/多租户共享实例误判：若连接已获取到明确 catalog/schema，必须保证与元数据一致
+                        boolean catMatch = catalog == null || tableCat == null || catalog.equalsIgnoreCase(tableCat);
+                        boolean schemMatch = schema == null || tableSchem == null || schema.equalsIgnoreCase(tableSchem);
+                        if (catMatch && schemMatch) {
+                            return true;
+                        }
+                    }
                 }
             }
         }

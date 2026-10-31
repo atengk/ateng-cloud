@@ -123,13 +123,12 @@ public class SeataDubboFilter implements Filter {
     }
 
     private void cleanContext(boolean bound, String previousMdc) {
-        if (!bound) {
-            return;
-        }
         try {
-            RootContext.unbind();
-            if (log.isDebugEnabled()) {
-                log.debug("[SEATA-DUBBO] 服务端出口成功对称解绑当前线程全局事务 XID");
+            if (bound) {
+                RootContext.unbind();
+                if (log.isDebugEnabled()) {
+                    log.debug("[SEATA-DUBBO] 服务端出口成功对称解绑当前线程全局事务 XID");
+                }
             }
         } catch (Throwable t) {
             log.warn("[SEATA-DUBBO] 服务端出口对称解绑 Seata 全局事务 XID 异常: {}", t.getMessage());

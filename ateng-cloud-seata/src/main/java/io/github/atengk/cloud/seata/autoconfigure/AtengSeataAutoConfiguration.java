@@ -265,6 +265,7 @@ public class AtengSeataAutoConfiguration {
             DataSource dataSource,
             SeataProperties properties,
             ObjectProvider<TccFenceTableInitializer> tableInitializerProvider) {
+        // 显式触发可选自愈建表初始化器（InitializingBean）的时序执行，确保仓储装配前已完成建表探测
         tableInitializerProvider.ifAvailable(init -> {});
         String tableName = (properties != null && properties.getTcc() != null)
                 ? properties.getTcc().getTableName()

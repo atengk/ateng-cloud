@@ -67,18 +67,19 @@ public class TccFenceLogCleanScheduler implements SmartLifecycle {
         if (running) {
             return;
         }
-        if (!properties.getTcc().isCleanEnabled()) {
+        SeataProperties.TccProperties tcc = properties != null ? properties.getTcc() : null;
+        if (tcc == null || !tcc.isCleanEnabled()) {
             log.info("TCC 防卫日志定时清理已被配置禁用 (clean-enabled=false)，跳过启动");
             running = true;
             return;
         }
-        Duration cleanPeriod = properties.getTcc().getCleanPeriod();
+        Duration cleanPeriod = tcc.getCleanPeriod();
         if (cleanPeriod == null || cleanPeriod.isNegative() || cleanPeriod.isZero()) {
             cleanPeriod = Duration.ofDays(1);
         }
         long periodSeconds = Math.max(1, cleanPeriod.toSeconds());
         log.info("启动 TCC 防卫日志分级生命周期定时清理调度器, 执行周期: {} 秒, 终态保留期: {}, 悬挂倍数: {}x",
-                periodSeconds, properties.getTcc().getLogTtl(), properties.getTcc().getSuspendedRetentionMultiplier());
+                periodSeconds, tcc.getLogTtl(), tcc.getSuspendedRetentionMultiplier());
 
         scheduledFuture = scheduledExecutor.scheduleWithFixedDelay(
                 this::safeClean,
@@ -146,12 +147,13 @@ public class TccFenceLogCleanScheduler implements SmartLifecycle {
      */
     public TccFenceCleanResult clean() {
         LocalDateTime now = LocalDateTime.now();
-        Duration logTtl = properties.getTcc().getLogTtl();
+        SeataProperties.TccProperties tcc = properties != null ? properties.getTcc() : null;
+        Duration logTtl = tcc != null ? tcc.getLogTtl() : null;
         if (logTtl == null || logTtl.isNegative() || logTtl.isZero()) {
             logTtl = Duration.ofDays(3);
         }
-        int multiplier = Math.max(1, properties.getTcc().getSuspendedRetentionMultiplier());
-        int batchSize = Math.max(1, properties.getTcc().getCleanBatchSize());
+        int multiplier = Math.max(1, tcc != null ? tcc.getSuspendedRetentionMultiplier() : 3);
+        int batchSize = Math.max(1, tcc != null ? tcc.getCleanBatchSize() : 500);
 
         // 1. 终态记录（COMMITTED / ROLLBACKED）过期阈值与批量清理
         LocalDateTime terminalThreshold = now.minus(logTtl);

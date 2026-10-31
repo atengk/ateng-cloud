@@ -304,30 +304,19 @@ public class OrderService {
      * 下单流程（编排下游远程调用并挂载 Sentinel 降级强制防卫契约）
      */
     @Transactional(rollbackFor = Exception.class)
-    public Long createOrderWithDownstream(String userId, String commodityCode, int orderCount, Runnable downstreamSupplier) {
+    public Long createOrderWithDownstream(String userId, String commodityCode, int orderCount, Runnable downstreamAction) {
         int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
 
         // 1. 本地扣减库存
         storageService.deduct(commodityCode, orderCount);
 
         // 2. 本地创建订单记录
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbcTemplate.update(con -> {
-            PreparedStatement ps = con.prepareStatement(
-                    "INSERT INTO order_tbl (user_id, commodity_code, count, money) VALUES (?, ?, ?, ?)",
-                    Statement.RETURN_GENERATED_KEYS
-            );
-            ps.setString(1, userId);
-            ps.setString(2, commodityCode);
-            ps.setInt(3, orderCount);
-            ps.setInt(4, orderMoney);
-            return ps;
-        }, keyHolder);
+        Long orderId = insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
 
         // 3. 执行下游远程微服务调用（带 Sentinel Fallback 防卫）
         try {
-            if (downstreamSupplier != null) {
-                downstreamSupplier.run();
+            if (downstreamAction != null) {
+                downstreamAction.run();
             }
         } catch (Throwable cause) {
             // 触发 Sentinel 降级防卫：活跃全局事务下刚性抛出 BusinessException 阻断假提交；无事务普通调用静默放行
@@ -335,8 +324,7 @@ public class OrderService {
             log.info("无分布式全局事务，下游调用平滑降级执行");
         }
 
-        Number key = keyHolder.getKey();
-        return key != null ? key.longValue() : 0L;
+        return orderId;
     }
 }
 ```

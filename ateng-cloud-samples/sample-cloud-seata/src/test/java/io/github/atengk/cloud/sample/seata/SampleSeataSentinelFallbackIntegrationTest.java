@@ -4,11 +4,13 @@ import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.sample.seata.service.OrderService;
 import io.github.atengk.cloud.sample.seata.service.StorageService;
 import io.github.atengk.cloud.seata.code.SeataResultCode;
+import io.github.atengk.cloud.seata.constant.SeataConstants;
 import org.apache.seata.core.context.RootContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
@@ -50,9 +52,8 @@ class SampleSeataSentinelFallbackIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        if (RootContext.inGlobalTransaction()) {
-            RootContext.unbind();
-        }
+        RootContext.unbind();
+        MDC.remove(SeataConstants.MDC_KEY_XID);
     }
 
     @Test
