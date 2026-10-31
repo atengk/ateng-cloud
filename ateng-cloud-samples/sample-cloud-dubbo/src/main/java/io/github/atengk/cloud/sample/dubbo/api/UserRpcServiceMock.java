@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.dubbo.api;
 
+import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
 import io.github.atengk.cloud.sample.dubbo.model.UserLogStreamRequest;
@@ -25,6 +26,8 @@ public class UserRpcServiceMock implements UserRpcService {
 
     public static final String MOCK_TAG = "[MOCK-FALLBACK]";
 
+    public static final String DEFAULT_MOCK_EMAIL = "mock@example.com";
+
     @Override
     public String ping(String message) {
         return MOCK_TAG + " pong: " + message;
@@ -32,17 +35,17 @@ public class UserRpcServiceMock implements UserRpcService {
 
     @Override
     public UserVO getUserById(Long id) {
-        return new UserVO(id != null ? id : 0L, "mock-user-fallback", "mock@example.com");
+        return new UserVO(id != null ? id : 0L, "mock-user-fallback", DEFAULT_MOCK_EMAIL);
     }
 
     @Override
     public Result<UserVO> getUserResult(Long id) {
-        return Result.success(new UserVO(id != null ? id : 0L, "mock-result-fallback", "mock@example.com"));
+        return Result.success(new UserVO(id != null ? id : 0L, "mock-result-fallback", DEFAULT_MOCK_EMAIL));
     }
 
     @Override
     public Result<UserVO> getFailedResult(Long id) {
-        return Result.fail(5003, "下游服务不可用，已触发客户端 Mock 降级");
+        return Result.fail(CommonResultCode.SERVICE_UNAVAILABLE.getCode(), "下游服务不可用，已触发客户端 Mock 降级");
     }
 
     @Override
@@ -63,7 +66,7 @@ public class UserRpcServiceMock implements UserRpcService {
     @Override
     public UserVO createUser(@Valid UserCreateRequest request) {
         String username = request != null ? request.getUsername() : "mock-user";
-        return new UserVO(0L, username + "-mock", "mock@example.com");
+        return new UserVO(0L, username + "-mock", DEFAULT_MOCK_EMAIL);
     }
 
     @Override

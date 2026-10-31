@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.dubbo;
 
+import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcServiceMock;
@@ -59,7 +60,7 @@ public class MockFallbackDubboRpcTest {
         assertNotNull(fallbackUser, "降级兜底用户对象不可为空");
         assertEquals(888L, fallbackUser.getId(), "降级对象应承载查询入参 ID");
         assertEquals("mock-user-fallback", fallbackUser.getUsername(), "应返回受管 Mock 默认用户名");
-        assertEquals("mock@example.com", fallbackUser.getEmail(), "应返回受管 Mock 默认邮箱");
+        assertEquals(UserRpcServiceMock.DEFAULT_MOCK_EMAIL, fallbackUser.getEmail(), "应返回受管 Mock 默认邮箱");
 
         // 3. 验证 Result 包装契约降级返回成功保底对象
         Result<UserVO> userResult = fallbackMockRpcService.getUserResult(666L);
@@ -72,7 +73,7 @@ public class MockFallbackDubboRpcTest {
         Result<UserVO> failedResult = fallbackMockRpcService.getFailedResult(1L);
         assertNotNull(failedResult);
         assertFalse(failedResult.isSuccess());
-        assertEquals(5003, failedResult.getCode());
+        assertEquals(CommonResultCode.SERVICE_UNAVAILABLE.getCode(), failedResult.getCode());
         assertTrue(failedResult.getMsg().contains("Mock 降级"));
 
         // 5. 验证复杂对象入参方法降级兜底
@@ -83,6 +84,11 @@ public class MockFallbackDubboRpcTest {
         // 6. 验证基础类型与上下文降级返回
         assertEquals(-1, fallbackMockRpcService.echoPayload("some-payload"));
         assertEquals("true", fallbackMockRpcService.getProviderContext().get("mock"));
+
+        // 7. 验证异常方法降级静默短路（不向外抛出异常）
+        assertDoesNotThrow(() -> fallbackMockRpcService.throwBusinessException(), "异常方法降级应静默短路");
+        assertDoesNotThrow(() -> fallbackMockRpcService.throwCustomException(), "底层异常方法降级应静默短路");
+        assertDoesNotThrow(() -> fallbackMockRpcService.simulateOverload(), "过载方法降级应静默短路");
     }
 
     @Test

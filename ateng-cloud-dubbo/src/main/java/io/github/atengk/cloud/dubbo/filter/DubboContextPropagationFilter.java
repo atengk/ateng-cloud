@@ -104,25 +104,16 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
             setAttachmentIfValid(invocation, MessageHeaderConstants.IGNORE_TENANT, Boolean.TRUE.toString());
         }
 
-        // 5. 提取并注入金丝雀流量染色标记与泳道上下文快照
+        // 5. 提取并注入金丝雀流量染色标记与泳道上下文快照 (getSnapshot 内部已闭环处理 TrafficContextHolder 与 MDC 回退)
         var trafficSnapshot = DubboTrafficPropagationSupport.getSnapshot();
-        if (trafficSnapshot != null && trafficSnapshot.hasTag()) {
-            setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficSnapshot.tag());
-            setAttachmentIfValid(invocation, CommonConstants.TAG_KEY, trafficSnapshot.tag());
-            setAttachmentIfValid(invocation, "tag", trafficSnapshot.tag());
-            setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficSnapshot.laneName());
+        if (trafficSnapshot != null && trafficSnapshot.isValid()) {
+            if (trafficSnapshot.hasTag()) {
+                setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficSnapshot.tag());
+            }
+            if (trafficSnapshot.hasLane()) {
+                setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficSnapshot.laneName());
+            }
             setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE, trafficSnapshot.matchedRule());
-        } else {
-            String trafficTag = MDC.get(TRAFFIC_TAG);
-            if (!StringUtils.hasText(trafficTag)) {
-                trafficTag = MDC.get("trafficTag");
-            }
-            if (!StringUtils.hasText(trafficTag)) {
-                trafficTag = MDC.get("traffic-tag");
-            }
-            setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficTag);
-            setAttachmentIfValid(invocation, CommonConstants.TAG_KEY, trafficTag);
-            setAttachmentIfValid(invocation, "tag", trafficTag);
         }
 
         // 6. 提取并注入 Seata 全局分布式事务 XID
@@ -184,7 +175,8 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
         DubboTrafficPropagationSupport.clear();
         UserContextHolder.clear();
         TenantContextHolder.clear();
-        MDC.clear();
+        MDC.remove("traceId");
+        MDC.remove(MessageHeaderConstants.TRACE_ID);
     }
 
     private void setAttachmentIfValid(Invocation invocation, String key, String value) {

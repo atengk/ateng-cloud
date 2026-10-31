@@ -31,6 +31,8 @@ import static org.mockito.Mockito.when;
  */
 class DubboContractAssertFilterTest {
 
+    private final DubboContractAssertFilter filter = new DubboContractAssertFilter();
+
     @AfterEach
     void tearDown() {
         DubboPropertiesHolder.reset();
@@ -65,7 +67,6 @@ class DubboContractAssertFilterTest {
     @Test
     @DisplayName("当返回成功 Result 时原样放行并不设异常")
     void testOnResponseSuccessResult() {
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         when(invoker.getInterface()).thenReturn((Class) TestService.class);
         RpcInvocation invocation = new RpcInvocation();
@@ -84,7 +85,6 @@ class DubboContractAssertFilterTest {
     @Test
     @DisplayName("当返回业务失败 Result 时自动转译为受管 BusinessException")
     void testOnResponseFailedResult() {
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         when(invoker.getInterface()).thenReturn((Class) TestService.class);
         RpcInvocation invocation = new RpcInvocation();
@@ -104,7 +104,6 @@ class DubboContractAssertFilterTest {
     @Test
     @DisplayName("当返回普通 POJO 时直接原样放行")
     void testOnResponsePojo() {
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         RpcInvocation invocation = new RpcInvocation();
 
@@ -118,7 +117,6 @@ class DubboContractAssertFilterTest {
     @Test
     @DisplayName("流式调用 (含 StreamObserver 参数) 豁免契约校验转换")
     void testStreamInvocationExemption() {
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         RpcInvocation invocation = new RpcInvocation();
         invocation.setMethodName("streamCall");
@@ -139,7 +137,6 @@ class DubboContractAssertFilterTest {
         properties.getContract().setEnabled(false);
         DubboPropertiesHolder.set(properties);
 
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         RpcInvocation invocation = new RpcInvocation();
         invocation.setMethodName("queryUser");
@@ -154,7 +151,6 @@ class DubboContractAssertFilterTest {
     @Test
     @DisplayName("当响应已存在异常时不重复转译处理")
     void testHasExceptionExemption() {
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         RpcInvocation invocation = new RpcInvocation();
 
@@ -169,7 +165,6 @@ class DubboContractAssertFilterTest {
     @Test
     @DisplayName("验证 filter.invoke 调用 invoker.invoke")
     void testFilterInvoke() {
-        DubboContractAssertFilter filter = new DubboContractAssertFilter();
         Invoker<?> invoker = Mockito.mock(Invoker.class);
         RpcInvocation invocation = new RpcInvocation();
         when(invoker.invoke(invocation)).thenReturn(new AppResponse("ok"));

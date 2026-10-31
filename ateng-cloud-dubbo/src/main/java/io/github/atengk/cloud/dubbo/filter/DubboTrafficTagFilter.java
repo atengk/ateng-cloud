@@ -89,16 +89,6 @@ public class DubboTrafficTagFilter implements Filter {
             // 同步确保全链路透传请求头存在
             setAttachment(invocation, headerName, trimmedTag);
 
-            // 同步透传泳道名称与匹配规则
-            if (trafficSnapshot != null) {
-                if (StringUtils.hasText(trafficSnapshot.laneName())) {
-                    setAttachment(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficSnapshot.laneName());
-                }
-                if (StringUtils.hasText(trafficSnapshot.matchedRule())) {
-                    setAttachment(invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE, trafficSnapshot.matchedRule());
-                }
-            }
-
             // 3. 强隔离校验 (Fail-Fast 防线)：若启用 tagForce=true，检验目标 invoker 标签；若目标不具备该标签则直接阻断
             if (tagForce) {
                 String providerTag = invoker.getUrl().getParameter(CommonConstants.TAG_KEY);
@@ -116,13 +106,7 @@ public class DubboTrafficTagFilter implements Filter {
     }
 
     private String resolveTrafficTag(Invocation invocation, String headerName) {
-        // 0. 优先检查 TrafficContextHolder
-        var snapshot = DubboTrafficPropagationSupport.getSnapshot();
-        if (snapshot != null && snapshot.hasTag()) {
-            return snapshot.tag();
-        }
-
-        // 1. 检查 MDC
+        // 1. 检查 MDC (注意：getSnapshot 已闭环探测默认键，此处检查自定义 headerName)
         String tag = MDC.get(headerName);
         if (!StringUtils.hasText(tag)) {
             tag = MDC.get(DEFAULT_TRAFFIC_TAG_HEADER);

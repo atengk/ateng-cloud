@@ -421,18 +421,19 @@ class SampleCloudTrafficIntegrationTest {
     }
 
     /**
-     * 离线 Mock 与沙箱拓扑配置 (标配 @Profile("!local"))
+     * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫)
      */
     @TestConfiguration
-    @Profile("!local")
     static class OfflineMockConfig {
 
         @Bean
+        @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
         public DynamicTestDiscoveryClient dynamicTestDiscoveryClient() {
             return new DynamicTestDiscoveryClient();
         }
 
         @Bean
+        @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
         public NacosTemplate mockNacosTemplate() {
             NacosTemplate mock = mock(NacosTemplate.class);
             when(mock.isConfigAvailable()).thenReturn(true);

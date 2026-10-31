@@ -48,12 +48,14 @@ public final class DubboSeataPropagationSupport {
         if (ClassUtils.isPresent("org.apache.seata.core.context.RootContext", classLoader)) {
             try {
                 rootContextClass = ClassUtils.forName("org.apache.seata.core.context.RootContext", classLoader);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                log.debug("[DUBBO-SEATA] 加载 org.apache.seata.core.context.RootContext 失败: {}", t.getMessage());
             }
         } else if (ClassUtils.isPresent("io.seata.core.context.RootContext", classLoader)) {
             try {
                 rootContextClass = ClassUtils.forName("io.seata.core.context.RootContext", classLoader);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                log.debug("[DUBBO-SEATA] 加载 io.seata.core.context.RootContext 失败: {}", t.getMessage());
             }
         }
 

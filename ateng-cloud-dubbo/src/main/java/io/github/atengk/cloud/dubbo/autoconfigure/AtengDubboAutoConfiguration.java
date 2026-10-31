@@ -42,9 +42,13 @@ public class AtengDubboAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(AtengDubboAutoConfiguration.class);
 
+    /**
+     * 框架基础包前缀，反序列化安全检查强制允许基线
+     */
+    private static final String FRAMEWORK_ALLOW_PACKAGE = "io.github.atengk.";
+
     public AtengDubboAutoConfiguration(AtengDubboProperties properties) {
         DubboPropertiesHolder.set(properties);
-        applySerializeSecurityAllowlist(properties);
     }
 
     /**
@@ -68,7 +72,6 @@ public class AtengDubboAutoConfiguration {
 
         public AtengDubboConfigBeanCustomizer(AtengDubboProperties properties) {
             this.properties = properties;
-            applySerializeSecurityAllowlist(properties);
         }
 
         @Override
@@ -158,30 +161,38 @@ public class AtengDubboAutoConfiguration {
         };
     }
 
-    private static void applySerializeSecurityAllowlist(AtengDubboProperties properties) {
-        if (properties == null || properties.getSecurity() == null
-                || properties.getSecurity().getSerialize() == null) {
-            return;
-        }
-        var allowPackages = properties.getSecurity().getSerialize().getAllowPackages();
-        if (allowPackages == null || allowPackages.isEmpty()) {
-            return;
-        }
+    /**
+     * 向 Dubbo 3 SerializeSecurityManager 注册框架基准与用户自定义反序列化白名单包
+     *
+     * @param properties Dubbo 配置属性
+     */
+    public static void applySerializeSecurityAllowlist(AtengDubboProperties properties) {
         try {
             SerializeSecurityManager securityManager = FrameworkModel.defaultModel()
                     .getBeanFactory()
                     .getBean(SerializeSecurityManager.class);
             if (securityManager != null) {
-                for (String pkg : allowPackages) {
-                    if (StringUtils.hasText(pkg)) {
-                        String trimmed = pkg.trim();
-                        securityManager.addToAllowed(trimmed);
-                        log.debug("[DUBBO-SECURITY] 动态注册自定义反序列化白名单包: {}", trimmed);
+                // 1. 强制注册框架基线白名单包
+                securityManager.addToAllowed(FRAMEWORK_ALLOW_PACKAGE);
+                log.debug("[DUBBO-SECURITY] 注册框架基准反序列化白名单包: {}", FRAMEWORK_ALLOW_PACKAGE);
+
+                // 2. 合并注册用户配置的业务白名单包
+                if (properties != null && properties.getSecurity() != null
+                        && properties.getSecurity().getSerialize() != null) {
+                    var allowPackages = properties.getSecurity().getSerialize().getAllowPackages();
+                    if (allowPackages != null) {
+                        for (String pkg : allowPackages) {
+                            if (StringUtils.hasText(pkg)) {
+                                String trimmed = pkg.trim();
+                                securityManager.addToAllowed(trimmed);
+                                log.debug("[DUBBO-SECURITY] 动态注册自定义反序列化白名单包: {}", trimmed);
+                            }
+                        }
                     }
                 }
             }
         } catch (Throwable t) {
-            log.debug("[DUBBO-SECURITY] 注册自定义反序列化白名单包时捕获非关键异常，已安全跳过: {}", t.getMessage());
+            log.warn("[DUBBO-SECURITY] 注册反序列化安全白名单包时发生异常: {}", t.getMessage(), t);
         }
     }
 

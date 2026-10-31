@@ -2,12 +2,14 @@ package io.github.atengk.cloud.dubbo.autoconfigure;
 
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadMetrics;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
+import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.dubbo.config.ApplicationConfig;
 import org.apache.dubbo.config.ConsumerConfig;
 import org.apache.dubbo.config.ProtocolConfig;
 import org.apache.dubbo.config.ProviderConfig;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -33,6 +35,11 @@ class AtengDubboAutoConfigurationTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(AtengDubboAutoConfiguration.class));
+
+    @AfterEach
+    void tearDown() {
+        DubboPropertiesHolder.reset();
+    }
 
     @Test
     @DisplayName("默认配置下成功加载核心 Bean 与基线定制器")

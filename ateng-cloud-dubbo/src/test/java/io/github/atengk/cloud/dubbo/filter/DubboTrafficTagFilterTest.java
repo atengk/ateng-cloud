@@ -77,8 +77,6 @@ class DubboTrafficTagFilterTest {
         assertThat(clientAttachment.getAttachment("tag")).isEqualTo("gray-v1");
         assertThat(clientAttachment.getAttachment(Constants.FORCE_USE_TAG)).isEqualTo("false");
         assertThat(clientAttachment.getAttachment(DubboTrafficTagFilter.DEFAULT_TRAFFIC_TAG_HEADER)).isEqualTo("gray-v1");
-        assertThat(clientAttachment.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isEqualTo("pay-lane");
-        assertThat(clientAttachment.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isEqualTo("rule-vip");
     }
 
     @Test

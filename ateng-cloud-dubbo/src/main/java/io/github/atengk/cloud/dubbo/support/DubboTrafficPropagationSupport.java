@@ -114,12 +114,16 @@ public final class DubboTrafficPropagationSupport {
         if (TRAFFIC_AVAILABLE && GET_CONTEXT_METHOD != null) {
             try {
                 Object contextObj = GET_CONTEXT_METHOD.invoke(null);
-                if (contextObj != null && GET_TAG_METHOD != null) {
-                    String tag = (String) GET_TAG_METHOD.invoke(contextObj);
+                if (contextObj != null) {
+                    String tag = GET_TAG_METHOD != null ? (String) GET_TAG_METHOD.invoke(contextObj) : null;
                     String laneName = GET_LANE_NAME_METHOD != null ? (String) GET_LANE_NAME_METHOD.invoke(contextObj) : null;
                     String matchedRule = GET_MATCHED_RULE_METHOD != null ? (String) GET_MATCHED_RULE_METHOD.invoke(contextObj) : null;
-                    if (StringUtils.hasText(tag)) {
-                        return new TrafficSnapshot(tag.trim(), laneName, matchedRule);
+                    if (StringUtils.hasText(tag) || StringUtils.hasText(laneName)) {
+                        return new TrafficSnapshot(
+                                StringUtils.hasText(tag) ? tag.trim() : null,
+                                StringUtils.hasText(laneName) ? laneName.trim() : null,
+                                StringUtils.hasText(matchedRule) ? matchedRule.trim() : null
+                        );
                     }
                 }
             } catch (Throwable t) {
@@ -135,10 +139,14 @@ public final class DubboTrafficPropagationSupport {
         if (!StringUtils.hasText(tag)) {
             tag = MDC.get("traffic-tag");
         }
-        if (StringUtils.hasText(tag)) {
-            String laneName = MDC.get(TRAFFIC_LANE);
-            String matchedRule = MDC.get(TRAFFIC_RULE);
-            return new TrafficSnapshot(tag.trim(), laneName, matchedRule);
+        String laneName = MDC.get(TRAFFIC_LANE);
+        String matchedRule = MDC.get(TRAFFIC_RULE);
+        if (StringUtils.hasText(tag) || StringUtils.hasText(laneName)) {
+            return new TrafficSnapshot(
+                    StringUtils.hasText(tag) ? tag.trim() : null,
+                    StringUtils.hasText(laneName) ? laneName.trim() : null,
+                    StringUtils.hasText(matchedRule) ? matchedRule.trim() : null
+            );
         }
 
         return null;
@@ -152,16 +160,18 @@ public final class DubboTrafficPropagationSupport {
      * @param matchedRule 命中的动态分流规则标识
      */
     public static void restore(String tag, String laneName, String matchedRule) {
-        if (!StringUtils.hasText(tag) || "null".equalsIgnoreCase(tag.trim())) {
-            return;
-        }
-        String trimmedTag = tag.trim();
+        String trimmedTag = StringUtils.hasText(tag) && !"null".equalsIgnoreCase(tag.trim())
+                ? tag.trim() : null;
         String trimmedLane = StringUtils.hasText(laneName) && !"null".equalsIgnoreCase(laneName.trim())
                 ? laneName.trim() : null;
         String trimmedRule = StringUtils.hasText(matchedRule) && !"null".equalsIgnoreCase(matchedRule.trim())
                 ? matchedRule.trim() : null;
 
-        if (TRAFFIC_AVAILABLE && SET_CONTEXT_METHOD != null && TRAFFIC_CONTEXT_OF_METHOD != null) {
+        if (trimmedTag == null && trimmedLane == null && trimmedRule == null) {
+            return;
+        }
+
+        if (trimmedTag != null && TRAFFIC_AVAILABLE && SET_CONTEXT_METHOD != null && TRAFFIC_CONTEXT_OF_METHOD != null) {
             try {
                 Object contextObj = TRAFFIC_CONTEXT_OF_METHOD.invoke(null, trimmedTag, trimmedLane, trimmedRule);
                 SET_CONTEXT_METHOD.invoke(null, contextObj);
@@ -175,8 +185,10 @@ public final class DubboTrafficPropagationSupport {
         }
 
         // 双向同步写入 MDC 确保日志全链路贯通
-        MDC.put(TRAFFIC_TAG, trimmedTag);
-        MDC.put("trafficTag", trimmedTag);
+        if (trimmedTag != null) {
+            MDC.put(TRAFFIC_TAG, trimmedTag);
+            MDC.put("trafficTag", trimmedTag);
+        }
         if (trimmedLane != null) {
             MDC.put(TRAFFIC_LANE, trimmedLane);
         }
@@ -216,6 +228,14 @@ public final class DubboTrafficPropagationSupport {
 
         public boolean hasTag() {
             return StringUtils.hasText(tag);
+        }
+
+        public boolean hasLane() {
+            return StringUtils.hasText(laneName);
+        }
+
+        public boolean isValid() {
+            return hasTag() || hasLane();
         }
     }
 }

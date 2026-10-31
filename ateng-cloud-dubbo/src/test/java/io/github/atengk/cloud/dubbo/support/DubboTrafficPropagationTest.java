@@ -163,8 +163,6 @@ class DubboTrafficPropagationTest {
 
         assertThat(invocation.getAttachment(CommonConstants.TAG_KEY)).isEqualTo("lane-v2");
         assertThat(invocation.getAttachment("tag")).isEqualTo("lane-v2");
-        assertThat(invocation.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isEqualTo("user-lane");
-        assertThat(invocation.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isEqualTo("rule-user");
     }
 
     @Test
@@ -185,5 +183,27 @@ class DubboTrafficPropagationTest {
         // 幂等清理
         DubboTrafficPropagationSupport.clear();
         assertThat(TrafficContextHolder.getContext()).isNull();
+        assertThat(MDC.get(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
+    }
+
+    @Test
+    @DisplayName("验证纯泳道场景下元数据还原至 MDC 且清空时不影响外部业务 MDC 属性")
+    void testPureLaneRestorationAndSelectiveMdcCleanup() {
+        // 1. 设置外部业务自带的 MDC 属性
+        MDC.put("bizTrace", "custom-biz-12345");
+
+        // 2. 模拟仅携带泳道名称与规则的纯泳道请求
+        DubboTrafficPropagationSupport.restore(null, "checkout-lane", "rule-gray-checkout");
+        assertThat(MDC.get(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isEqualTo("checkout-lane");
+        assertThat(MDC.get(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isEqualTo("rule-gray-checkout");
+        assertThat(MDC.get("bizTrace")).isEqualTo("custom-biz-12345");
+
+        // 3. 执行上下文清理
+        DubboTrafficPropagationSupport.clear();
+        assertThat(MDC.get(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
+        assertThat(MDC.get(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isNull();
+        assertThat(MDC.get("bizTrace")).isEqualTo("custom-biz-12345");
+
+        MDC.clear();
     }
 }
