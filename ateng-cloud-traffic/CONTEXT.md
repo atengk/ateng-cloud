@@ -43,3 +43,7 @@ _Avoid_: 灰度范围, 分流比例段, 权重区间
 **Traffic Tag Whitelist Guard**:
 微服务应用层防御外部恶意伪造流量染色标头的合法性校验白名单屏障，对未授权或非预期灰度标头执行物理清洗或拦截阻断。
 _Avoid_: 标签过滤, 防伪拦截, 安全名单
+
+**Standalone Feign Propagation**:
+在未引入全量 Feign 治理底座的轻量微服务中，按需独立装配 Feign 出站染色拦截器并在全量组件存在时自动平滑让位的正交解耦透传机制。
+_Avoid_: Feign自动注入, 拦截器让位, 独立Feign适配

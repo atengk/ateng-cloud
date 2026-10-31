@@ -49,6 +49,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Feign 核心接口定义 (编译期可选支持，用于独立使用 Feign 时自动装配流量染色拦截器) -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Jakarta Servlet API 规范 -->
         <dependency>
             <groupId>jakarta.servlet</groupId>
