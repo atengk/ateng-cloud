@@ -20,4 +20,17 @@ public interface TrafficRuleProvider {
      * @return 规则列表（保底返回空列表，严禁返回 null）
      */
     List<TrafficRule> getRules();
+
+    /**
+     * 获取当前处于启用状态的规则快照
+     *
+     * @return 启用的规则列表（保底返回空列表，严禁返回 null）
+     */
+    default List<TrafficRule> getActiveRules() {
+        List<TrafficRule> rules = getRules();
+        if (rules == null || rules.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        return rules.stream().filter(r -> r != null && r.isEnabled()).toList();
+    }
 }

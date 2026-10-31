@@ -74,6 +74,12 @@ public class AtengTrafficProperties {
     @NestedConfigurationProperty
     private TrafficNacosProperties nacos = new TrafficNacosProperties();
 
+    /**
+     * Actuator 诊断与沙箱端点配置
+     */
+    @NestedConfigurationProperty
+    private TrafficActuatorProperties actuator = new TrafficActuatorProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -160,5 +166,13 @@ public class AtengTrafficProperties {
 
     public void setNacos(TrafficNacosProperties nacos) {
         this.nacos = nacos;
+    }
+
+    public TrafficActuatorProperties getActuator() {
+        return actuator;
+    }
+
+    public void setActuator(TrafficActuatorProperties actuator) {
+        this.actuator = actuator != null ? actuator : new TrafficActuatorProperties();
     }
 }

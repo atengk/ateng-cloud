@@ -4,6 +4,7 @@ import io.github.atengk.cloud.nacos.loadbalancer.NacosWarmupLoadBalancer;
 import io.github.atengk.cloud.nacos.loadbalancer.ZonePreferenceServiceInstanceListSupplier;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.InstanceWeightCalculator;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,7 +81,12 @@ public class AtengTrafficLoadBalancerClientConfiguration {
         ServiceInstanceListSupplier cachingSupplier = builder.build(context);
 
         // 2. 第一层：业务灰度版本隔离 (按 X-Traffic-Tag 锁定版本池，未染色走基线，全下线平滑降级)
-        ServiceInstanceListSupplier trafficSupplier = new TrafficTagServiceInstanceListSupplier(cachingSupplier, trafficProperties);
+        TrafficMetricsManager metricsManager = null;
+        try {
+            metricsManager = context.getBeanProvider(TrafficMetricsManager.class).getIfAvailable();
+        } catch (Throwable ignored) {
+        }
+        ServiceInstanceListSupplier trafficSupplier = new TrafficTagServiceInstanceListSupplier(cachingSupplier, trafficProperties, metricsManager);
 
         // 3. 第二层：拓扑机房亲和级 (在版本隔离池内优先筛选同机房健康实例，本机房全宕平滑跨区容灾)
         return decorateWithZonePreference(trafficSupplier, context);

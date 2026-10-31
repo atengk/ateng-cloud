@@ -271,6 +271,22 @@ public class NacosTrafficRuleListener implements TrafficRuleProvider, Initializi
         return rules != null ? rules : Collections.emptyList();
     }
 
+    public TrafficRuleMergeStrategy getMergeStrategy() {
+        return properties.getNacos().getMergeStrategy();
+    }
+
+    public TrafficRuleMergeStrategy getStrategy() {
+        return getMergeStrategy();
+    }
+
+    public boolean isPreferAppRule() {
+        return properties.getNacos().isPreferAppRule();
+    }
+
+    public boolean isPreferApp() {
+        return isPreferAppRule();
+    }
+
     public boolean isInitialized() {
         return initialized.get();
     }

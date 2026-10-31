@@ -17,6 +17,15 @@ spring:
       cache:
         enabled: false
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,traffic
+  endpoint:
+    traffic:
+      enabled: true
+
 ateng:
   boot:
     web:

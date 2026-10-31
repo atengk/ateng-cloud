@@ -3,6 +3,7 @@ package io.github.atengk.cloud.traffic.loadbalancer;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.exception.TrafficRoutingException;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import org.springframework.cloud.client.loadbalancer.RequestData;
 import org.springframework.cloud.client.loadbalancer.RequestDataContext;
 import org.springframework.cloud.loadbalancer.core.DelegatingServiceInstanceListSupplier;
 import org.springframework.cloud.loadbalancer.core.ServiceInstanceListSupplier;
+import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
@@ -28,7 +30,8 @@ import java.util.Map;
  * 2. 精准匹配服务实例元数据中的灰度标签（{@code metadata.tag}）；
  * 3. 携带灰度标签流量严格调度至对应灰度节点，未染色流量调度至基线默认实例；
  * 4. 容灾平滑降级：在 {@code fallbackToDefault=true} 下，当目标灰度节点全下线或不存在时自动降级至基线默认实例；
- * 5. 金融级强隔离：在 {@code strictLane=true} 下，未命中目标灰度节点时直接阻断抛出 {@link TrafficRoutingException} (Fail-Fast)。</p>
+ * 5. 金融级强隔离：在 {@code strictLane=true} 下，未命中目标灰度节点时直接阻断抛出 {@link TrafficRoutingException} (Fail-Fast)；
+ * 6. 度量上报：实时上报 gray_hit、baseline_hit、fallback 与 strict_blocked 监控指标。</p>
  *
  * @author Ateng
  * @since 2026-10-29
@@ -38,11 +41,19 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
     private static final Logger log = LoggerFactory.getLogger(TrafficTagServiceInstanceListSupplier.class);
 
     private final AtengTrafficProperties properties;
+    private final TrafficMetricsManager metricsManager;
 
     public TrafficTagServiceInstanceListSupplier(ServiceInstanceListSupplier delegate,
                                                  AtengTrafficProperties properties) {
+        this(delegate, properties, null);
+    }
+
+    public TrafficTagServiceInstanceListSupplier(ServiceInstanceListSupplier delegate,
+                                                 AtengTrafficProperties properties,
+                                                 @Nullable TrafficMetricsManager metricsManager) {
         super(delegate);
         this.properties = properties != null ? properties : new AtengTrafficProperties();
+        this.metricsManager = metricsManager;
     }
 
     @Override
@@ -74,6 +85,9 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
         if (instances == null || instances.isEmpty()) {
             if (StringUtils.hasText(tag) && properties.isStrictLane()) {
                 String trimmedTag = tag.trim();
+                if (metricsManager != null) {
+                    metricsManager.recordStrictBlocked(getServiceId(), trimmedTag);
+                }
                 log.warn("[TrafficLoadBalancer] 目标服务无可用实例且开启严格隔离模式，直接阻断抛出异常 [serviceId={}, tag={}]",
                         getServiceId(), trimmedTag);
                 throw new TrafficRoutingException(getServiceId(), trimmedTag);
@@ -89,6 +103,9 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
                     .toList();
 
             if (!taggedInstances.isEmpty()) {
+                if (metricsManager != null) {
+                    metricsManager.recordGrayHit(getServiceId(), trimmedTag);
+                }
                 if (log.isDebugEnabled()) {
                     log.debug("[TrafficLoadBalancer] 命中目标灰度节点 [serviceId={}, tag={}, count={}]",
                             getServiceId(), trimmedTag, taggedInstances.size());
@@ -98,12 +115,18 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
 
             // 灰度节点全部下线或不存在时的容灾处理
             if (properties.isStrictLane()) {
+                if (metricsManager != null) {
+                    metricsManager.recordStrictBlocked(getServiceId(), trimmedTag);
+                }
                 log.warn("[TrafficLoadBalancer] 目标灰度节点不存在且开启严格隔离模式，直接阻断抛出异常 [serviceId={}, tag={}]",
                         getServiceId(), trimmedTag);
                 throw new TrafficRoutingException(getServiceId(), trimmedTag);
             }
 
             if (properties.isFallbackToDefault()) {
+                if (metricsManager != null) {
+                    metricsManager.recordFallback(getServiceId(), trimmedTag);
+                }
                 log.warn("[TrafficLoadBalancer] 目标灰度节点全下线，触发平滑降级至基线实例 [serviceId={}, tag={}]",
                         getServiceId(), trimmedTag);
                 return filterBaselineInstances(instances);
@@ -115,6 +138,9 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
         }
 
         // 4. 未携带灰度标签的普通基线流量，优先路由至基线实例
+        if (metricsManager != null) {
+            metricsManager.recordBaselineHit(getServiceId());
+        }
         return filterBaselineInstances(instances);
     }
 

@@ -7,6 +7,7 @@ import io.github.atengk.cloud.traffic.code.TrafficResultCode;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContext;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.properties.TrafficWhitelistAction;
 import io.github.atengk.cloud.traffic.rule.matcher.ServletTrafficEvaluationContext;
@@ -19,6 +20,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -26,6 +28,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Servlet 入站流量染色与全生命周期清理过滤器
@@ -34,7 +37,8 @@ import java.util.Set;
  * 1. 优先从 HTTP 请求头 (默认 {@code X-Traffic-Tag}) 中提取流量染色标记；
  * 2. 次选从 URL Query 参数 (默认 {@code traffic_tag}) 中提取备选流量标记；
  * 3. 提取成功后自动注入 {@link TrafficContextHolder} 并同步至 SLF4J MDC；
- * 4. 严守资源清理不变量：在 {@code finally} 块中幂等执行清理，消除工作线程复用导致的脏读污染。</p>
+ * 4. 严守资源清理不变量：在 {@code finally} 块中幂等执行清理，消除工作线程复用导致的脏读污染；
+ * 5. 白名单安全防卫与度量埋点上报 (whitelist_stripped / whitelist_rejected)。</p>
  *
  * @author Ateng
  * @since 2026-10-29
@@ -44,25 +48,41 @@ public class TrafficContextFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(TrafficContextFilter.class);
 
     private final AtengTrafficProperties properties;
-    private final java.util.function.Supplier<TrafficRuleMatcher> ruleMatcherSupplier;
-    private final java.util.function.Supplier<TrafficRuleProvider> ruleProviderSupplier;
+    private final Supplier<TrafficRuleMatcher> ruleMatcherSupplier;
+    private final Supplier<TrafficRuleProvider> ruleProviderSupplier;
+    private final Supplier<TrafficMetricsManager> metricsManagerSupplier;
 
     public TrafficContextFilter(AtengTrafficProperties properties) {
-        this(properties, (TrafficRuleMatcher) null, (TrafficRuleProvider) null);
+        this(properties, (TrafficRuleMatcher) null, (TrafficRuleProvider) null, (TrafficMetricsManager) null);
     }
 
     public TrafficContextFilter(AtengTrafficProperties properties,
                                 TrafficRuleMatcher ruleMatcher,
                                 TrafficRuleProvider ruleProvider) {
-        this(properties, () -> ruleMatcher, () -> ruleProvider);
+        this(properties, () -> ruleMatcher, () -> ruleProvider, () -> null);
     }
 
     public TrafficContextFilter(AtengTrafficProperties properties,
-                                java.util.function.Supplier<TrafficRuleMatcher> ruleMatcherSupplier,
-                                java.util.function.Supplier<TrafficRuleProvider> ruleProviderSupplier) {
+                                TrafficRuleMatcher ruleMatcher,
+                                TrafficRuleProvider ruleProvider,
+                                @Nullable TrafficMetricsManager metricsManager) {
+        this(properties, () -> ruleMatcher, () -> ruleProvider, () -> metricsManager);
+    }
+
+    public TrafficContextFilter(AtengTrafficProperties properties,
+                                Supplier<TrafficRuleMatcher> ruleMatcherSupplier,
+                                Supplier<TrafficRuleProvider> ruleProviderSupplier) {
+        this(properties, ruleMatcherSupplier, ruleProviderSupplier, () -> null);
+    }
+
+    public TrafficContextFilter(AtengTrafficProperties properties,
+                                Supplier<TrafficRuleMatcher> ruleMatcherSupplier,
+                                Supplier<TrafficRuleProvider> ruleProviderSupplier,
+                                Supplier<TrafficMetricsManager> metricsManagerSupplier) {
         this.properties = properties != null ? properties : new AtengTrafficProperties();
         this.ruleMatcherSupplier = ruleMatcherSupplier != null ? ruleMatcherSupplier : () -> null;
         this.ruleProviderSupplier = ruleProviderSupplier != null ? ruleProviderSupplier : () -> null;
+        this.metricsManagerSupplier = metricsManagerSupplier != null ? metricsManagerSupplier : () -> null;
     }
 
     @Override
@@ -180,7 +200,11 @@ public class TrafficContextFilter extends OncePerRequestFilter {
         }
 
         TrafficWhitelistAction action = properties.getWhitelistAction();
+        TrafficMetricsManager metricsManager = metricsManagerSupplier.get();
         if (action == TrafficWhitelistAction.REJECT) {
+            if (metricsManager != null) {
+                metricsManager.recordWhitelistRejected(tag);
+            }
             log.warn("[TrafficFilter] 拒绝未授权的非法流量染色标签 (REJECT) [unauthorizedTag='{}', uri='{}', clientIp='{}', allowedTags={}]",
                     tag, request.getRequestURI(), resolveClientIp(request), allowedTags);
             throw new BusinessException(TrafficResultCode.UNAUTHORIZED_TRAFFIC_TAG,
@@ -188,6 +212,9 @@ public class TrafficContextFilter extends OncePerRequestFilter {
         }
 
         // 默认 STRIP 剥离模式
+        if (metricsManager != null) {
+            metricsManager.recordWhitelistStripped(tag);
+        }
         log.warn("[TrafficFilter] 检测到未授权流量染色标签，执行安全剥离降级至基线 (STRIP) [unauthorizedTag='{}', uri='{}', clientIp='{}', allowedTags={}]",
                 tag, request.getRequestURI(), resolveClientIp(request), allowedTags);
         return null;

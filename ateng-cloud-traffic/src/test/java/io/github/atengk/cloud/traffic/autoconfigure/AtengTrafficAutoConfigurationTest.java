@@ -1,7 +1,9 @@
 package io.github.atengk.cloud.traffic.autoconfigure;
 
+import io.github.atengk.cloud.traffic.actuator.TrafficEndpoint;
 import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
@@ -37,6 +39,8 @@ class AtengTrafficAutoConfigurationTest {
             assertThat(context).hasSingleBean(StickyHashPartitioner.class);
             assertThat(context).hasSingleBean(TrafficPredicateMatcher.class);
             assertThat(context).hasSingleBean(TrafficRuleMatcher.class);
+            assertThat(context).hasSingleBean(TrafficMetricsManager.class);
+            assertThat(context).hasSingleBean(TrafficEndpoint.class);
             assertThat(context).doesNotHaveBean(FilterRegistrationBean.class);
         });
     }
@@ -50,10 +54,24 @@ class AtengTrafficAutoConfigurationTest {
             assertThat(context).hasSingleBean(StickyHashPartitioner.class);
             assertThat(context).hasSingleBean(TrafficPredicateMatcher.class);
             assertThat(context).hasSingleBean(TrafficRuleMatcher.class);
+            assertThat(context).hasSingleBean(TrafficMetricsManager.class);
+            assertThat(context).hasSingleBean(TrafficEndpoint.class);
             assertThat(context).hasSingleBean(FilterRegistrationBean.class);
             assertThat(context.getBean(FilterRegistrationBean.class).getFilter())
                     .isInstanceOf(TrafficContextFilter.class);
         });
+    }
+
+    @Test
+    @DisplayName("测试配置 ateng.cloud.traffic.actuator.enabled=false 时只禁用端点而不影响核心治理与度量")
+    void testActuatorEndpointDisabled() {
+        servletRunner
+                .withPropertyValues("ateng.cloud.traffic.actuator.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AtengTrafficAutoConfiguration.class);
+                    assertThat(context).hasSingleBean(TrafficMetricsManager.class);
+                    assertThat(context).doesNotHaveBean(TrafficEndpoint.class);
+                });
     }
 
     @Test

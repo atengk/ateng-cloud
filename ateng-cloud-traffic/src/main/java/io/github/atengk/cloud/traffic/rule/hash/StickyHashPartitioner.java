@@ -97,6 +97,16 @@ public class StickyHashPartitioner {
     }
 
     /**
+     * 计算给定哈希键在百分比基准 (100 桶: 0 ~ 99) 中的离散桶号
+     *
+     * @param hashKey 哈希种子键
+     * @return 落在的百分比分桶号 (0 ~ 99)
+     */
+    public int partition(String hashKey) {
+        return calculateBucket(hashKey, 100);
+    }
+
+    /**
      * 计算给定哈希键在指定桶总数中的绝对桶号 (范围: 0 ~ totalBuckets - 1)
      *
      * @param hashKey      哈希种子键

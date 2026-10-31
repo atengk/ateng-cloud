@@ -1,17 +1,21 @@
 package io.github.atengk.cloud.traffic.autoconfigure;
 
+import io.github.atengk.cloud.traffic.actuator.TrafficEndpoint;
 import io.github.atengk.cloud.traffic.aspect.TrafficTagAspect;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
 import io.github.atengk.cloud.traffic.interceptor.TrafficClientHttpRequestInterceptor;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -46,9 +50,13 @@ public class AtengTrafficAutoConfiguration {
     public FilterRegistrationBean<TrafficContextFilter> trafficContextFilter(
             AtengTrafficProperties properties,
             ObjectProvider<TrafficRuleMatcher> ruleMatcherProvider,
-            ObjectProvider<TrafficRuleProvider> ruleProvider) {
+            ObjectProvider<TrafficRuleProvider> ruleProvider,
+            ObjectProvider<TrafficMetricsManager> metricsManagerProvider) {
         FilterRegistrationBean<TrafficContextFilter> registration = new FilterRegistrationBean<>(
-                new TrafficContextFilter(properties, ruleMatcherProvider::getIfAvailable, ruleProvider::getIfAvailable)
+                new TrafficContextFilter(properties,
+                        ruleMatcherProvider::getIfAvailable,
+                        ruleProvider::getIfAvailable,
+                        metricsManagerProvider::getIfAvailable)
         );
         registration.setOrder(properties.getFilterOrder());
         registration.addUrlPatterns("/*");
@@ -142,5 +150,55 @@ public class AtengTrafficAutoConfiguration {
     @ConditionalOnClass(ProceedingJoinPoint.class)
     public TrafficTagAspect trafficTagAspect(Environment environment) {
         return new TrafficTagAspect(environment);
+    }
+
+    /**
+     * 注册全链路流量治理 Micrometer 指标度量管理器 Bean
+     *
+     * @param meterRegistryProvider Micrometer 指标注册表面板
+     * @param ruleProvider          流量规则提供者
+     * @return TrafficMetricsManager
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public TrafficMetricsManager trafficMetricsManager(
+            ObjectProvider<MeterRegistry> meterRegistryProvider,
+            ObjectProvider<TrafficRuleProvider> ruleProvider) {
+        return new TrafficMetricsManager(meterRegistryProvider.getIfAvailable(), ruleProvider.getIfAvailable());
+    }
+
+    /**
+     * 注册流量治理与灰度运维诊断 Actuator 端点 (/actuator/traffic)
+     *
+     * @param properties                     流量治理配置
+     * @param ruleProvider                   规则提供者
+     * @param ruleMatcherProvider            规则决策器
+     * @param stickyHashPartitionerProvider  哈希分发器
+     * @param predicateMatcherProvider       谓词匹配器
+     * @param metricsManagerProvider         度量管理器
+     * @param environment                    Spring 环境
+     * @return TrafficEndpoint
+     */
+    @Bean
+    @ConditionalOnClass(Endpoint.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.traffic.actuator", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnMissingBean
+    public TrafficEndpoint trafficEndpoint(
+            AtengTrafficProperties properties,
+            ObjectProvider<TrafficRuleProvider> ruleProvider,
+            ObjectProvider<TrafficRuleMatcher> ruleMatcherProvider,
+            ObjectProvider<StickyHashPartitioner> stickyHashPartitionerProvider,
+            ObjectProvider<TrafficPredicateMatcher> predicateMatcherProvider,
+            ObjectProvider<TrafficMetricsManager> metricsManagerProvider,
+            Environment environment) {
+        return new TrafficEndpoint(
+                properties,
+                ruleProvider.getIfAvailable(),
+                ruleMatcherProvider.getIfAvailable(),
+                stickyHashPartitionerProvider.getIfAvailable(),
+                predicateMatcherProvider.getIfAvailable(),
+                metricsManagerProvider.getIfAvailable(),
+                environment
+        );
     }
 }

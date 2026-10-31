@@ -689,6 +689,65 @@ class SampleCloudTrafficIntegrationTest {
         assertThat(allowedReport.getTrafficTag()).isEqualTo("v2");
     }
 
+    @Test
+    @DisplayName("场景 13: 验证 /actuator/traffic 端点全景只读查询与 POST /actuator/traffic/simulate 沙箱演练")
+    void testActuatorTrafficEndpointAndSimulationSandbox() {
+        // 1. GET /actuator/traffic 只读查询
+        ResponseEntity<Map<String, Object>> overviewResp = restTemplate.exchange(
+                "http://localhost:" + port + "/actuator/traffic",
+                HttpMethod.GET,
+                null,
+                new ParameterizedTypeReference<>() {}
+        );
+        assertThat(overviewResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> overview = overviewResp.getBody();
+        assertThat(overview).isNotNull();
+        assertThat(overview.get("status")).isEqualTo("UP");
+        assertThat(overview.get("properties")).isNotNull();
+        assertThat(overview.get("rules")).isNotNull();
+        assertThat(overview.get("metrics")).isNotNull();
+
+        // 2. POST /actuator/traffic/simulate 模拟匹配沙箱 (通过 JSON 字符串或属性快照传递)
+        Map<String, Object> simulatePayload = Map.of(
+                "headers", "{\"X-Device-Type\":\"iOS\"}",
+                "queryParams", "{\"channel\":\"appstore\"}",
+                "userId", "user-vip-999",
+                "path", "/gateway/dispatch"
+        );
+        ResponseEntity<Map<String, Object>> simResp = restTemplate.exchange(
+                "http://localhost:" + port + "/actuator/traffic/simulate",
+                HttpMethod.POST,
+                new HttpEntity<>(simulatePayload),
+                new ParameterizedTypeReference<>() {}
+        );
+        assertThat(simResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> simResult = simResp.getBody();
+        assertThat(simResult).isNotNull();
+        assertThat(simResult.get("success")).isEqualTo(true);
+        assertThat(Long.parseLong(simResult.get("durationNanos").toString())).isGreaterThan(0L);
+
+        // 3. 验证触发请求后度量统计累计
+        HttpHeaders canaryHeaders = new HttpHeaders();
+        canaryHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        extractReport(restTemplate.exchange(
+                "http://localhost:" + port + "/gateway/dispatch",
+                HttpMethod.GET,
+                new HttpEntity<>(canaryHeaders),
+                RESULT_TYPE_REF
+        ));
+
+        // 再次查看 metrics 快照
+        ResponseEntity<Map<String, Object>> metricsOverview = restTemplate.exchange(
+                "http://localhost:" + port + "/actuator/traffic",
+                HttpMethod.GET,
+                null,
+                new ParameterizedTypeReference<>() {}
+        );
+        @SuppressWarnings("unchecked")
+        Map<String, Object> metricsMap = (Map<String, Object>) metricsOverview.getBody().get("metrics");
+        assertThat(Long.parseLong(metricsMap.get("totalRequests").toString())).isGreaterThanOrEqualTo(1L);
+    }
+
     /**
      * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫)
      */

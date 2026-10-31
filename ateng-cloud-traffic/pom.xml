@@ -77,6 +77,20 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring Boot Actuator 运维与监控端点支持 (编译期可选支持，零侵入无臃肿) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Micrometer 核心监控指标门面 (编译期可选支持) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
