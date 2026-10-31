@@ -11,6 +11,8 @@ import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
 import org.springframework.boot.actuate.endpoint.annotation.Selector;
@@ -40,6 +42,8 @@ import java.util.Set;
  */
 @Endpoint(id = "traffic")
 public class TrafficEndpoint {
+
+    private static final Logger log = LoggerFactory.getLogger(TrafficEndpoint.class);
 
     private final AtengTrafficProperties properties;
     private final TrafficRuleProvider ruleProvider;
@@ -286,7 +290,8 @@ public class TrafficEndpoint {
                         }
                         return Collections.unmodifiableMap(result);
                     }
-                } catch (Exception ignored) {
+                } catch (Exception ex) {
+                    log.debug("[TrafficEndpoint] 尝试解析模拟入参 JSON 字符串失败，回退为空集合 [input='{}', cause={}]", trimmed, ex.getMessage());
                 }
             }
         }

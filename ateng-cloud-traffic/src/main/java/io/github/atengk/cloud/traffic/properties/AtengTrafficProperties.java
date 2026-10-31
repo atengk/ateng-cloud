@@ -64,7 +64,7 @@ public class AtengTrafficProperties {
     private Set<String> allowedTags = new LinkedHashSet<>();
 
     /**
-     * 当检测到未授权流量染色标签时的安全处置策略 (默认 STRIP: 剥离并降级至基线；REJECT: 阻断抛出 4211 异常)
+     * 当检测到未授权流量染色标签时的安全处置策略 (默认 STRIP: 剥离并降级至基线；REJECT: 阻断抛出 4212 异常)
      */
     private TrafficWhitelistAction whitelistAction = TrafficWhitelistAction.STRIP;
 

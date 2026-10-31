@@ -161,6 +161,7 @@ public class AtengTrafficAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnClass(MeterRegistry.class)
     public TrafficMetricsManager trafficMetricsManager(
             ObjectProvider<MeterRegistry> meterRegistryProvider,
             ObjectProvider<TrafficRuleProvider> ruleProvider) {

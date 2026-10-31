@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.LongAdder;
  *     <li>{@code fallback}：目标灰度实例全下线触发平滑降级至基线实例</li>
  *     <li>{@code strict_blocked}：金融级严格泳道隔离阻断</li>
  *     <li>{@code whitelist_stripped}：未授权标签被安全剥离降级</li>
- *     <li>{@code whitelist_rejected}：未授权标签被 4211 显式阻断</li>
+ *     <li>{@code whitelist_rejected}：未授权标签被 4212 显式阻断</li>
  * </ul>
  * 以及 {@code ateng.cloud.traffic.rules.active}（Gauge）活跃规则总数度量。
  * 同时内部维护无锁内存计数器，支撑 /actuator/traffic 端点免 Prometheus 直接读取只读快照。

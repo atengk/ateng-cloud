@@ -40,14 +40,19 @@ public class TrafficTagAspect implements EmbeddedValueResolverAware, Ordered {
 
     private final Environment environment;
     private StringValueResolver valueResolver;
-    private int order = Ordered.HIGHEST_PRECEDENCE + 50;
+    private final int order;
 
     public TrafficTagAspect() {
-        this(null);
+        this(null, Ordered.HIGHEST_PRECEDENCE + 50);
     }
 
     public TrafficTagAspect(Environment environment) {
+        this(environment, Ordered.HIGHEST_PRECEDENCE + 50);
+    }
+
+    public TrafficTagAspect(Environment environment, int order) {
         this.environment = environment;
+        this.order = order;
     }
 
     @Override
@@ -58,10 +63,6 @@ public class TrafficTagAspect implements EmbeddedValueResolverAware, Ordered {
     @Override
     public int getOrder() {
         return order;
-    }
-
-    public void setOrder(int order) {
-        this.order = order;
     }
 
     /**
@@ -145,33 +146,42 @@ public class TrafficTagAspect implements EmbeddedValueResolverAware, Ordered {
      * 解析标签字符串，支持嵌入式占位符解析
      *
      * @param rawTag 原始标签字符串
-     * @return 解析后的标签字符串
+     * @return 解析后的标签字符串；若包含未解析占位符或解析结果为无效空/脏值则返回 null
      */
     private String resolveTag(String rawTag) {
         if (!StringUtils.hasText(rawTag)) {
             return null;
         }
         String trimmed = rawTag.trim();
+        String resolved = trimmed;
         if (valueResolver != null) {
             try {
-                String resolved = valueResolver.resolveStringValue(trimmed);
-                if (StringUtils.hasText(resolved)) {
-                    return resolved.trim();
+                String val = valueResolver.resolveStringValue(trimmed);
+                if (StringUtils.hasText(val)) {
+                    resolved = val.trim();
                 }
             } catch (Exception ex) {
                 log.warn("[TrafficAspect] 解析 @TrafficTag 占位符异常，回退原始值 [tag='{}', cause={}]", trimmed, ex.getMessage());
             }
-        }
-        if (environment != null) {
+        } else if (environment != null) {
             try {
-                String resolved = environment.resolvePlaceholders(trimmed);
-                if (StringUtils.hasText(resolved)) {
-                    return resolved.trim();
+                String val = environment.resolvePlaceholders(trimmed);
+                if (StringUtils.hasText(val)) {
+                    resolved = val.trim();
                 }
             } catch (Exception ex) {
                 log.warn("[TrafficAspect] 通过 Environment 解析 @TrafficTag 占位符异常 [tag='{}', cause={}]", trimmed, ex.getMessage());
             }
         }
-        return trimmed;
+
+        // 防御性校验：若原始字符串含有占位符语法 ${...} 且解析后仍包含未解析占位符，判定为无效标签，杜绝脏字面量穿透
+        if (resolved.contains("${") && resolved.contains("}")) {
+            log.warn("[TrafficAspect] @TrafficTag 包含未解析的环境占位符，跳过标签绑定 [rawTag='{}', resolved='{}']", trimmed, resolved);
+            return null;
+        }
+        if ("null".equalsIgnoreCase(resolved)) {
+            return null;
+        }
+        return resolved;
     }
 }

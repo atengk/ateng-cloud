@@ -57,6 +57,8 @@ public class SampleTrafficController {
 
     /**
      * 声明式金丝雀调用入口：使用 @TrafficTag("v2") 声明式将当前执行流及出站调用绑定至 v2 灰度泳道
+     *
+     * @return 链路跟踪报告
      */
     @GetMapping("/declarative/dispatch")
     @TrafficTag("v2")

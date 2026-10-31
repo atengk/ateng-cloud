@@ -89,6 +89,25 @@ class TrafficTagAspectTest {
     }
 
     @Test
+    @DisplayName("测试未解析占位符时防御性跳过注入不污染上下文")
+    void testUnresolvedPlaceholderShouldNotInjectTag() {
+        TestService proxy = createProxy(new TestServiceImpl());
+
+        assertThat(TrafficContextHolder.getTag()).isNull();
+        String activeTag = proxy.executeWithUnresolvedPlaceholder();
+        assertThat(activeTag).isNull();
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试切面执行顺序默认值及自定义构造函数配置")
+    void testAspectOrder() {
+        assertThat(aspect.getOrder()).isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE + 50);
+        TrafficTagAspect customAspect = new TrafficTagAspect(environment, 200);
+        assertThat(customAspect.getOrder()).isEqualTo(200);
+    }
+
+    @Test
     @DisplayName("测试 override=false 且已有标签时遵循继承")
     void testOverrideFalseInheritsExistingTag() {
         TestService proxy = createProxy(new TestServiceImpl());
@@ -169,6 +188,7 @@ class TrafficTagAspectTest {
     interface TestService {
         String executeWithTag();
         String executeWithPlaceholder();
+        String executeWithUnresolvedPlaceholder();
         String executeWithOverrideFalse();
         void executeThrowingException();
     }
@@ -184,6 +204,12 @@ class TrafficTagAspectTest {
         @Override
         @TrafficTag("${canary.target.tag}")
         public String executeWithPlaceholder() {
+            return TrafficContextHolder.getTag();
+        }
+
+        @Override
+        @TrafficTag("${missing.unconfigured.tag}")
+        public String executeWithUnresolvedPlaceholder() {
             return TrafficContextHolder.getTag();
         }
 

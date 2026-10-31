@@ -8,7 +8,9 @@ import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.springframework.core.Ordered;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -75,15 +77,20 @@ public class TrafficFeignRequestInterceptor implements RequestInterceptor, Order
         if (values == null || values.isEmpty()) {
             return;
         }
+        List<String> validValues = new ArrayList<>();
         boolean hasDirty = false;
         for (String val : values) {
-            if (val == null || !StringUtils.hasText(val) || "null".equalsIgnoreCase(val.trim())) {
+            if (val != null && StringUtils.hasText(val) && !"null".equalsIgnoreCase(val.trim())) {
+                validValues.add(val.trim());
+            } else {
                 hasDirty = true;
-                break;
             }
         }
         if (hasDirty) {
             template.removeHeader(headerName);
+            if (!validValues.isEmpty()) {
+                template.header(headerName, validValues);
+            }
         }
     }
 

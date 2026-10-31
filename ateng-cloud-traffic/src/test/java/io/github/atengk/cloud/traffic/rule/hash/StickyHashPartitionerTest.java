@@ -167,6 +167,45 @@ class StickyHashPartitionerTest {
     }
 
     @Test
+    @DisplayName("isHitRange 临界边界测试 (测试 0, 99, 100 临界分桶)")
+    void testIsHitRangeCriticalBoundaries() {
+        // [0, 1) 仅当分桶号正好为 0 时命中
+        // [99, 100) 仅当分桶号正好为 99 时命中
+        boolean found0 = false;
+        boolean found99 = false;
+        for (int i = 0; i < 2000; i++) {
+            String key = "test_boundary_key_" + i;
+            int bucket = partitioner.partition(key);
+            if (bucket == 0) {
+                assertThat(partitioner.isHitRange(key, 0, 1)).isTrue();
+                assertThat(partitioner.isHitRange(key, 1, 100)).isFalse();
+                found0 = true;
+            }
+            if (bucket == 99) {
+                assertThat(partitioner.isHitRange(key, 99, 100)).isTrue();
+                assertThat(partitioner.isHitRange(key, 0, 99)).isFalse();
+                found99 = true;
+            }
+            if (found0 && found99) {
+                break;
+            }
+        }
+        assertThat(found0).as("应当能够采样到分桶为 0 的样本").isTrue();
+        assertThat(found99).as("应当能够采样到分桶为 99 的边界样本").isTrue();
+
+        // 静态方法 isValidRange 校验
+        assertThat(StickyHashPartitioner.isValidRange(0, 1)).isTrue();
+        assertThat(StickyHashPartitioner.isValidRange(99, 100)).isTrue();
+        assertThat(StickyHashPartitioner.isValidRange(0, 100)).isTrue();
+        assertThat(StickyHashPartitioner.isValidRange(0, 0)).isFalse();
+        assertThat(StickyHashPartitioner.isValidRange(100, 100)).isFalse();
+        assertThat(StickyHashPartitioner.isValidRange(99, 99)).isFalse();
+        assertThat(StickyHashPartitioner.isValidRange(100, 99)).isFalse();
+        assertThat(StickyHashPartitioner.isValidRange(-1, 99)).isFalse();
+        assertThat(StickyHashPartitioner.isValidRange(0, 101)).isFalse();
+    }
+
+    @Test
     @DisplayName("isHitRange 会话粘性保障测试")
     void testIsHitRangeSessionStickiness() {
         String userId = "sticky_range_user_999";

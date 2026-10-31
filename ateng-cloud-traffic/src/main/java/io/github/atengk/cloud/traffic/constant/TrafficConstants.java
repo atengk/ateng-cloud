@@ -57,6 +57,11 @@ public final class TrafficConstants {
     public static final String TAG_BASELINE = "baseline";
 
     /**
+     * 兼容性基线稳定泳道别名：无标签
+     */
+    public static final String TAG_NONE = "none";
+
+    /**
      * 配置属性前缀
      */
     public static final String PROPERTIES_PREFIX = "ateng.cloud.traffic";

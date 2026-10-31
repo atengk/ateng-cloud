@@ -16,7 +16,7 @@ public enum TrafficWhitelistAction {
 
     /**
      * 阻断模式：
-     * 抛出受管业务异常 (4211 UNAUTHORIZED_TRAFFIC_TAG) 直接 Fail-Fast 阻断请求，满足金融级安全防伪防穿透诉求。
+     * 抛出受管业务异常 (4212 UNAUTHORIZED_TRAFFIC_TAG) 直接 Fail-Fast 阻断请求，满足金融级安全防伪防穿透诉求。
      */
     REJECT
 }

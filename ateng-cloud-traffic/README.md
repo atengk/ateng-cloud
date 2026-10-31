@@ -33,7 +33,7 @@
 | `TrafficTag` | 声明式注解 | 方法/类级声明式流量染色与泳道绑定注解 | 支持静态标签与 `${...}` 占位符，支持 override 继承控制 |
 | `TrafficTagAspect` | 核心切面类 | 声明式流量染色 AOP 环绕拦截与确定性恢复切面 | 当 Classpath 存在 ProceedingJoinPoint 时激活，出口 `finally` 100% 还原上下文 |
 | `AtengTrafficEnvironmentPostProcessor` | 环境后置处理器 | 预设缓存时效至 3s 并解耦 Nacos 默认客户端 Supplier | 注册于 `META-INF/spring.factories`，挂载至最低优先级确保业务显式声明优先 |
-| `TrafficResultCode` | 强类型错误码 | 统一定义流量治理业务错误码（区段 4210~4219） | 实现 `IResultCode`，定义 4210 `STRICT_LANE_BLOCK`、4211 `UNAUTHORIZED_TRAFFIC_TAG` |
+| `TrafficResultCode` | 强类型错误码 | 统一定义流量治理业务错误码（区段 4210~4219） | 实现 `IResultCode`，定义 4210 `STRICT_LANE_BLOCK`、4211 `TRAFFIC_ROUTING_ERROR`、4212 `UNAUTHORIZED_TRAFFIC_TAG` |
 | `TrafficRoutingException` | 业务异常 | 金融级严格泳道强隔离未命中灰度实例时抛出 | 继承自 `BusinessException`，携带服务名与未命中灰度标签 |
 | `TrafficEndpoint` | Actuator 端点 | `/actuator/traffic` 全景状态查询与模拟沙箱端点 | GET 查询只读全景状态，POST `/simulate` 纳秒级无副作用沙箱模拟演练 |
 | `TrafficMetricsManager` | 指标度量管理器 | 全链路流量治理 Micrometer 指标输出与内存统计汇总 | 暴露 `ateng.cloud.traffic.requests.total`（多维 Counter）与 `rules.active`（Gauge） |
@@ -53,7 +53,7 @@
 | `ateng.cloud.traffic.filter-order` | `int` | `HIGHEST_PRECEDENCE + 50` | 入站流量染色过滤器执行顺序（位于链路追踪 Filter 之后） |
 | `ateng.cloud.traffic.cache-ttl` | `Duration` | `3s` | 客户端负载均衡本地实例缓存收敛时效（消除灰度切流时的盲区） |
 | `ateng.cloud.traffic.allowed-tags` | `Set<String>` | `[]` | 允许放行的合法流量染色标签白名单集合（为空表示不校验白名单，全量放行） |
-| `ateng.cloud.traffic.whitelist-action` | `TrafficWhitelistAction` | `STRIP` | 未授权流量染色标签的安全处置策略：`STRIP`（安全剥离降级至基线）、`REJECT`（抛出 4211 业务异常直接阻断） |
+| `ateng.cloud.traffic.whitelist-action` | `TrafficWhitelistAction` | `STRIP` | 未授权流量染色标签的安全处置策略：`STRIP`（安全剥离降级至基线）、`REJECT`（抛出 4212 业务异常直接阻断） |
 | `ateng.cloud.traffic.actuator.enabled` | `boolean` | `true` | 是否启用 `/actuator/traffic` 运维诊断端点与沙箱演练接口 |
 | `ateng.cloud.traffic.nacos.enabled` | `boolean` | `true` | 是否启用 Nacos 动态流量分流规则监听 |
 | `ateng.cloud.traffic.nacos.group` | `String` | `"DEFAULT_GROUP"` | Nacos 动态规则配置分组 GroupId |
@@ -69,7 +69,8 @@
 | 错误码枚举 | 编码值 (`code`) | 物理 HTTP 映射 | 业务描述与阻断场景 |
 | :--- | :--- | :--- | :--- |
 | `STRICT_LANE_BLOCK` | `4210` | `200 OK (Result) / 503` | 严格泳道隔离阻断：目标微服务无匹配当前灰度标签的可用实例（strict-lane enabled），Fail-Fast 阻断严禁脏写基线 |
-| `UNAUTHORIZED_TRAFFIC_TAG` | `4211` | `200 OK (Result) / 403` | 未授权的非法流量染色标签：入站请求携带的流量标签未在 `allowed-tags` 白名单中（whitelist-action=REJECT 时触发），Fail-Fast 防伪阻断 |
+| `TRAFFIC_ROUTING_ERROR` | `4211` | `200 OK (Result) / 500` | 流量染色与灰度调度异常：规则评估、实例过滤或路由计算过程发生受控内部错误 |
+| `UNAUTHORIZED_TRAFFIC_TAG` | `4212` | `200 OK (Result) / 403` | 未授权的非法流量染色标签：入站请求携带的流量标签未在 `allowed-tags` 白名单中（whitelist-action=REJECT 时触发），Fail-Fast 防伪阻断 |
 
 ---
 
@@ -343,7 +344,7 @@ ateng:
 ```
 
 - **`STRIP` 策略（默认安全剥离）**：当检测到未在 `allowed-tags` 中的非法标签（如 `attacker-tag`）时，系统自动清除非法标签并降级为无染色的基线流量，同时记录安全审计警告日志；
-- **`REJECT` 策略（快速失败阻断）**：立即阻断请求，直接抛出 `BusinessException`（错误码 `4211`：`UNAUTHORIZED_TRAFFIC_TAG`），禁止任何非法流量穿透。
+- **`REJECT` 策略（快速失败阻断）**：立即阻断请求，直接抛出 `BusinessException`（错误码 `4212`：`UNAUTHORIZED_TRAFFIC_TAG`），禁止任何非法流量穿透。
 
 ---
 
@@ -379,23 +380,54 @@ curl -X GET http://localhost:8080/actuator/traffic
 响应 JSON 包含生效规则、配置参数与监控指标：
 ```json
 {
-  "traffic": {
+  "status": "UP",
+  "properties": {
     "enabled": true,
+    "headerName": "X-Traffic-Tag",
+    "paramName": "traffic_tag",
     "fallbackToDefault": true,
     "strictLane": false,
     "laneContinuity": true,
+    "cacheTtl": "PT3S",
     "allowedTags": ["v2", "v3"],
     "whitelistAction": "STRIP"
   },
   "rules": {
-    "activeCount": 2,
-    "ruleList": [...]
+    "activeRulesCount": 2,
+    "activeRules": [
+      {
+        "id": "rule-device-ios",
+        "name": "iOS 设备分流至 v2",
+        "priority": 10,
+        "targetTag": "v2",
+        "conditionRelation": "AND",
+        "conditions": [
+          {
+            "fieldSource": "HEADER",
+            "fieldName": "X-Device-Type",
+            "operator": "EXACT",
+            "expectedValue": "iOS"
+          }
+        ]
+      }
+    ],
+    "nacos": {
+      "strategy": "OVERWRITE",
+      "preferApp": true,
+      "appRulesCount": 1,
+      "globalRulesCount": 1
+    }
   },
   "metrics": {
     "totalRequests": 1024,
-    "taggedRequests": 512,
-    "baselineRequests": 512,
-    "rejectedRequests": 0
+    "statusCounts": {
+      "gray_hit": 512,
+      "baseline_hit": 480,
+      "fallback": 32,
+      "strict_blocked": 0,
+      "whitelist_stripped": 0,
+      "whitelist_rejected": 0
+    }
   }
 }
 ```
@@ -408,22 +440,41 @@ curl -X POST http://localhost:8080/actuator/traffic/simulate \
   -H "Content-Type: application/json" \
   -d '{
     "headers": {
-      "X-Channel": "vip_wechat"
+      "X-Device-Type": "iOS"
     },
     "queryParams": {
       "traffic_tag": "v2"
-    }
+    },
+    "userId": "user-vip-999",
+    "path": "/gateway/dispatch"
   }'
 ```
 
 模拟演练返回毫秒/纳秒级匹配详情与决策路径：
 ```json
 {
-  "matchedTag": "v2",
-  "matchedRuleId": "rule-vip-channel",
-  "action": "MATCHED",
-  "reason": "Traffic rule 'rule-vip-channel' matched with target tag: v2",
-  "durationNanos": 3200
+  "success": true,
+  "durationNanos": 4200,
+  "rulesEvaluatedCount": 2,
+  "matched": true,
+  "matchedRuleId": "rule-device-ios",
+  "matchedRuleName": "iOS 设备分流至 v2",
+  "priority": 10,
+  "targetTag": "v2",
+  "hitCondition": {
+    "relation": "AND",
+    "conditions": [
+      {
+        "fieldSource": "HEADER",
+        "fieldName": "X-Device-Type",
+        "operator": "EXACT",
+        "expectedValue": "iOS",
+        "actualValue": "iOS",
+        "matched": true
+      }
+    ]
+  },
+  "percentageMatched": true
 }
 ```
 
@@ -434,7 +485,16 @@ curl -X POST http://localhost:8080/actuator/traffic/simulate \
 框架通过 `TrafficMetricsManager` 自动注册 Micrometer 核心治理指标：
 
 - **`ateng.cloud.traffic.requests.total`** (Counter)：
-  - 维度标签：`action` (`MATCHED`, `HEADER`, `PARAM`, `STRIPPED`, `REJECTED`, `NONE`), `rule_id`, `status` (`SUCCESS`, `REJECTED`), `tag`；
+  - **维度标签**：
+    - `service`：目标微服务名称（如 `service-a`、`service-b`）；
+    - `tag`：流量染色标签（如 `v2`、`v3`，无标时为 `none`）；
+    - `status`：路由决策与防护状态枚举：
+      - `gray_hit`：成功命中灰度泳道实例；
+      - `baseline_hit`：普通基线流量命中基线实例；
+      - `fallback`：目标灰度实例全下线触发平滑降级至基线实例；
+      - `strict_blocked`：金融级严格泳道强隔离阻断；
+      - `whitelist_stripped`：未授权外部标签被安全剥离降级至基线；
+      - `whitelist_rejected`：未授权外部标签被 4212 异常显式阻断。
 - **`ateng.cloud.traffic.rules.active`** (Gauge)：
   - 实时反映内存中当前生效的分流规则总数。
 
@@ -541,5 +601,5 @@ sequenceDiagram
 | 9 | `testDeclarativeTrafficTagAspectRouting` | 声明式 `@TrafficTag("v2")` 注解自动绑定金丝雀泳道并触发跨跳穿透与出口上下文还原 |
 | 10 | `testMultiCanaryPercentageRangeMutualExclusion` | 多金丝雀分支 (`v2`、`v3` 与基线) `percentageRange` 互斥区间放量与会话粘性端到端集成 |
 | 11 | `testSuffixAndContainsPredicateRouting` | 零分配 `SUFFIX`（以 `@internal.corp` 结尾）与 `CONTAINS`（包含 `beta_tester`）谓词规则匹配切流 |
-| 12 | `testAllowedTagsWhitelistDefense` | 合法流量标签白名单防伪拦截：STRIP 剥离降级至基线 与 REJECT 拦截抛出 `4211` UNAUTHORIZED_TRAFFIC_TAG |
+| 12 | `testAllowedTagsWhitelistDefense` | 合法流量标签白名单防伪拦截：STRIP 剥离降级至基线 与 REJECT 拦截抛出 `4212` UNAUTHORIZED_TRAFFIC_TAG |
 | 13 | `testActuatorTrafficEndpointAndSimulationSandbox` | `/actuator/traffic` 运维端点只读全景状态查询与 `/simulate` 纳秒级无副作用沙箱模拟演练 |

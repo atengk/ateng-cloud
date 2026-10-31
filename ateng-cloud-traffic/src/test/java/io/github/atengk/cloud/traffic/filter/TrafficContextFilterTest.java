@@ -176,6 +176,28 @@ class TrafficContextFilterTest {
     }
 
     @Test
+    @DisplayName("测试当下游业务抛出 BusinessException 时，过滤器不予越权捕获而是向外正常抛出交由全局异常处理")
+    void testDownstreamBusinessExceptionNotIntercepted() {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        request.addHeader(TrafficConstants.HEADER_TRAFFIC_TAG, "exception-tag");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                throw new io.github.atengk.boot.core.exception.BusinessException("Downstream business failure");
+            }
+        };
+
+        assertThatThrownBy(() -> filter.doFilter(request, response, filterChain))
+                .isInstanceOf(io.github.atengk.boot.core.exception.BusinessException.class)
+                .hasMessageContaining("Downstream business failure");
+
+        // 强断言：异常抛出后，线程上下文依然被可靠清理
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
     @DisplayName("测试通过动态规则决策引擎为无标签请求自动染色")
     void testDynamicRuleMatchingStaining() throws ServletException, IOException {
         TrafficRule rule = TrafficRule.builder()
@@ -356,7 +378,7 @@ class TrafficContextFilterTest {
     }
 
     @Test
-    @DisplayName("测试白名单校验：未授权标签在 REJECT 模式下直接阻断并输出 4211 JSON 响应")
+    @DisplayName("测试白名单校验：未授权标签在 REJECT 模式下直接阻断并输出 4212 JSON 响应")
     void testAllowedTags_UnauthorizedTag_Reject() throws ServletException, IOException {
         properties.setAllowedTags(Set.of("v2", "v3"));
         properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
@@ -376,7 +398,7 @@ class TrafficContextFilterTest {
         filter.doFilter(request, response, filterChain);
 
         assertThat(chainCalled.get()).isFalse();
-        assertThat(response.getContentAsString()).contains("4211").contains("forged-canary-lane");
+        assertThat(response.getContentAsString()).contains("4212").contains("forged-canary-lane");
     }
 
     @Test
@@ -416,7 +438,7 @@ class TrafficContextFilterTest {
 
         filter.doFilter(reqReject, respReject, chainReject);
         assertThat(chainCalledReject.get()).isFalse();
-        assertThat(respReject.getContentAsString()).contains("4211").contains("evil-param");
+        assertThat(respReject.getContentAsString()).contains("4212").contains("evil-param");
     }
 
     @Test

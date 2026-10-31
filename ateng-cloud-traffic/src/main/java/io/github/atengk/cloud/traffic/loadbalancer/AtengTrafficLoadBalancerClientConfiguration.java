@@ -84,7 +84,8 @@ public class AtengTrafficLoadBalancerClientConfiguration {
         TrafficMetricsManager metricsManager = null;
         try {
             metricsManager = context.getBeanProvider(TrafficMetricsManager.class).getIfAvailable();
-        } catch (Throwable ignored) {
+        } catch (Throwable ex) {
+            log.trace("[ateng-cloud-traffic] LoadBalancer 子上下文获取 TrafficMetricsManager 回退: {}", ex.getMessage());
         }
         ServiceInstanceListSupplier trafficSupplier = new TrafficTagServiceInstanceListSupplier(cachingSupplier, trafficProperties, metricsManager);
 

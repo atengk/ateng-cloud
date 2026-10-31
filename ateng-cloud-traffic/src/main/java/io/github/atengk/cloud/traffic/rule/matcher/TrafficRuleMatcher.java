@@ -177,7 +177,7 @@ public class TrafficRuleMatcher {
             }
             int min = range[0];
             int max = range[1];
-            if (min < 0 || max > 100 || min >= max) {
+            if (!StickyHashPartitioner.isValidRange(min, max)) {
                 log.warn("[TrafficRuleMatcher] 规则 percentageRange 越界或颠倒 (要求 0 <= min < max <= 100，实际 [{}, {}])，判定为未命中 [ruleId='{}']",
                         min, max, rule.getId());
                 return false;

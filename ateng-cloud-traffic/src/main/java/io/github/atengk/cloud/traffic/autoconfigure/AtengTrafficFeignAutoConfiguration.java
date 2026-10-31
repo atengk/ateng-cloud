@@ -46,7 +46,7 @@ public class AtengTrafficFeignAutoConfiguration {
      * @return TrafficFeignRequestInterceptor
      */
     @Bean(name = "trafficFeignRequestInterceptor")
-    @ConditionalOnMissingBean(name = "feignContextPropagationInterceptor", value = TrafficFeignRequestInterceptor.class)
+    @ConditionalOnMissingBean(TrafficFeignRequestInterceptor.class)
     public TrafficFeignRequestInterceptor trafficFeignRequestInterceptor(AtengTrafficProperties properties) {
         return new TrafficFeignRequestInterceptor(properties);
     }

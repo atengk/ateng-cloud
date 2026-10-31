@@ -2,6 +2,7 @@ package io.github.atengk.cloud.traffic.rule.matcher;
 
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficConditionRelation;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
@@ -382,6 +383,45 @@ class TrafficRuleMatcherTest {
                 .percentageRange(0, 50)
                 .build();
         assertThat(matcher.matches(noKeyRule, SimpleTrafficEvaluationContext.builder().build())).isFalse();
+    }
+
+    @Test
+    @DisplayName("percentageRange 临界边界测试 (测试 0, 99, 100 临界分桶)")
+    void testPercentageRange_CriticalBoundaries() {
+        TrafficRule edge0Rule = TrafficRule.builder()
+                .id("r-edge0")
+                .targetTag("v-edge0")
+                .percentageRange(0, 1)
+                .build();
+        TrafficRule edge99Rule = TrafficRule.builder()
+                .id("r-edge99")
+                .targetTag("v-edge99")
+                .percentageRange(99, 100)
+                .build();
+
+        StickyHashPartitioner partitioner = new StickyHashPartitioner();
+        boolean tested0 = false;
+        boolean tested99 = false;
+
+        for (int i = 0; i < 2000; i++) {
+            String uid = "user_edge_test_" + i;
+            int bucket = partitioner.partition(uid);
+            TrafficEvaluationContext ctx = SimpleTrafficEvaluationContext.builder().userId(uid).build();
+            if (bucket == 0) {
+                assertThat(matcher.matches(edge0Rule, ctx)).isTrue();
+                assertThat(matcher.matches(edge99Rule, ctx)).isFalse();
+                tested0 = true;
+            } else if (bucket == 99) {
+                assertThat(matcher.matches(edge0Rule, ctx)).isFalse();
+                assertThat(matcher.matches(edge99Rule, ctx)).isTrue();
+                tested99 = true;
+            }
+            if (tested0 && tested99) {
+                break;
+            }
+        }
+        assertThat(tested0).isTrue();
+        assertThat(tested99).isTrue();
     }
 
     @Test

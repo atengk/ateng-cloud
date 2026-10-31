@@ -643,7 +643,7 @@ class SampleCloudTrafficIntegrationTest {
     }
 
     @Test
-    @DisplayName("场景 12: 应用层外部标签白名单防线 (STRIP 剥离清洗与 REJECT 4211 阻断)")
+    @DisplayName("场景 12: 应用层外部标签白名单防线 (STRIP 剥离清洗与 REJECT 4212 阻断)")
     void testAllowedTagsWhitelistDefense() {
         // 配置白名单仅允许 v2
         trafficProperties.setAllowedTags(Set.of("v2"));
@@ -664,7 +664,7 @@ class SampleCloudTrafficIntegrationTest {
                 "ServiceC[inst=inst-c-base, tag=default]"
         );
 
-        // 2. REJECT 模式：携带未授权标签 'forged-tag'，必须直接 4211 阻断
+        // 2. REJECT 模式：携带未授权标签 'forged-tag'，必须直接 4212 阻断
         trafficProperties.setWhitelistAction(TrafficWhitelistAction.REJECT);
         HttpHeaders rejectHeaders = new HttpHeaders();
         rejectHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "forged-tag");
@@ -675,7 +675,7 @@ class SampleCloudTrafficIntegrationTest {
                 String.class
         );
         assertThat(rejectResponse.getBody()).isNotNull();
-        assertThat(rejectResponse.getBody()).contains("4211");
+        assertThat(rejectResponse.getBody()).contains("4212");
 
         // 3. 携带已授权标签 'v2'，不受阻断正常放行
         HttpHeaders allowedHeaders = new HttpHeaders();

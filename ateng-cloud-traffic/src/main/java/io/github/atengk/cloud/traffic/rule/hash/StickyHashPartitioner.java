@@ -72,6 +72,17 @@ public class StickyHashPartitioner {
     }
 
     /**
+     * 校验百分比区间是否合法 (0 <= min < max <= 100)
+     *
+     * @param min 区间左边界
+     * @param max 区间右边界
+     * @return true 表示有效合法区间
+     */
+    public static boolean isValidRange(int min, int max) {
+        return min >= 0 && max <= 100 && min < max;
+    }
+
+    /**
      * 判定给定哈希种子键是否命中指定的百分比区间 [min, max) (左闭右开)
      *
      * <p>核心契约：
@@ -85,7 +96,7 @@ public class StickyHashPartitioner {
      * @return true 表示命中该分桶区间，false 表示未命中
      */
     public boolean isHitRange(String hashKey, int min, int max) {
-        if (min < 0 || max > 100 || min >= max) {
+        if (!isValidRange(min, max)) {
             log.warn("[StickyHashPartitioner] 非法百分比区间配置 [min={}, max={}]，严格防卫判定为未命中", min, max);
             return false;
         }

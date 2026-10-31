@@ -115,6 +115,19 @@ class TrafficFeignRequestInterceptorTest {
     }
 
     @Test
+    @DisplayName("测试当已有 Header 包含脏值与有效值并存时，清洗脏值并保留有效值不被上下文覆盖")
+    void testApply_WithMultiValueHeaderContainingDirtyAndValid_ShouldPreserveValidHeader() {
+        TrafficContextHolder.setTag("context-tag");
+        RequestTemplate template = createRequestTemplate();
+        template.header(TrafficConstants.HEADER_TRAFFIC_TAG, "explicit-tag", "null", "  ");
+
+        interceptor.apply(template);
+
+        Collection<String> headers = template.headers().get(TrafficConstants.HEADER_TRAFFIC_TAG);
+        assertThat(headers).isNotNull().containsExactly("explicit-tag");
+    }
+
+    @Test
     @DisplayName("测试当流量治理总开关关闭时，不注入标头")
     void testApply_WhenDisabled_ShouldNotInject() {
         properties.setEnabled(false);

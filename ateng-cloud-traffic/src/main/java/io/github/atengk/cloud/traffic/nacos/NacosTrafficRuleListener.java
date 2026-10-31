@@ -271,18 +271,38 @@ public class NacosTrafficRuleListener implements TrafficRuleProvider, Initializi
         return rules != null ? rules : Collections.emptyList();
     }
 
+    /**
+     * 获取当前生效的 Nacos 流量分流规则合并策略
+     *
+     * @return 规则合并策略 (OVERWRITE 或 MERGE)
+     */
     public TrafficRuleMergeStrategy getMergeStrategy() {
         return properties.getNacos().getMergeStrategy();
     }
 
+    /**
+     * 获取当前生效的 Nacos 流量分流规则合并策略 (简写别名)
+     *
+     * @return 规则合并策略
+     */
     public TrafficRuleMergeStrategy getStrategy() {
         return getMergeStrategy();
     }
 
+    /**
+     * 查询是否优先加载应用专属分流规则
+     *
+     * @return true 表示优先应用专属规则，缺省回退全局规则
+     */
     public boolean isPreferAppRule() {
         return properties.getNacos().isPreferAppRule();
     }
 
+    /**
+     * 查询是否优先加载应用专属分流规则 (简写别名)
+     *
+     * @return true 表示优先应用专属规则
+     */
     public boolean isPreferApp() {
         return isPreferAppRule();
     }

@@ -91,7 +91,14 @@ public class TrafficContextFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         try {
             if (properties.isEnabled()) {
-                TrafficContext context = resolveTrafficContext(request);
+                TrafficContext context;
+                try {
+                    context = resolveTrafficContext(request);
+                } catch (BusinessException be) {
+                    writeErrorResponse(response, be);
+                    return;
+                }
+
                 if (context != null && context.hasTag()) {
                     TrafficContextHolder.setContext(context);
                     if (log.isDebugEnabled()) {
@@ -106,9 +113,8 @@ public class TrafficContextFilter extends OncePerRequestFilter {
                 // 功能禁用时主动清理，消除工作线程复用残留
                 TrafficContextHolder.clear();
             }
+
             filterChain.doFilter(request, response);
-        } catch (BusinessException be) {
-            writeErrorResponse(response, be);
         } finally {
             TrafficContextHolder.clear();
         }
@@ -187,7 +193,7 @@ public class TrafficContextFilter extends OncePerRequestFilter {
      * @param tag     提取到的入站流量标签
      * @param request HTTP 请求
      * @return 校验通过后的合法标签，若被剥离清洗或为基线标签则返回 null
-     * @throws BusinessException 当白名单策略为 REJECT 且标签未授权时抛出 4211 业务异常
+     * @throws BusinessException 当白名单策略为 REJECT 且标签未授权时抛出 4212 业务异常
      */
     private String validateAndSanitizeTag(String tag, HttpServletRequest request) {
         if (!StringUtils.hasText(tag) || isBaselineTag(tag)) {
@@ -216,12 +222,14 @@ public class TrafficContextFilter extends OncePerRequestFilter {
             metricsManager.recordWhitelistStripped(tag);
         }
         log.warn("[TrafficFilter] 检测到未授权流量染色标签，执行安全剥离降级至基线 (STRIP) [unauthorizedTag='{}', uri='{}', clientIp='{}', allowedTags={}]",
-                tag, request.getRequestURI(), resolveClientIp(request), allowedTags);
+                    tag, request.getRequestURI(), resolveClientIp(request), allowedTags);
         return null;
     }
 
     private boolean isBaselineTag(String tag) {
-        return "default".equalsIgnoreCase(tag) || "baseline".equalsIgnoreCase(tag) || "none".equalsIgnoreCase(tag);
+        return TrafficConstants.DEFAULT_TAG.equalsIgnoreCase(tag)
+                || TrafficConstants.TAG_BASELINE.equalsIgnoreCase(tag)
+                || TrafficConstants.TAG_NONE.equalsIgnoreCase(tag);
     }
 
     private String resolveClientIp(HttpServletRequest request) {

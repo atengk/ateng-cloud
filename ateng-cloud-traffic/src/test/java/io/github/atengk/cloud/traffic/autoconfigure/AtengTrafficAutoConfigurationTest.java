@@ -84,4 +84,14 @@ class AtengTrafficAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(FilterRegistrationBean.class);
                 });
     }
+
+    @Test
+    @DisplayName("测试当 Classpath 缺失 MeterRegistry 时，平滑跳过 TrafficMetricsManager 装配")
+    void testMetricsManagerDisabledWhenMeterRegistryMissing() {
+        nonWebRunner
+                .withClassLoader(new org.springframework.boot.test.context.FilteredClassLoader(io.micrometer.core.instrument.MeterRegistry.class))
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean(TrafficMetricsManager.class);
+                });
+    }
 }
