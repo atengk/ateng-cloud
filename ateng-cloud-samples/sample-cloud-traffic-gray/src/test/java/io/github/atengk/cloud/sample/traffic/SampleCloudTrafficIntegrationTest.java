@@ -420,6 +420,31 @@ class SampleCloudTrafficIntegrationTest {
         assertThat(report3.getTrafficTag()).isNull();
     }
 
+    @Test
+    @DisplayName("场景 9: 声明式 @TrafficTag 注解自动绑定金丝雀泳道并触发跨跳穿透")
+    void testDeclarativeTrafficTagAspectRouting() {
+        ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/declarative/dispatch",
+                HttpMethod.GET,
+                null,
+                RESULT_TYPE_REF
+        );
+
+        TrafficTraceReport report = extractReport(response);
+        assertThat(report.getTrafficTag()).isEqualTo("v2");
+
+        // 强断言：声明式绑定的 v2 标签成功引导全链路调度，并在出口还原
+        assertThat(report.getVisitedNodes()).containsExactly(
+                "DeclarativeEntry[tag=v2]",
+                "ServiceA[inst=inst-a-gray, tag=v2]",
+                "ServiceB[inst=inst-b-base, tag=default]",
+                "ServiceC[inst=inst-c-gray, tag=v2]"
+        );
+
+        // 断言测试线程上下文零污染
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
     /**
      * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫)
      */

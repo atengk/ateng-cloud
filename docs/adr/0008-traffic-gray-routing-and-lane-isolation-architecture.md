@@ -42,6 +42,17 @@
    - 默认策略 `fallbackToDefault: true`：目标灰度实例列表为空时平滑降级至基线实例，杜绝 503 报警；
    - 强隔离策略 `strictLane: true`：未匹配灰度实例时直接抛出受管业务异常（Fail-Fast 503）；
    - 跨跳泳道穿透保持（Lane Continuity）：中间服务降级至基线后，维持入站上下文携带的原始 `TrafficTag`，后续向外出站调用继续优先检索该标签的下游实例。
+7. **声明式泳道绑定与确定性恢复 (Declarative Lane Binding & Safe Recovery)**：
+   - 交付 `@TrafficTag` 声明式注解与轻量 AOP 切面，支持在方法或类上显式绑定流量标签（支持常数字符串与 `${...}` 属性占位符，坚决杜绝 SpEL 动态求值以防范 RCE）；
+   - 支持通过 `override = true/false` 控制覆盖与继承语义；出口 `finally` 块 100% 还原上级上下文。
+8. **多金丝雀版本分桶切流与区间放量 (Multi-Canary Partitioning & Range Slicing)**：
+   - 规则模型扩展 `percentageRange: [min, max)` 半开区间，与 MurmurHash3 算法深度协同，无侵入支持多灰度分支互斥放量与并行验证；向后兼容旧版单值 `percentage`；对越界非法范围执行解析级防御隔离。
+9. **Feign 东西向通信独立按需装配与零冲突让位 (Standalone Feign Interceptor)**：
+   - 内置 `TrafficFeignRequestInterceptor`，在未引入 `ateng-cloud-feign` 时自动激活并以最高优先级注入 `X-Traffic-Tag`，在 `ateng-cloud-feign` 存在时平滑让位，达成 Starter 独立正交自洽。
+10. **全景可观测性端点与防伪造白名单防线 (Observability & Whitelist Guard)**：
+    - 提供 `/actuator/traffic` 端点展示当前内存生效规则快照，并提供 POST `/actuator/traffic/simulate` 纳秒级无副作用沙箱匹配接口；
+    - 接入 Micrometer 5 大状态度量指标（`ateng.cloud.traffic.requests.total` 等）；
+    - 引入 `allowed-tags` 白名单机制与 `STRIP | REJECT` 处置策略，构筑应用层防伪造安全屏障；谓词操作符扩充支持 `SUFFIX` 与 `CONTAINS`。
 
 ## Consequences
 

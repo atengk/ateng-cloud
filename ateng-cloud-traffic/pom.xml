@@ -42,6 +42,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring AOP 声明式切面支持 (编译期可选支持，用于 @TrafficTag 注解切面) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Jakarta Servlet API 规范 -->
         <dependency>
             <groupId>jakarta.servlet</groupId>

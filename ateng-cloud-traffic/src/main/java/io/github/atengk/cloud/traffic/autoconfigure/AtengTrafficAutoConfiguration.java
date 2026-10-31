@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.traffic.autoconfigure;
 
+import io.github.atengk.cloud.traffic.aspect.TrafficTagAspect;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
@@ -9,6 +10,7 @@ import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
+import org.aspectj.lang.ProceedingJoinPoint;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -19,6 +21,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.web.client.RestTemplateCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
 
 /**
  * 全链路流量治理与灰度调度自动装配配置类
@@ -126,5 +129,18 @@ public class AtengTrafficAutoConfiguration {
     public TrafficRuleMatcher trafficRuleMatcher(StickyHashPartitioner stickyHashPartitioner,
                                                  TrafficPredicateMatcher predicateMatcher) {
         return new TrafficRuleMatcher(stickyHashPartitioner, predicateMatcher);
+    }
+
+    /**
+     * 注册声明式流量染色与泳道绑定切面 Bean
+     *
+     * @param environment Spring 运行环境
+     * @return TrafficTagAspect
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(ProceedingJoinPoint.class)
+    public TrafficTagAspect trafficTagAspect(Environment environment) {
+        return new TrafficTagAspect(environment);
     }
 }

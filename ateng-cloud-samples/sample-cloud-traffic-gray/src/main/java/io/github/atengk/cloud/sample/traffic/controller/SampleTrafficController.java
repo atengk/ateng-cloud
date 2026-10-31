@@ -4,6 +4,7 @@ import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.traffic.model.TrafficTraceReport;
+import io.github.atengk.cloud.traffic.annotation.TrafficTag;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +52,20 @@ public class SampleTrafficController {
         // 调用下游 Service A
         TrafficTraceReport report = invokeDownstream("http://service-a/service-a/process", currentTag);
         report.prependVisitedNode("Gateway[tag=" + (currentTag != null ? currentTag : "none") + "]");
+        return Result.success(report);
+    }
+
+    /**
+     * 声明式金丝雀调用入口：使用 @TrafficTag("v2") 声明式将当前执行流及出站调用绑定至 v2 灰度泳道
+     */
+    @GetMapping("/declarative/dispatch")
+    @TrafficTag("v2")
+    public Result<TrafficTraceReport> declarativeDispatch() {
+        String currentTag = TrafficContextHolder.getTag();
+        log.info("[Declarative] 声明式入口执行 [tag='{}']", currentTag);
+
+        TrafficTraceReport report = invokeDownstream("http://service-a/service-a/process", currentTag);
+        report.prependVisitedNode("DeclarativeEntry[tag=" + (currentTag != null ? currentTag : "none") + "]");
         return Result.success(report);
     }
 
