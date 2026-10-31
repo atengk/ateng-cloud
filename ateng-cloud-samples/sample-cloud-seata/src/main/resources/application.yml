@@ -48,8 +48,6 @@ ateng:
       lock:
         retry-interval: 50ms
         retry-times: 30
-      degrade:
-        enabled: false
       tcc:
         fence-enabled: true
       dynamic-datasource:

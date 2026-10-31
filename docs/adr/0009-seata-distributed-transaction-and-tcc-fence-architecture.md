@@ -31,22 +31,26 @@
    - 与 Spring 6 / Spring Boot 3.3 原生响应式与 Servlet 体系保持兼容，完全对齐 BOM 统一依赖版本管控。
 3. **AT 与 TCC 双核驱动及 TCC 业务防卫屏障 (Dual-Core AT/TCC & TCC Fence)**：
    - **AT 模式**：基于 `undo_log` 反向补偿机制，零业务侵入，由数据源代理自动解析 SQL 前后镜像；
-   - **TCC 模式**：提供标准化 `@TwoPhaseBusinessAction` 接口模板，构建受管的 **TCC 业务防卫屏障（TCC Fence）**，依托本地事务表自动识别并刚性拦截“空回滚”、“业务悬挂”与“重复提交”，保障业务端实现真正的防重复与确定性防卫。
+   - **TCC 模式**：提供标准化 `@TwoPhaseBusinessAction` 接口模板，构建受管的 **TCC 业务防卫屏障（TCC Fence）**，依托本地事务表自动识别并刚性拦截“空回滚”、“业务悬挂”与“重复提交”，保障业务端实现真正的防重复与确定性防卫；
+   - **分级生命周期清理 (Hierarchical TCC Retention)**：TCC 终态（COMMITTED/ROLLBACKED）按 `logTtl`（默认 3 天）受管周期批量清理，悬挂态（SUSPENDED）护盾实行 3 倍长效保留（9 天），杜绝迟到 Try 击穿与存储无界膨胀；动态表名（`tableName`）与多租户排除实现 100% 联动；
+   - **标准 DDL 规范与按需自检自愈**：资源目录内嵌 ANSI-SQL DDL 模板，提供 `auto-init-table` 安全开关（生产默认 false 严守权限，开发与测试沙箱按需自愈建表）。
 4. **Baomidou 动态数据源原生代理与事务守卫协同 (Dynamic DataSource Coexistence)**：
    - 100% 依托 Baomidou dynamic-datasource 内置的 `spring.datasource.dynamic.seata=true` 机制完成各物理连接池的 `SeataDataSourceProxy` 包装，杜绝私造代理切面；
    - 确立 `RootContext.getXID()` 与 `DynamicDatasourceGuard` 的协同放行语义，当处于 Seata 分布式全局事务中时，允许分布式跨库合法调用，消除误杀。
 5. **四维上下文 + XID 全链路对称透传与因果回滚 (XID Propagation & Causal Rollback)**：
    - **Feign 链路**：出站通过 `FeignRequestInterceptor` 透明挂载 `TX_XID` 标头，入站通过 Web HandlerInterceptor 绑定 `RootContext.bind(xid)` 并在 `finally` 块中确定性解绑，与四维上下文（MDC traceId, userId, tenantId, ignoreTenant）及流量染色标（`X-Traffic-Tag`）完全对称；
-   - **Dubbo 链路**：依托 `dubbo-seata-spring-boot-starter` 与 RpcContext 附件实现透明穿透；
+   - **Dubbo 3.3 RPC 双保险透传**：`ateng-cloud-dubbo` 内置透传，同时 `ateng-cloud-seata` 供给独立 `SeataDubboFilter` SPI（自适应幂等防卫，杜绝二次解绑），确保单用或联用皆开箱即用；
+   - **MDC 事务黄金关联 (MDC XID Correlation)**：在入站/提供端与异步快照恢复时自动将 `xid` 注入 SLF4J MDC，出口对称清理，赋能全链路日志统一检索；
+   - **Sentinel 降级防卫 (Seata Fallback Defense)**：活跃 XID 存在时，跨服务调用若触发熔断降级强制抛出受管业务异常，严禁静默 Mock 假数据导致 TM 误提交全局事务；
    - **因果回滚契约**：Feign 自适应解包抛出的受管业务异常 `BusinessException` 默认纳入 `@GlobalTransactional` 自动回滚范围，Seata 底层协调异常统一转译为受管业务异常。
 6. **异步多线程 XID 穿透与多租户表自动排除 (Async XID & Tenant Exclusion)**：
    - **异步线程穿透**：接入 `ateng-boot-core` 的 `AsyncContextSnapshotProvider` SPI，构建 `SeataAsyncContextSnapshotProvider`，自动将 `RootContext.getXID()` 跨线程透传至受管线程池，并在任务结束时安全解绑清理；
-   - **多租户内部表排除**：自动装配 MyBatis-Plus 租户表忽略过滤器，硬编码排除 `undo_log` 与 `tcc_fence_log` 表，彻底解决租户条件误注入导致的 SQL 崩溃。
+   - **多租户内部表排除**：自动装配 MyBatis-Plus 租户表忽略过滤器，硬编码排除 `undo_log` 与动态 `tableName` 表，彻底解决租户条件误注入导致的 SQL 崩溃。
 7. **高并发 `@GlobalLock` 一等公民与生产强类型调优 (GlobalLock & Safe Config)**：
    - 在全景矩阵中强推 `@GlobalLock` 作为高并发读写防脏读轻量解法，仅向 TC 校验排他锁而不生成 undo_log；
    - 在 `ateng.cloud.seata.*` 提供强类型配置：锁重试间隔 `retry-interval: Duration`（默认 50ms）、重试次数 `retry-times: int`（默认 30 次）、全局事务超时 `default-timeout: Duration`（默认 30s）。
 8. **TC 断连刚性熔断防卫 (Fail-Fast Outage Defense)**：
-   - 默认采用金融级刚性熔断策略（Fail-Fast）：当 TC 宕机或网络不可达时立即抛出受管业务异常阻断，严禁未经授权静默降级为本地事务单边落库造成数据错乱；提供显式配置项 `ateng.cloud.seata.degrade.enabled=false` 严格把关。
+   - 贯彻金融级刚性熔断策略（Fail-Fast）：当 TC 宕机或网络不可达时立即抛出受管业务异常阻断，彻底取缔诱导性本地降级配置，严禁未经授权静默单边落库造成资损。
 9. **100% 离线自洽测试与 1:1 经典样例工程 (Hermetic Offline Testing & Sample)**：
    - 单元测试默认离线运行，严密覆盖拦截器装配、状态机与 TCC 防卫逻辑，零物理 TC 强依赖；
    - 配套专属场景工程 `ateng-cloud-samples/sample-cloud-seata`，构建经典“Order 订单 ➔ Storage 库存 ➔ Account 余额”三微服务沙箱，提供 Mock 离线自洽用例与 `local` 双模真实实测。

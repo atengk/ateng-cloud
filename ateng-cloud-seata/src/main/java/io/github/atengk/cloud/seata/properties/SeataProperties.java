@@ -33,12 +33,6 @@ public class SeataProperties {
     private LockProperties lock = new LockProperties();
 
     /**
-     * TC 服务端断连与容灾配置
-     */
-    @NestedConfigurationProperty
-    private DegradeProperties degrade = new DegradeProperties();
-
-    /**
      * TCC 模式防卫屏障配置
      */
     @NestedConfigurationProperty
@@ -72,14 +66,6 @@ public class SeataProperties {
 
     public void setLock(LockProperties lock) {
         this.lock = lock;
-    }
-
-    public DegradeProperties getDegrade() {
-        return degrade;
-    }
-
-    public void setDegrade(DegradeProperties degrade) {
-        this.degrade = degrade;
     }
 
     public TccProperties getTcc() {
@@ -146,38 +132,6 @@ public class SeataProperties {
 
         public void setRetryTimes(int retryTimes) {
             this.retryTimes = retryTimes;
-        }
-    }
-
-    /**
-     * TC 协调器服务断连与容灾降级配置
-     */
-    public static class DegradeProperties {
-
-        /**
-         * TC 宕机或网络不可达时是否降级为本地事务执行（默认 false：金融级强一致刚性阻断 Fail-Fast，防止单边脏写资损）
-         */
-        private boolean enabled = false;
-
-        /**
-         * TC 降级与健康探活探测周期
-         */
-        private Duration degradeCheckPeriod = Duration.ofSeconds(2);
-
-        public boolean isEnabled() {
-            return enabled;
-        }
-
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
-        }
-
-        public Duration getDegradeCheckPeriod() {
-            return degradeCheckPeriod;
-        }
-
-        public void setDegradeCheckPeriod(Duration degradeCheckPeriod) {
-            this.degradeCheckPeriod = degradeCheckPeriod;
         }
     }
 

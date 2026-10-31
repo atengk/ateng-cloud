@@ -34,10 +34,6 @@ class SeataPropertiesTest {
         assertThat(properties.getLock().getRetryInterval()).isEqualTo(Duration.ofMillis(50));
         assertThat(properties.getLock().getRetryTimes()).isEqualTo(30);
 
-        // 默认 TC 故障不降级（刚性阻断 Fail-Fast）
-        assertThat(properties.getDegrade().isEnabled()).isFalse();
-        assertThat(properties.getDegrade().getDegradeCheckPeriod()).isEqualTo(Duration.ofSeconds(2));
-
         // 默认开启 TCC 防悬挂与幂等屏障
         assertThat(properties.getTcc().isFenceEnabled()).isTrue();
         assertThat(properties.getTcc().getCleanPeriod()).isEqualTo(Duration.ofDays(1));
@@ -54,8 +50,6 @@ class SeataPropertiesTest {
                         "ateng.cloud.seata.tx.default-timeout=45s",
                         "ateng.cloud.seata.lock.retry-interval=80ms",
                         "ateng.cloud.seata.lock.retry-times=50",
-                        "ateng.cloud.seata.degrade.enabled=true",
-                        "ateng.cloud.seata.degrade.degrade-check-period=5s",
                         "ateng.cloud.seata.tcc.fence-enabled=false",
                         "ateng.cloud.seata.tcc.clean-period=2d",
                         "ateng.cloud.seata.tcc.log-ttl=7d",
@@ -69,8 +63,6 @@ class SeataPropertiesTest {
                     assertThat(properties.getTx().getDefaultTimeout()).isEqualTo(Duration.ofSeconds(45));
                     assertThat(properties.getLock().getRetryInterval()).isEqualTo(Duration.ofMillis(80));
                     assertThat(properties.getLock().getRetryTimes()).isEqualTo(50);
-                    assertThat(properties.getDegrade().isEnabled()).isTrue();
-                    assertThat(properties.getDegrade().getDegradeCheckPeriod()).isEqualTo(Duration.ofSeconds(5));
                     assertThat(properties.getTcc().isFenceEnabled()).isFalse();
                     assertThat(properties.getTcc().getCleanPeriod()).isEqualTo(Duration.ofDays(2));
                     assertThat(properties.getTcc().getLogTtl()).isEqualTo(Duration.ofDays(7));

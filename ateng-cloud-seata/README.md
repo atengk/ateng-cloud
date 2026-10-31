@@ -53,8 +53,6 @@
 | `ateng.cloud.seata.tx.default-timeout` | `Duration` | `30s` | 全局事务默认超时时效，防止大事务或网络悬挂长时间阻塞连接池 |
 | `ateng.cloud.seata.lock.retry-interval` | `Duration` | `50ms` | 全局排他锁获取重试等待间隔，避免高频自旋打爆 TC 节点网络 |
 | `ateng.cloud.seata.lock.retry-times` | `int` | `30` | 全局排他锁获取最大重试次数（总计约 1.5 秒后 Fail-Fast 释放本地锁） |
-| `ateng.cloud.seata.degrade.enabled` | `boolean` | `false` | TC 宕机或网络中断时是否降级为本地事务执行（默认 false：金融级强一致刚性阻断） |
-| `ateng.cloud.seata.degrade.degrade-check-period` | `Duration` | `2s` | TC 协调器服务健康探活探测周期 |
 | `ateng.cloud.seata.tcc.fence-enabled` | `boolean` | `true` | 是否开启 TCC 两阶段防空回滚、防业务悬挂与幂等业务防卫屏障 |
 | `ateng.cloud.seata.tcc.clean-period` | `Duration` | `1d` | TCC 防卫日志历史归档记录清理定时任务调度周期 |
 | `ateng.cloud.seata.tcc.log-ttl` | `Duration` | `3d` | TCC 防卫日志保留时效，超过此时间的历史日志被自动物理清理 |
@@ -133,8 +131,6 @@ ateng:
       lock:
         retry-interval: 50ms
         retry-times: 30
-      degrade:
-        enabled: false
       tcc:
         fence-enabled: true
       dynamic-datasource:

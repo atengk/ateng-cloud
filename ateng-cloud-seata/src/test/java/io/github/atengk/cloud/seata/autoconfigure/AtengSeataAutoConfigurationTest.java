@@ -70,7 +70,6 @@ class AtengSeataAutoConfigurationTest {
             assertThat(properties.getTx().getDefaultTimeout()).isEqualTo(Duration.ofSeconds(30));
             assertThat(properties.getLock().getRetryInterval()).isEqualTo(Duration.ofMillis(50));
             assertThat(properties.getLock().getRetryTimes()).isEqualTo(30);
-            assertThat(properties.getDegrade().isEnabled()).isFalse();
             assertThat(properties.getTcc().isFenceEnabled()).isTrue();
             assertThat(properties.getDynamicDatasource().isEnabled()).isTrue();
             assertThat(properties.getDynamicDatasource().isGuardEnabled()).isTrue();
