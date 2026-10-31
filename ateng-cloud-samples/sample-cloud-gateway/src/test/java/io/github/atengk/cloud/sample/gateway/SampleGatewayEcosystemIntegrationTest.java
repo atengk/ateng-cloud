@@ -374,6 +374,28 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .jsonPath("$.data.status").isEqualTo("empty-body");
     }
 
+    @Test
+    @DisplayName("测试网关全景诊断端点 (/actuator/atengGateway) 返回 HTTP 200 与脱敏结构化报告")
+    void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
+        webTestClient.get()
+                .uri("/actuator/atengGateway")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("UP")
+                .jsonPath("$.gatewayId").isEqualTo("sample-cloud-gateway")
+                .jsonPath("$.dynamicRoute.totalRouteCount").isNumber()
+                .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(true)
+                .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
+                .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
+                .jsonPath("$.edgeSecurity.ipBlacklistCount").isEqualTo(2)
+                // 强断言：绝不泄漏具体内网 IP 与私钥
+                .jsonPath("$.edgeSecurity.ipBlacklist").doesNotExist()
+                .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
+                .jsonPath("$.signGuard.enabled").isEqualTo(true)
+                .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
+    }
+
     private String calculateSha256(byte[] data) throws Exception {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
         return java.util.HexFormat.of().formatHex(md.digest(data));

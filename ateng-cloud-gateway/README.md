@@ -38,6 +38,8 @@
 | `GrayServiceInstanceListSupplier`| 负载均衡提供者 | LoadBalancer 客户端 | 精准匹配 Nacos 实例 `metadata.tag`；灰度节点全部下线时在 `fallbackToDefault=true` 下平滑降级至基线实例 | `@LoadBalancerClients` 默认配置 |
 | `ClientIpResolver` | 工具类 | 静态方法调用 | 提供权威从右向左代理倒推真实 IP 算法及端口号清洗能力 | 开箱即用工具类 |
 | `IpMatcher` | 工具类 | 静态方法调用 | 支持 CIDR 子网段掩码与单 IP 的高效并发匹配 | 开箱即用工具类 |
+| `GatewayPanoramaEndpoint` | Actuator 端点 | `@Endpoint(id = "atengGateway")` | 网关全景健康与动态路由只读运维诊断端点，聚合双轨路由、灰度负载、边缘安全、接口验签四维全景指标 | 依赖 Actuator 且 `@ConditionalOnMissingBean` |
+| `GatewayPanoramaReport` | 报告模型 Record | 强类型数据传输 | 四维诊断聚合报告模型，包含 `dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard` 快照 | 强类型自洽 Record |
 
 ---
 
@@ -60,6 +62,7 @@
 | `NacosRouteDefinitionRepository` | `getRouteDefinitions()` | `Flux<RouteDefinition>` | 响应式流式读取当前生效的全量路由定义 | 离线返回空 Flux，不阻塞容器启动 |
 | `NacosRouteDefinitionRepository` | `save(route)` | `Mono<Void>` | 内存动态追加或覆盖指定路由定义并发布刷新事件 | 操作完成后原子广播刷新 |
 | `NacosRouteDefinitionRepository` | `delete(routeId)` | `Mono<Void>` | 内存动态移除指定路由定义并发布刷新事件 | 找不到时静默完成 |
+| `GatewayPanoramaEndpoint` | `report()` | `GatewayPanoramaReport` | 读取微秒级内存原子快照，聚合输出网关四维全景健康与动态路由诊断状态 | 零外部网络 IO，快照异常平滑标记 DEGRADED |
 
 ---
 
@@ -538,5 +541,105 @@ void testHttpBoundaryUncoloredRequestNeverTouchesCanary() {
                 .jsonPath("$.code").isEqualTo(200)
                 .jsonPath("$.data.instanceId").isEqualTo("srv-base-az1");
     }
+}
+```
+
+### 7. 网关全景健康与动态路由运维诊断端点 (Actuator atengGateway)
+
+#### 配置开启与路径白名单
+在 `application.yml` 中暴露端点，并加入网关边缘安全白名单：
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,atengGateway
+
+ateng:
+  cloud:
+    gateway:
+      security:
+        exclude-paths:
+          - /actuator/**
+```
+
+#### 端点访问与强断言测试
+```java
+@Test
+@DisplayName("测试网关全景运维诊断端点 (/actuator/atengGateway) 返回 200 与四维全景结构化报告")
+void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
+    webTestClient.get()
+            .uri("/actuator/atengGateway")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.status").isEqualTo("UP")
+            .jsonPath("$.gatewayId").isEqualTo("sample-cloud-gateway")
+            .jsonPath("$.dynamicRoute.totalRouteCount").isNumber()
+            .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(true)
+            .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
+            .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
+            .jsonPath("$.edgeSecurity.ipBlacklistCount").isEqualTo(2)
+            // 强断言：绝不泄漏具体内网 IP 与私钥
+            .jsonPath("$.edgeSecurity.ipBlacklist").doesNotExist()
+            .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
+            .jsonPath("$.signGuard.enabled").isEqualTo(true)
+            .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
+}
+```
+
+#### 诊断响应 JSON 样例
+```json
+{
+  "status": "UP",
+  "gatewayId": "sample-cloud-gateway",
+  "timestamp": 1793412690000,
+  "dynamicRoute": {
+    "enabled": true,
+    "dualTrackEnabled": true,
+    "totalRouteCount": 2,
+    "nacosRoute": {
+      "enabled": true,
+      "dataId": "gateway-routes.json",
+      "group": "DEFAULT_GROUP",
+      "routeCount": 0,
+      "snapshotHealthy": true,
+      "lastRefreshTime": null,
+      "lastRefreshSuccess": null,
+      "lastRefreshError": null
+    },
+    "mainConfigRoute": {
+      "routeCount": 2,
+      "defaultFilterCount": 0,
+      "snapshotHealthy": true,
+      "lastRefreshTime": 1793412689500,
+      "lastRefreshSuccess": true,
+      "lastRefreshError": null
+    }
+  },
+  "grayLoadBalancer": {
+    "enabled": true,
+    "fallbackToDefault": true,
+    "cacheTtl": "3s",
+    "zone": null
+  },
+  "edgeSecurity": {
+    "enabled": true,
+    "saTokenEnabled": true,
+    "pathValidationEnabled": true,
+    "headerSanitizeEnabled": true,
+    "clientIpEnabled": true,
+    "ipFilterEnabled": true,
+    "ipBlacklistCount": 2,
+    "ipWhitelistCount": 0,
+    "sanitizeHeadersCount": 5
+  },
+  "signGuard": {
+    "enabled": true,
+    "bodyEnabled": true,
+    "timestampThreshold": "5m",
+    "includePathsCount": 1,
+    "excludePathsCount": 0
+  }
 }
 ```

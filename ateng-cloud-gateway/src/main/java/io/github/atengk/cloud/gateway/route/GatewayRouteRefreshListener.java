@@ -58,6 +58,21 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
     private final AtomicReference<RouteSnapshot> lastKnownGoodSnapshot =
             new AtomicReference<>(null);
 
+    /**
+     * 最近一次动态路由刷新时间戳 (毫秒)
+     */
+    private final AtomicReference<Long> lastRefreshTime = new AtomicReference<>(null);
+
+    /**
+     * 最近一次动态路由刷新是否成功
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean lastRefreshSuccess = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+    /**
+     * 最近一次动态路由刷新失败异常信息
+     */
+    private final AtomicReference<String> lastRefreshError = new AtomicReference<>(null);
+
     public GatewayRouteRefreshListener(
             GatewayProperties gatewayProperties,
             Environment environment,
@@ -87,11 +102,17 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
                 GatewayRouteValidator.validateRouteDefinitions(initialRoutes);
                 RouteSnapshot snapshot = new RouteSnapshot(initialRoutes, initialDefaultFilters);
                 lastKnownGoodSnapshot.set(snapshot);
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(true);
+                lastRefreshError.set(null);
                 log.info("[Gateway] 主配置路由基线快照采集完成，初始路由数: {}, 默认过滤器数: {}",
                         snapshot.routes().size(), snapshot.defaultFilters().size());
             } catch (Exception ex) {
                 log.warn("[Gateway] 主配置初始路由存在语法校验警告，安全保留空基线以防快照污染: {}", ex.getMessage());
                 lastKnownGoodSnapshot.set(RouteSnapshot.EMPTY);
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(false);
+                lastRefreshError.set(ex.getMessage());
             }
         }
     }
@@ -167,6 +188,9 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
             Binder.get(environment).bind("spring.cloud.gateway", Bindable.ofInstance(candidateProperties));
         } catch (Exception ex) {
             log.error("[Gateway] 主配置路由属性重新绑定异常，快照守卫生效，保留现有有效路由: {}", ex.getMessage(), ex);
+            lastRefreshTime.set(System.currentTimeMillis());
+            lastRefreshSuccess.set(false);
+            lastRefreshError.set(ex.getMessage());
             restoreLastKnownGoodRoutes();
             return false;
         }
@@ -184,6 +208,9 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
         } catch (Exception ex) {
             log.error("[Gateway] 主配置路由深度语法或语义校验失败，快照守卫生效，坚决保留上一份有效快照 [{} 条有效路由]: error={}",
                     getLastKnownGoodRoutes().size(), ex.getMessage(), ex);
+            lastRefreshTime.set(System.currentTimeMillis());
+            lastRefreshSuccess.set(false);
+            lastRefreshError.set(ex.getMessage());
             // 立即防御性回滚受管 GatewayProperties 实例，防止脏数据对外扩散
             restoreLastKnownGoodRoutes();
             return false;
@@ -199,6 +226,9 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
         // 5. 原子替换快照并同步至受管 GatewayProperties
         RouteSnapshot newSnapshot = new RouteSnapshot(candidateRoutes, candidateDefaultFilters);
         lastKnownGoodSnapshot.set(newSnapshot);
+        lastRefreshTime.set(System.currentTimeMillis());
+        lastRefreshSuccess.set(true);
+        lastRefreshError.set(null);
         if (gatewayProperties != null) {
             gatewayProperties.setRoutes(new ArrayList<>(candidateRoutes));
             gatewayProperties.setDefaultFilters(new ArrayList<>(candidateDefaultFilters));
@@ -265,6 +295,50 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
     public RouteSnapshot getLastKnownGoodSnapshot() {
         RouteSnapshot snapshot = lastKnownGoodSnapshot.get();
         return snapshot != null ? snapshot : RouteSnapshot.EMPTY;
+    }
+
+    /**
+     * 获取主配置当前生效路由总数
+     */
+    public int getRouteCount() {
+        RouteSnapshot snapshot = lastKnownGoodSnapshot.get();
+        return snapshot != null ? snapshot.routes().size() : 0;
+    }
+
+    /**
+     * 获取主配置默认过滤器总数
+     */
+    public int getDefaultFilterCount() {
+        RouteSnapshot snapshot = lastKnownGoodSnapshot.get();
+        return snapshot != null ? snapshot.defaultFilters().size() : 0;
+    }
+
+    /**
+     * 当前主配置路由快照是否健康可用 (未发生解析/校验回退故障)
+     */
+    public boolean isSnapshotHealthy() {
+        return lastRefreshSuccess.get();
+    }
+
+    /**
+     * 获取最近一次刷新时间戳 (毫秒)
+     */
+    public Long getLastRefreshTime() {
+        return lastRefreshTime.get();
+    }
+
+    /**
+     * 获取最近一次刷新是否成功
+     */
+    public Boolean getLastRefreshSuccess() {
+        return lastRefreshSuccess.get();
+    }
+
+    /**
+     * 获取最近一次刷新失败原因
+     */
+    public String getLastRefreshError() {
+        return lastRefreshError.get();
     }
 
     /**

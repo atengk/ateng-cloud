@@ -66,6 +66,21 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
     private final AtomicReference<Map<String, RouteDefinition>> routesSnapshot =
             new AtomicReference<>(Collections.emptyMap());
 
+    /**
+     * 最近一次动态路由刷新时间戳 (毫秒)
+     */
+    private final AtomicReference<Long> lastRefreshTime = new AtomicReference<>(null);
+
+    /**
+     * 最近一次动态路由刷新是否成功
+     */
+    private final AtomicBoolean lastRefreshSuccess = new AtomicBoolean(true);
+
+    /**
+     * 最近一次动态路由刷新失败异常信息
+     */
+    private final AtomicReference<String> lastRefreshError = new AtomicReference<>(null);
+
     public NacosRouteDefinitionRepository(
             @Nullable ObjectProvider<NacosConfigManager> nacosConfigManagerProvider,
             AtengGatewayDynamicRouteProperties properties,
@@ -229,6 +244,9 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
         if (!StringUtils.hasText(configInfo)) {
             log.warn("[Gateway] 动态路由配置内容为空，触发快照守卫，坚决保留现有快照: dataId={}, group={}",
                     properties.getDataId(), properties.getGroup());
+            lastRefreshTime.set(System.currentTimeMillis());
+            lastRefreshSuccess.set(false);
+            lastRefreshError.set("动态路由配置内容为空");
             return false;
         }
 
@@ -247,6 +265,9 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
 
             // 4. 原子替换内存快照
             routesSnapshot.set(Collections.unmodifiableMap(newMap));
+            lastRefreshTime.set(System.currentTimeMillis());
+            lastRefreshSuccess.set(true);
+            lastRefreshError.set(null);
             log.info("[Gateway] Nacos 动态路由原子更新成功: dataId={}, group={}, 路由数={}",
                     properties.getDataId(), properties.getGroup(), newMap.size());
 
@@ -258,6 +279,9 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
         } catch (Exception ex) {
             log.error("[Gateway] Nacos 动态路由反序列化或语义校验失败，快照守卫生效，坚决保留上一份有效快照: dataId={}, group={}, error={}",
                     properties.getDataId(), properties.getGroup(), ex.getMessage(), ex);
+            lastRefreshTime.set(System.currentTimeMillis());
+            lastRefreshSuccess.set(false);
+            lastRefreshError.set(ex.getMessage());
             return false;
         }
     }
@@ -332,6 +356,48 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
      */
     public Map<String, RouteDefinition> getRoutesSnapshot() {
         return routesSnapshot.get();
+    }
+
+    /**
+     * 获取当前动态路由总数
+     */
+    public int getRouteCount() {
+        return routesSnapshot.get().size();
+    }
+
+    /**
+     * 当前快照是否健康可用 (未发生解析/校验回退故障)
+     */
+    public boolean isSnapshotHealthy() {
+        return lastRefreshSuccess.get();
+    }
+
+    /**
+     * 获取最近一次刷新时间戳 (毫秒)
+     */
+    public Long getLastRefreshTime() {
+        return lastRefreshTime.get();
+    }
+
+    /**
+     * 获取最近一次刷新是否成功
+     */
+    public Boolean getLastRefreshSuccess() {
+        return lastRefreshSuccess.get();
+    }
+
+    /**
+     * 获取最近一次刷新失败原因
+     */
+    public String getLastRefreshError() {
+        return lastRefreshError.get();
+    }
+
+    /**
+     * 获取动态路由配置属性
+     */
+    public AtengGatewayDynamicRouteProperties getProperties() {
+        return properties;
     }
 
     private void publishRefreshEvent() {

@@ -61,6 +61,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring Boot Actuator 运维与网关全景诊断端点支持 (可选依赖，零臃肿底座) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- 编译期配置元数据处理器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -2,6 +2,7 @@ package io.github.atengk.cloud.gateway.autoconfigure;
 
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.gateway.actuator.GatewayPanoramaEndpoint;
 import io.github.atengk.cloud.gateway.filter.GatewayAccessLogFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayClientIpFilter;
 import io.github.atengk.cloud.gateway.filter.GatewayHeaderSanitizeFilter;
@@ -421,6 +422,28 @@ public class AtengGatewayAutoConfiguration {
         @ConditionalOnMissingBean
         public GatewayRateLimitResponseFilter gatewayRateLimitResponseFilter(ObjectMapper objectMapper) {
             return new GatewayRateLimitResponseFilter(objectMapper);
+        }
+    }
+
+    /**
+     * 网关全景健康与动态路由诊断 Actuator 运维端点自动装配
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(org.springframework.boot.actuate.endpoint.annotation.Endpoint.class)
+    public static class GatewayActuatorAutoConfiguration {
+
+        /**
+         * 注册网关全景运维诊断端点 (/actuator/atengGateway)
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        public GatewayPanoramaEndpoint gatewayPanoramaEndpoint(
+                ObjectProvider<AtengGatewayProperties> propertiesProvider,
+                ObjectProvider<NacosRouteDefinitionRepository> nacosRepoProvider,
+                ObjectProvider<GatewayRouteRefreshListener> routeRefreshListenerProvider,
+                Environment environment) {
+            return new GatewayPanoramaEndpoint(
+                    propertiesProvider, nacosRepoProvider, routeRefreshListenerProvider, environment);
         }
     }
 }
