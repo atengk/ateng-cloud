@@ -33,7 +33,7 @@
 | `TrafficTag` | 声明式注解 | 方法/类级声明式流量染色与泳道绑定注解 | 支持静态标签与 `${...}` 占位符，支持 override 继承控制 |
 | `TrafficTagAspect` | 核心切面类 | 声明式流量染色 AOP 环绕拦截与确定性恢复切面 | 当 Classpath 存在 ProceedingJoinPoint 时激活，出口 `finally` 100% 还原上下文 |
 | `AtengTrafficEnvironmentPostProcessor` | 环境后置处理器 | 预设缓存时效至 3s 并解耦 Nacos 默认客户端 Supplier | 注册于 `META-INF/spring.factories`，挂载至最低优先级确保业务显式声明优先 |
-| `TrafficResultCode` | 强类型错误码 | 统一定义流量治理业务错误码（区段 4210~4219） | 实现 `IResultCode`，定义 4210 `STRICT_LANE_BLOCK` |
+| `TrafficResultCode` | 强类型错误码 | 统一定义流量治理业务错误码（区段 4210~4219） | 实现 `IResultCode`，定义 4210 `STRICT_LANE_BLOCK`、4211 `UNAUTHORIZED_TRAFFIC_TAG` |
 | `TrafficRoutingException` | 业务异常 | 金融级严格泳道强隔离未命中灰度实例时抛出 | 继承自 `BusinessException`，携带服务名与未命中灰度标签 |
 | `TrafficEndpoint` | Actuator 端点 | `/actuator/traffic` 全景状态查询与模拟沙箱端点 | GET 查询只读全景状态，POST `/simulate` 纳秒级无副作用沙箱模拟演练 |
 | `TrafficMetricsManager` | 指标度量管理器 | 全链路流量治理 Micrometer 指标输出与内存统计汇总 | 暴露 `ateng.cloud.traffic.requests.total`（多维 Counter）与 `rules.active`（Gauge） |
@@ -53,14 +53,14 @@
 | `ateng.cloud.traffic.filter-order` | `int` | `HIGHEST_PRECEDENCE + 50` | 入站流量染色过滤器执行顺序（位于链路追踪 Filter 之后） |
 | `ateng.cloud.traffic.cache-ttl` | `Duration` | `3s` | 客户端负载均衡本地实例缓存收敛时效（消除灰度切流时的盲区） |
 | `ateng.cloud.traffic.allowed-tags` | `Set<String>` | `[]` | 允许放行的合法流量染色标签白名单集合（为空表示不校验白名单，全量放行） |
-| `ateng.cloud.traffic.whitelist-action` | `TrafficWhitelistAction` | `STRIP` | 未授权流量染色标签的安全处置策略：STRIP（安全剥离降级至基线）、REJECT（抛出 4211 业务异常直接阻断） |
+| `ateng.cloud.traffic.whitelist-action` | `TrafficWhitelistAction` | `STRIP` | 未授权流量染色标签的安全处置策略：`STRIP`（安全剥离降级至基线）、`REJECT`（抛出 4211 业务异常直接阻断） |
 | `ateng.cloud.traffic.actuator.enabled` | `boolean` | `true` | 是否启用 `/actuator/traffic` 运维诊断端点与沙箱演练接口 |
 | `ateng.cloud.traffic.nacos.enabled` | `boolean` | `true` | 是否启用 Nacos 动态流量分流规则监听 |
 | `ateng.cloud.traffic.nacos.group` | `String` | `"DEFAULT_GROUP"` | Nacos 动态规则配置分组 GroupId |
 | `ateng.cloud.traffic.nacos.global-data-id` | `String` | `"traffic-rules.json"` | 全局公共流量分流规则 DataId |
 | `ateng.cloud.traffic.nacos.app-data-id` | `String` | `null` | 应用专属流量分流规则 DataId（缺省时平滑回退至 `${spring.application.name}-traffic-rules.json`） |
 | `ateng.cloud.traffic.nacos.prefer-app-rule` | `boolean` | `true` | 是否优先加载应用专属规则（true 时若专属规则存在则优先应用，缺省时平滑回退至全局规则） |
-| `ateng.cloud.traffic.nacos.merge-strategy` | `TrafficRuleMergeStrategy` | `OVERWRITE` | 规则合并策略: OVERWRITE (应用规则覆盖全局规则), MERGE (应用规则与全局规则合并按优先级排序) |
+| `ateng.cloud.traffic.nacos.merge-strategy` | `TrafficRuleMergeStrategy` | `OVERWRITE` | 规则合并策略: `OVERWRITE` (应用规则覆盖全局规则), `MERGE` (应用规则与全局规则合并按优先级排序) |
 
 ---
 
@@ -76,12 +76,13 @@
 ## 维度一：最小起步体验 (Quick Start)
 
 ### 1. 痛点与核心定位
-在微服务多级调用链路中，原生流量灰度往往面临三大核心生产痛点：
+在微服务多级调用链路中，原生流量灰度往往面临四大核心生产痛点：
 1. **东西向通信灰度断流**：南北向网关染色后，微服务通过 OpenFeign 或 RestTemplate 发起内部东西向调用时，染色标签丢失，流量失控滑落至基线集群；
 2. **中间节点发版不均匀导致泳道中断**：在 `Gateway ➔ Service A ➔ Service B ➔ Service C` 拓扑中，若中间服务 B 未发版而下游 C 已发版，传统路由直接全链路滑落基线，无法重回 C 的灰度集群；
-3. **未发版服务误选脏写基线**：在支付、结算等高敏感金融场景中，若灰度实例缺失，盲目降级到基线会导致脏数据写入基线数据库。
+3. **未发版服务误选脏写基线**：在支付、结算等高敏感金融场景中，若灰度实例缺失，盲目降级到基线会导致脏数据写入基线数据库；
+4. **外部恶意伪造流量标签穿透内网**：客户端伪造请求头注入非授权灰度标签可能导致访问未经生产验证的实验版本。
 
-`ateng-cloud-traffic` 通过标准化四维快照透传、三层复合责任链调度、跨跳泳道穿透保持与金融级严格隔离，提供开箱即用、无侵入的全链路灰度解决方案。
+`ateng-cloud-traffic` 通过标准化四维快照透传、三层复合责任链调度、跨跳泳道穿透保持、声明式方法级切面绑定、白名单防伪拦截与金融级严格隔离，提供开箱即用、无侵入的全链路流量治理解决方案。
 
 ---
 
@@ -161,10 +162,9 @@ public class SampleCloudTrafficApplication {
 ```java
 package io.github.atengk.cloud.sample.traffic.controller;
 
-import io.github.atengk.boot.core.context.TenantContextHolder;
-import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.traffic.model.TrafficTraceReport;
+import io.github.atengk.cloud.traffic.annotation.TrafficTag;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -199,6 +199,20 @@ public class SampleTrafficController {
     }
 
     /**
+     * 声明式金丝雀调用入口：使用 @TrafficTag("v2") 声明式将当前执行流及出站调用绑定至 v2 灰度泳道
+     */
+    @GetMapping("/declarative/dispatch")
+    @TrafficTag("v2")
+    public Result<TrafficTraceReport> declarativeDispatch() {
+        String currentTag = TrafficContextHolder.getTag();
+        log.info("[Declarative] 声明式入口执行 [tag='{}']", currentTag);
+
+        TrafficTraceReport report = invokeDownstream("http://service-a/service-a/process", currentTag);
+        report.prependVisitedNode("DeclarativeEntry[tag=" + (currentTag != null ? currentTag : "none") + "]");
+        return Result.success(report);
+    }
+
+    /**
      * Service A 业务节点：处理业务并调用 Service B
      */
     @GetMapping("/service-a/process")
@@ -212,6 +226,12 @@ public class SampleTrafficController {
         TrafficTraceReport report = invokeDownstream("http://service-b/service-b/process", currentTag);
         report.prependVisitedNode("ServiceA[inst=" + instanceId + ", tag=" + instanceTag + "]");
         return Result.success(report);
+    }
+
+    private TrafficTraceReport invokeDownstream(String url, String currentTag) {
+        // 内部通过 restTemplate 东西向调用，底层拦截器自动处理泳道穿透
+        // ...
+        return new TrafficTraceReport(currentTag);
     }
 }
 ```
@@ -278,25 +298,145 @@ ateng:
 
 ---
 
-### 3. 一致性哈希切流与单用户会话粘性保障
+### 3. 多版本 percentageRange 互斥分桶与一致性哈希粘性切流
 
-通过配置强类型 `TrafficRule`，可以基于 Header（如 `X-Client-Uid`）或 Cookie 设定百分比放量（0~100%）：
+当生产环境同时存在多个金丝雀并行灰度版本（如 `v2` 进行 0%~50% 比例放量，`v3` 进行 50%~100% 比例放量，或按比例留存基线）时，可通过 `percentageRange` 配置左闭右开区间 `[min, max)` 实现互斥分桶：
 
 ```json
 [
   {
-    "id": "rule-sticky-50",
+    "id": "rule-v2-canary",
     "targetTag": "v2",
-    "percentage": 50,
     "hashKeySource": "HEADER",
-    "hashKeyName": "X-Client-Uid"
+    "hashKeyName": "X-Client-Uid",
+    "percentageRange": [0, 50],
+    "priority": 10
+  },
+  {
+    "id": "rule-v3-canary",
+    "targetTag": "v3",
+    "hashKeySource": "HEADER",
+    "hashKeyName": "X-Client-Uid",
+    "percentageRange": [50, 100],
+    "priority": 10
   }
 ]
 ```
 
-框架基于 `MurmurHash3` 算法执行哈希分桶：
-- 用户 UID 在放量区间内绝对粘性，多次请求 100% 路由至同一版本；
-- 扩容放量（如从 20% 调至 50%）具备单调性，已落入灰度的用户绝不回退至基线。
+- **互斥无缝切流**：哈希值落入 `[0, 50)` 的用户粘性路由至 `v2`，落入 `[50, 100)` 的用户粘性路由至 `v3`，分桶互斥严密，单用户多次请求绝对稳定；
+- **单调性保障**：区间扩张时（如 `v2` 从 `[0, 20)` 扩大至 `[0, 50)`），原已命中灰度的用户绝不回退至其他版本或基线。
+
+---
+
+### 4. 合法流量染色白名单防伪与安全处置策略 (`allowed-tags`)
+
+为防御外部非法流量标签伪造与越权染色，系统提供了白名单过滤机制：
+
+```yaml
+ateng:
+  cloud:
+    traffic:
+      allowed-tags:
+        - v2
+        - v3
+      whitelist-action: STRIP   # 处置策略: STRIP 或 REJECT
+```
+
+- **`STRIP` 策略（默认安全剥离）**：当检测到未在 `allowed-tags` 中的非法标签（如 `attacker-tag`）时，系统自动清除非法标签并降级为无染色的基线流量，同时记录安全审计警告日志；
+- **`REJECT` 策略（快速失败阻断）**：立即阻断请求，直接抛出 `BusinessException`（错误码 `4211`：`UNAUTHORIZED_TRAFFIC_TAG`），禁止任何非法流量穿透。
+
+---
+
+### 5. Nacos 规则合并策略 (`OVERWRITE` vs `MERGE`)
+
+支持通过配置定义应用专属规则与全局公共规则的合并行为：
+
+```yaml
+ateng:
+  cloud:
+    traffic:
+      nacos:
+        prefer-app-rule: true
+        merge-strategy: MERGE   # OVERWRITE: 覆盖; MERGE: 合并排序
+```
+
+- **`OVERWRITE` 模式（默认）**：若应用专属规则存在且非空，则完全覆盖全局规则；专属规则缺失时平滑回退使用全局规则；
+- **`MERGE` 模式**：应用专属规则与全局规则合并生效，并统一按照 `priority` 降序排序，相同优先级按 ID 排序，实现全局与局部的统一治理。
+
+---
+
+### 6. `/actuator/traffic` 运维诊断端点与纳秒级无副作用沙箱模拟演练
+
+框架内置了 Spring Boot Actuator 扩展端点 `/actuator/traffic`（可配置 `ateng.cloud.traffic.actuator.enabled=true` 启用）：
+
+#### ① 查看全景流量治理运行状态
+发送 `GET /actuator/traffic` 请求，获取只读聚合状态：
+
+```bash
+curl -X GET http://localhost:8080/actuator/traffic
+```
+
+响应 JSON 包含生效规则、配置参数与监控指标：
+```json
+{
+  "traffic": {
+    "enabled": true,
+    "fallbackToDefault": true,
+    "strictLane": false,
+    "laneContinuity": true,
+    "allowedTags": ["v2", "v3"],
+    "whitelistAction": "STRIP"
+  },
+  "rules": {
+    "activeCount": 2,
+    "ruleList": [...]
+  },
+  "metrics": {
+    "totalRequests": 1024,
+    "taggedRequests": 512,
+    "baselineRequests": 512,
+    "rejectedRequests": 0
+  }
+}
+```
+
+#### ② 纳秒级无副作用沙箱模拟演练 (Sandbox Simulation)
+运维人员或测试系统可在不污染当前线程上下文的前提下，通过 `POST /actuator/traffic/simulate` 传入模拟请求头、查询参数或 Cookie，演练规则匹配结果：
+
+```bash
+curl -X POST http://localhost:8080/actuator/traffic/simulate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "headers": {
+      "X-Channel": "vip_wechat"
+    },
+    "queryParams": {
+      "traffic_tag": "v2"
+    }
+  }'
+```
+
+模拟演练返回毫秒/纳秒级匹配详情与决策路径：
+```json
+{
+  "matchedTag": "v2",
+  "matchedRuleId": "rule-vip-channel",
+  "action": "MATCHED",
+  "reason": "Traffic rule 'rule-vip-channel' matched with target tag: v2",
+  "durationNanos": 3200
+}
+```
+
+---
+
+### 7. 全链路流量治理 Micrometer 指标度量与 Prometheus 监控
+
+框架通过 `TrafficMetricsManager` 自动注册 Micrometer 核心治理指标：
+
+- **`ateng.cloud.traffic.requests.total`** (Counter)：
+  - 维度标签：`action` (`MATCHED`, `HEADER`, `PARAM`, `STRIPPED`, `REJECTED`, `NONE`), `rule_id`, `status` (`SUCCESS`, `REJECTED`), `tag`；
+- **`ateng.cloud.traffic.rules.active`** (Gauge)：
+  - 实时反映内存中当前生效的分流规则总数。
 
 ---
 
@@ -310,7 +450,7 @@ ateng:
 flowchart TD
     Req["东西向服务调用请求\n(Feign / RestTemplate)"] --> L1["第一层：业务灰度版本隔离级\n(TrafficTagServiceInstanceListSupplier)"]
     
-    L1 -->|精准匹配 metadata.tag| GrayPool["灰度实例池 (v2)"]
+    L1 -->|精准匹配 metadata.tag| GrayPool["灰度实例池 (v2/v3)"]
     L1 -->|无 tag 或平滑回退| BasePool["基线实例池 (default)"]
     L1 -->|strictLane=true 且缺失| FailFast["4210 异常阻断 (STRICT_LANE_BLOCK)"]
     
@@ -370,15 +510,36 @@ sequenceDiagram
 
 ---
 
+### 4. 零内存分配谓词匹配与正则预编译 LRU 缓存
+
+- **零分配高效匹配**：`TrafficPredicateMatcher` 在执行 `PREFIX`、`SUFFIX` 与 `CONTAINS` 匹配时，完全依托 `java.lang.String#regionMatches` 原语实施索引级扫描，严禁调用 `substring` 产生临时对象，杜绝高并发分流下的 GC 内存颠簸；
+- **正则预编译防御**：`REGEX` 匹配器内建容量受限的 LRU 编译缓存（默认 256 容量，基于 `LinkedHashMap`），杜绝每次分流重复编译正则表达式导致的 CPU 尖刺与内存溢出。
+
+---
+
+### 5. 纳秒级无副作用沙箱模拟演练不变量 (Zero Context Pollution)
+
+- **只读确定性判定**：`/actuator/traffic/simulate` 沙箱演练在独立的评估上下文（`TrafficEvaluationContext`）中完成，完全解耦自真实 Servlet 请求对象；
+- **零上下文污染**：演练过程严禁修改当前工作线程的 `TrafficContextHolder`、TTL 或 SLF4J MDC，演练调用具备严格幂等性与零线程污染保证。
+
+---
+
 ## 维度四：物理排版与代码全真验证
 
-本模块所有 Java 示例代码、YAML 配置片段与调用轨迹模型，**100% 逆向提取自跑通的场景样例工程 [sample-cloud-traffic-gray](../ateng-cloud-samples/sample-cloud-traffic-gray) 源码与实测用例**，并受以下 8 大端到端全真集成测试 100% 离线自洽守护：
+本模块所有 Java 示例代码、YAML 配置片段与调用轨迹模型，**100% 逆向提取自跑通的场景样例工程 [sample-cloud-traffic-gray](../ateng-cloud-samples/sample-cloud-traffic-gray) 源码与实测用例**，并受以下 13 大端到端全真集成测试 100% 离线自洽守护：
 
-- `testBaselineRouting`：未染色普通请求全链路调度至基线实例；
-- `testHeaderStainingAndCrossHopLaneContinuity`：静态 Header 染色与跨跳泳道穿透（`A-gray ➔ B-base ➔ C-gray`）；
-- `testQueryParamStaining`：URL Query 参数 `traffic_tag=v2` 染色与全链路透传；
-- `testUserIdPredicateMatching`：根据 `X-User-Id` 谓词规则匹配实现 VIP 用户精准分流；
-- `testConsistentHashCanaryAndSessionStickiness`：一致性哈希百分比切流与单用户会话粘性保障（多次请求结果绝对稳定一致）；
-- `testGrayNodeOfflineResilientFallback`：灰度节点全下线平滑降级（零 503 报警，无感回退至基线实例）；
-- `testStrictLaneIsolationFailFast`：金融级严格隔离阻断（未命中灰度即时 Fail-Fast 阻断，返回 `4210` 业务错误）；
-- `testNacosRuleHotReload`：Nacos 动态流量分流规则秒级原子热更与切流验证。
+| 编号 | 测试用例名称 | 核心验证场景与断言依据 |
+| :---: | :--- | :--- |
+| 1 | `testBaselineRouting` | 未染色普通请求全链路调度至基线实例 (`inst-a-base ➔ inst-b-base ➔ inst-c-base`) |
+| 2 | `testHeaderStainingAndCrossHopLaneContinuity` | 静态 Header 染色与跨跳泳道穿透 (`inst-a-gray ➔ inst-b-base ➔ inst-c-gray`) |
+| 3 | `testQueryParamStaining` | URL Query 参数 `traffic_tag=v2` 动态染色与全链路透传 |
+| 4 | `testUserIdPredicateMatching` | 根据 `X-User-Id` 谓词规则匹配实现 VIP 用户精准分流与基线隔离 |
+| 5 | `testConsistentHashCanaryAndSessionStickiness` | 一致性哈希百分比切流与单用户会话粘性保障（多次请求结果绝对稳定一致） |
+| 6 | `testGrayNodeOfflineResilientFallback` | 灰度节点全下线平滑降级（零 503 报警，无感平滑回退至基线实例） |
+| 7 | `testStrictLaneIsolationFailFast` | 金融级严格隔离阻断（未命中灰度即时 Fail-Fast 阻断，返回 `4210` STRICT_LANE_BLOCK 业务错误） |
+| 8 | `testNacosRuleHotReload` | Nacos 动态流量分流规则秒级原子热更与切流验证 |
+| 9 | `testDeclarativeTrafficTagAspectRouting` | 声明式 `@TrafficTag("v2")` 注解自动绑定金丝雀泳道并触发跨跳穿透与出口上下文还原 |
+| 10 | `testMultiCanaryPercentageRangeMutualExclusion` | 多金丝雀分支 (`v2`、`v3` 与基线) `percentageRange` 互斥区间放量与会话粘性端到端集成 |
+| 11 | `testSuffixAndContainsPredicateRouting` | 零分配 `SUFFIX`（以 `@internal.corp` 结尾）与 `CONTAINS`（包含 `beta_tester`）谓词规则匹配切流 |
+| 12 | `testAllowedTagsWhitelistDefense` | 合法流量标签白名单防伪拦截：STRIP 剥离降级至基线 与 REJECT 拦截抛出 `4211` UNAUTHORIZED_TRAFFIC_TAG |
+| 13 | `testActuatorTrafficEndpointAndSimulationSandbox` | `/actuator/traffic` 运维端点只读全景状态查询与 `/simulate` 纳秒级无副作用沙箱模拟演练 |
