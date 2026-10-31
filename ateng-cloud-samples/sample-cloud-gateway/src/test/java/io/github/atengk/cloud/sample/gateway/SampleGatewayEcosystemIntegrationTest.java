@@ -274,6 +274,111 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .jsonPath("$.msg").value(containsString("时间戳偏差过大"));
     }
 
+    @Test
+    @DisplayName("测试开放接口 POST 携带 Body 且签名包含 bodyHash 成功通过校验")
+    void testSignGuardValidBodyPostPasses() throws Exception {
+        String appId = "sample-app";
+        String secret = "sample-secret-123456";
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "nonce-post-" + System.nanoTime();
+        String jsonBody = "{\"message\":\"hello-ateng-cloud\"}";
+
+        String bodyHash = calculateSha256(jsonBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, secret);
+
+        webTestClient.post()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(jsonBody)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.message").isEqualTo("hello-ateng-cloud");
+    }
+
+    @Test
+    @DisplayName("测试开放接口 POST 请求体被篡改时被 401 阻断")
+    void testSignGuardTamperedBodyPostBlocked() throws Exception {
+        String appId = "sample-app";
+        String secret = "sample-secret-123456";
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "nonce-tamper-" + System.nanoTime();
+        String originalBody = "{\"message\":\"hello-ateng-cloud\"}";
+
+        String bodyHash = calculateSha256(originalBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, secret);
+
+        // 发送被篡改的 Body
+        String tamperedBody = "{\"message\":\"tampered-malicious-body\"}";
+        webTestClient.post()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(tamperedBody)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("API 签名校验失败"));
+    }
+
+    @Test
+    @DisplayName("测试开放接口 POST 超大报文 (>2MB) 快速熔断为 HTTP 413 Payload Too Large")
+    void testSignGuardOversizedPayloadPostBlocked() {
+        webTestClient.post()
+                .uri("/api/open/data")
+                .header(org.springframework.http.HttpHeaders.CONTENT_LENGTH, String.valueOf(3 * 1024 * 1024))
+                .header(GatewayConstants.X_APP_ID, "sample-app")
+                .header(GatewayConstants.X_TIMESTAMP, String.valueOf(System.currentTimeMillis()))
+                .header(GatewayConstants.X_NONCE, "nonce-oversized")
+                .header(GatewayConstants.X_SIGNATURE, "mock-signature")
+                .exchange()
+                .expectStatus().isEqualTo(org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(413)
+                .jsonPath("$.msg").value(containsString("超出最大允许限制"));
+    }
+
+    @Test
+    @DisplayName("测试开放接口 POST 无 Body 时按无 bodyHash 规范签名正常放行")
+    void testSignGuardEmptyBodyPostPasses() throws Exception {
+        String appId = "sample-app";
+        String secret = "sample-secret-123456";
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "nonce-empty-post-" + System.nanoTime();
+
+        // 空 Body 签名串不包含 &bodyHash=...
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, secret);
+
+        webTestClient.post()
+                .uri("/api/open/data")
+                .header(GatewayConstants.X_APP_ID, appId)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.status").isEqualTo("empty-body");
+    }
+
+    private String calculateSha256(byte[] data) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        return java.util.HexFormat.of().formatHex(md.digest(data));
+    }
+
     private String calculateHmacSha256(String data, String key) throws Exception {
         javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(key.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));

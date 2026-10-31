@@ -18,6 +18,11 @@ public class AtengGatewaySignProperties {
     private boolean enabled = false;
 
     /**
+     * 是否启用开放接口请求体 (Request Body) SHA-256 摘要加签防篡改
+     */
+    private boolean bodyEnabled = false;
+
+    /**
      * 时间戳允许的最大时钟偏差 (默认 5 分钟)
      */
     private Duration timestampThreshold = Duration.ofMinutes(5);
@@ -38,6 +43,14 @@ public class AtengGatewaySignProperties {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public boolean isBodyEnabled() {
+        return bodyEnabled;
+    }
+
+    public void setBodyEnabled(boolean bodyEnabled) {
+        this.bodyEnabled = bodyEnabled;
     }
 
     public Duration getTimestampThreshold() {

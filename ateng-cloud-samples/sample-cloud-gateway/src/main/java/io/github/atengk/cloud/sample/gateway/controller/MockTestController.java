@@ -57,6 +57,14 @@ public class MockTestController {
         return Mono.just(Result.success("open-api-verified"));
     }
 
+    @PostMapping("/open-data")
+    public Mono<Result<Map<String, Object>>> openDataPost(@RequestBody(required = false) Mono<Map<String, Object>> bodyMono) {
+        if (bodyMono == null) {
+            return Mono.just(Result.success(Map.of("status", "empty-body")));
+        }
+        return bodyMono.map(Result::success).defaultIfEmpty(Result.success(Map.of("status", "empty-body")));
+    }
+
     @GetMapping("/protected")
     public Mono<Result<String>> protectedEndpoint() {
         return Mono.just(Result.success("protected-access-ok"));

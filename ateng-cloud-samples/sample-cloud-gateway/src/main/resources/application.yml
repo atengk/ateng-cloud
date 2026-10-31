@@ -76,6 +76,7 @@ ateng:
         slow-threshold: 3s
       sign:
         enabled: true
+        body-enabled: true
         timestamp-threshold: 5m
         include-paths:
           - "/api/open/**"
