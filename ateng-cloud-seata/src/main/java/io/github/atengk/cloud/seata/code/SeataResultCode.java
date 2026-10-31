@@ -29,6 +29,11 @@ public enum SeataResultCode implements IResultCode {
     SEATA_TC_UNAVAILABLE(5103, "分布式事务协调器 (TC) 不可达或连接中断"),
 
     /**
+     * 下游调用触发熔断降级，全局事务强制阻断回滚
+     */
+    SEATA_DEGRADE_BLOCKED(5104, "下游调用触发熔断降级，全局事务强制阻断回滚"),
+
+    /**
      * TCC 分支事务已被业务悬挂拦截
      */
     TCC_FENCE_SUSPENDED(5110, "TCC 分支事务已被业务悬挂拦截"),
