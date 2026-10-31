@@ -42,6 +42,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Apache Dubbo (编译期可选，微服务 Dubbo RPC 通信时自动激活 XID 透传 Filter) -->
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Jakarta Servlet API 规范 -->
         <dependency>
             <groupId>jakarta.servlet</groupId>

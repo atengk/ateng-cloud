@@ -17,9 +17,14 @@ public final class SeataConstants {
     public static final String PROPERTIES_PREFIX = "ateng.cloud.seata";
 
     /**
+     * 全局事务 XID 标准请求头与 RPC Attachment 键名
+     */
+    public static final String TX_XID = "TX_XID";
+
+    /**
      * HTTP 请求头中透传的 Seata 全局事务 ID (XID) 键名
      */
-    public static final String TX_XID_HEADER = "TX_XID";
+    public static final String TX_XID_HEADER = TX_XID;
 
     /**
      * Seata Web 拦截器默认执行顺序
