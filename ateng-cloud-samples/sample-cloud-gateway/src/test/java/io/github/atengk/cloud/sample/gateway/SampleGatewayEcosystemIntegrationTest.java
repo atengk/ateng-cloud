@@ -397,6 +397,23 @@ public class SampleGatewayEcosystemIntegrationTest {
     }
 
     @Test
+    @DisplayName("测试中划线命名端点 (/actuator/ateng-gateway) 均可平滑访问输出四维全景结构化报告")
+    void testGatewayPanoramaEndpointHyphenatedPathReturns200() {
+        webTestClient.get()
+                .uri("/actuator/ateng-gateway")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("UP")
+                .jsonPath("$.gatewayId").isEqualTo("sample-cloud-gateway")
+                .jsonPath("$.dynamicRoute.totalRouteCount").isNumber()
+                .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(true)
+                .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
+                .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
+                .jsonPath("$.signGuard.enabled").isEqualTo(true);
+    }
+
+    @Test
     @DisplayName("测试网关访问日志携带敏感 Query 参数与超长 Query 请求平滑通过且脱敏审计")
     void testAccessLogQueryMaskingAndBypassInSampleGateway() {
         // 1. 发送携带内置敏感参数 (password, token) 与自定义敏感参数 (customSecret) 的请求

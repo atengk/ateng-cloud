@@ -116,6 +116,7 @@
 | `ateng.cloud.gateway.access-log.include-query` | `boolean` | `false` | 是否在轻量响应式访问日志中记录 Query 参数（默认 false） |
 | `ateng.cloud.gateway.access-log.mask-keys` | `List<String>` | `[]` | 自定义敏感 Query 参数名脱敏列表（不区分大小写，值替换为 `***`） |
 | `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否开启开放接口 API 数字签名防篡改与 Nonce 防重放 |
+| `ateng.cloud.gateway.sign.body-enabled` | `boolean` | `false` | 是否开启开放接口请求体 (Request Body) SHA-256 摘要加签防篡改 |
 | `ateng.cloud.gateway.sign.timestamp-threshold` | `Duration` | `5m` | 签名时间戳允许的最大时钟偏差窗口 |
 | `ateng.cloud.gateway.sign.include-paths` | `List<String>` | `[]` | 需进行签名校验的目标路径列表（支持 AntPath，为空对全量生效） |
 | `ateng.cloud.gateway.sign.exclude-paths` | `List<String>` | `[]` | 签名校验排除放行路径列表（支持 AntPath） |
@@ -375,6 +376,24 @@ public class CustomTrafficTagResolverConfiguration {
 - **3 秒实例缓存 TTL 极速感知**：
   通过 `AtengGatewayEnvironmentPostProcessor` 默认向 Environment 注入 `spring.cloud.loadbalancer.cache.ttl: 3s`，规避 Spring Cloud 默认 35s 缓存导致的滚动发布下线流量黑洞与节点感知滞后。
 
+### 8. 下游连接中断 502 转译与 Sentinel 响应式流控对齐 (PrematureClose & Sentinel Alignment)
+- **网络中断 502 语义收敛**：当下游微服务连接在传输中途异常挂起或过早关闭（如 Netty `PrematureCloseException`、`ClosedChannelException`）时，网关统一转译为 HTTP 502 Bad Gateway 规范 Result JSON，附带链路 TraceId，杜绝底层网络管道异常直接泄露或误判为 500；
+- **Sentinel 响应式异常自适应对齐**：通过反射探测阿里 Sentinel 核心异常（`FlowException`、`ParamFlowException`、`SystemBlockException` 转译为 HTTP 429 并附加 `Retry-After: 1` 响应头；`DegradeException` 熔断降级转译为 HTTP 503），在未强引入 Sentinel 时保持轻量零依赖，运行时引入即可自动生效。
+
+### 9. 开放接口 Request Body 摘要加签与堆外内存确定性释放 (Deterministic Body Caching)
+- **安全防篡改规范**：开启 `body-enabled=true` 时，针对 POST/PUT/PATCH 请求体异步计算 SHA-256 摘要，参与规范签名串计算（`&bodyHash=<sha256>`）；空 Body 或无 Body 时平滑兼容规范放行；
+- **堆外内存零泄漏不变量**：通过 `ServerHttpRequestDecorator` 与 `DataBufferUtils.retain` 安全缓存并重新发布字节流供下游消费；使用 Reactor `doFinally` 挂载 `DataBufferUtils.release` 确定性释放机制，在发生网络中断或异常拦截时确保堆外内存物理释放，彻底杜绝 Direct Memory OOM。
+
+### 10. 全景健康诊断端点与非阻塞无锁原子快照 (Gateway Panorama Diagnostics)
+- **只读运维端点**：提供 `/actuator/atengGateway` 与中划线别名 `/actuator/ateng-gateway`，双向兼容 Actuator 规范；
+- **微秒级无锁读取**：直接读取双轨路由、灰度负载、边缘安全、接口验签四大维度内存原子快照，耗时 <100 微秒，零外部网络 IO；快照异常时平滑降级标记 `DEGRADED`；
+- **安全零泄密**：IP 黑白名单与敏感标头仅输出规则数量统计（如 `ipBlacklistCount: 2`），坚决不泄漏内网 IP 与私钥明文。
+
+### 11. 访问审计敏感 Query 脱敏、256 字符硬截断与旁路隔离 (Audit Log Query Sanitizer)
+- **12 类高频敏感词匹配**：内置 `password`、`token`、`secret` 等 12 类敏感词库（大小写不敏感），匹配值统一替换为 `***`，支持自定义 `mask-keys` 扩展；
+- **防爆截断**：清洗后字符串硬限制最大 256 字符，超出追加 `...(truncated)`，防御恶意入参撑爆日志磁盘；
+- **绝对旁路隔离**：遇到非法 `%` 转义或畸形字符平滑降级输出 `[malformed-query]`，绝不中断业务请求链路。
+
 ---
 
 ## 维度四：物理排版与代码全真验证
@@ -548,7 +567,99 @@ void testHttpBoundaryUncoloredRequestNeverTouchesCanary() {
 }
 ```
 
-### 7. 网关全景健康与动态路由运维诊断端点 (Actuator atengGateway)
+### 7. 下游连接中断与信道关闭 502 转译测试
+```java
+@Test
+@DisplayName("测试下游连接过早关闭 PrematureCloseException 转译为 HTTP 502 Bad Gateway")
+void testPrematureCloseTranslation() {
+    webTestClient.get()
+            .uri("/mock/premature-close")
+            .exchange()
+            .expectStatus().isEqualTo(502)
+            .expectHeader().exists("X-Trace-Id")
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(502)
+            .jsonPath("$.msg").value(containsString("Bad Gateway"))
+            .jsonPath("$.traceId").isNotEmpty();
+}
+
+@Test
+@DisplayName("测试信道关闭 ClosedChannelException 转译为 HTTP 502 Bad Gateway")
+void testClosedChannelTranslation() {
+    webTestClient.get()
+            .uri("/mock/closed-channel")
+            .exchange()
+            .expectStatus().isEqualTo(502)
+            .expectHeader().exists("X-Trace-Id")
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(502)
+            .jsonPath("$.msg").value(containsString("Bad Gateway"))
+            .jsonPath("$.traceId").isNotEmpty();
+}
+```
+
+### 8. 开放接口 Request Body SHA-256 摘要加签与防篡改测试
+```java
+@Test
+@DisplayName("测试开放接口 POST 请求体计算 SHA-256 摘要加签通过并放行")
+void testSignGuardPostWithBodyPasses() throws Exception {
+    String appId = "sample-app";
+    String secret = "sample-secret-123456";
+    String timestamp = String.valueOf(System.currentTimeMillis());
+    String nonce = "nonce-body-" + System.nanoTime();
+    String body = "{\"message\":\"hello-ateng-cloud\"}";
+
+    String bodyHash = calculateSha256(body.getBytes(StandardCharsets.UTF_8));
+    String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
+    String signature = calculateHmacSha256(canonical, secret);
+
+    webTestClient.post()
+            .uri("/api/open/data")
+            .header(GatewayConstants.X_APP_ID, appId)
+            .header(GatewayConstants.X_TIMESTAMP, timestamp)
+            .header(GatewayConstants.X_NONCE, nonce)
+            .header(GatewayConstants.X_SIGNATURE, signature)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(200)
+            .jsonPath("$.data.message").isEqualTo("hello-ateng-cloud");
+}
+
+@Test
+@DisplayName("测试开放接口 POST 请求体被篡改时被 401 阻断")
+void testSignGuardTamperedBodyPostBlocked() throws Exception {
+    String appId = "sample-app";
+    String secret = "sample-secret-123456";
+    String timestamp = String.valueOf(System.currentTimeMillis());
+    String nonce = "nonce-tamper-" + System.nanoTime();
+    String originalBody = "{\"message\":\"hello-ateng-cloud\"}";
+
+    String bodyHash = calculateSha256(originalBody.getBytes(StandardCharsets.UTF_8));
+    String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
+    String signature = calculateHmacSha256(canonical, secret);
+
+    // 发送被篡改的 Body
+    String tamperedBody = "{\"message\":\"tampered-malicious-body\"}";
+    webTestClient.post()
+            .uri("/api/open/data")
+            .header(GatewayConstants.X_APP_ID, appId)
+            .header(GatewayConstants.X_TIMESTAMP, timestamp)
+            .header(GatewayConstants.X_NONCE, nonce)
+            .header(GatewayConstants.X_SIGNATURE, signature)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(tamperedBody)
+            .exchange()
+            .expectStatus().isUnauthorized()
+            .expectBody()
+            .jsonPath("$.code").isEqualTo(401)
+            .jsonPath("$.msg").value(containsString("API 签名校验失败"));
+}
+```
+
+### 9. 网关全景健康与动态路由运维诊断端点 (Actuator atengGateway / ateng-gateway)
 
 #### 配置开启与路径白名单
 在 `application.yml` 中暴露端点，并加入网关边缘安全白名单：
@@ -589,6 +700,23 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
             .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
             .jsonPath("$.signGuard.enabled").isEqualTo(true)
             .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
+}
+
+@Test
+@DisplayName("测试中划线命名端点 (/actuator/ateng-gateway) 均可平滑访问输出四维全景结构化报告")
+void testGatewayPanoramaEndpointHyphenatedPathReturns200() {
+    webTestClient.get()
+            .uri("/actuator/ateng-gateway")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.status").isEqualTo("UP")
+            .jsonPath("$.gatewayId").isEqualTo("sample-cloud-gateway")
+            .jsonPath("$.dynamicRoute.totalRouteCount").isNumber()
+            .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(true)
+            .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
+            .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
+            .jsonPath("$.signGuard.enabled").isEqualTo(true);
 }
 ```
 
@@ -648,7 +776,7 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport() {
 }
 ```
 
-### 8. 响应式访问日志审计与敏感 Query 脱敏
+### 10. 响应式访问日志审计与敏感 Query 脱敏
 
 #### 配置开启与自定义脱敏
 在 `application.yml` 中开启访问日志与 Query 审计：

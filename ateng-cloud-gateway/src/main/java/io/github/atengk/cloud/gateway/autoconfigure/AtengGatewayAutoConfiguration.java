@@ -445,5 +445,20 @@ public class AtengGatewayAutoConfiguration {
             return new GatewayPanoramaEndpoint(
                     propertiesProvider, nacosRepoProvider, routeRefreshListenerProvider, environment);
         }
+
+        /**
+         * 注册中划线别名路由 (/actuator/ateng-gateway)，双向兼容两种命名风格
+         */
+        @Bean
+        @ConditionalOnMissingBean(name = "atengGatewayHyphenatedRouter")
+        public org.springframework.web.reactive.function.server.RouterFunction<org.springframework.web.reactive.function.server.ServerResponse> atengGatewayHyphenatedRouter(
+                GatewayPanoramaEndpoint endpoint) {
+            return org.springframework.web.reactive.function.server.RouterFunctions.route(
+                    org.springframework.web.reactive.function.server.RequestPredicates.GET("/actuator/ateng-gateway"),
+                    request -> org.springframework.web.reactive.function.server.ServerResponse.ok()
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .bodyValue(endpoint.report())
+            );
+        }
     }
 }
