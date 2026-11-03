@@ -4,6 +4,7 @@ import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.core.util.JsonUtil;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
+import io.github.atengk.cloud.sample.traffic.model.OrderFulfillmentVO;
 import io.github.atengk.cloud.sample.traffic.model.TrafficTraceReport;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
@@ -93,6 +94,9 @@ class SampleCloudTrafficIntegrationTest {
     private static final ParameterizedTypeReference<Result<TrafficTraceReport>> RESULT_TYPE_REF =
             new ParameterizedTypeReference<>() {};
 
+    private static final ParameterizedTypeReference<Result<OrderFulfillmentVO>> ORDER_VO_TYPE_REF =
+            new ParameterizedTypeReference<>() {};
+
     private TrafficTraceReport extractReport(ResponseEntity<Result<TrafficTraceReport>> response) {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         Result<TrafficTraceReport> result = response.getBody();
@@ -101,6 +105,16 @@ class SampleCloudTrafficIntegrationTest {
         TrafficTraceReport report = result.getData();
         assertThat(report).isNotNull();
         return report;
+    }
+
+    private OrderFulfillmentVO extractOrderFulfillment(ResponseEntity<Result<OrderFulfillmentVO>> response) {
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Result<OrderFulfillmentVO> result = response.getBody();
+        assertThat(result).isNotNull();
+        assertThat(result.isSuccess()).isTrue();
+        OrderFulfillmentVO vo = result.getData();
+        assertThat(vo).isNotNull();
+        return vo;
     }
 
     @BeforeEach
@@ -131,6 +145,24 @@ class SampleCloudTrafficIntegrationTest {
                 new DefaultServiceInstance("inst-c-gray", "service-c", "127.0.0.1", port, false, Map.of("tag", "v2"))
         ));
 
+        // 初始化电商履约微服务沙箱拓扑 (Order Service -> Inventory Service -> Logistics Service)
+        // Order Service: 同时拥有基线与 v2 灰度节点
+        discoveryClient.setInstances("order-service", List.of(
+                new DefaultServiceInstance("inst-order-base", "order-service", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-order-gray", "order-service", "127.0.0.1", port, false, Map.of("tag", "v2"))
+        ));
+
+        // Inventory Service: 仅拥有基线节点 (模拟中间服务未发版)
+        discoveryClient.setInstances("inventory-service", List.of(
+                new DefaultServiceInstance("inst-inv-base", "inventory-service", "127.0.0.1", port, false, Map.of("tag", "default"))
+        ));
+
+        // Logistics Service: 同时拥有基线与 v2 灰度节点 (下游发版)
+        discoveryClient.setInstances("logistics-service", List.of(
+                new DefaultServiceInstance("inst-logistics-base", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-logistics-gray", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "v2"))
+        ));
+
         // 重置动态规则
         if (nacosRuleListener != null) {
             nacosRuleListener.receiveAppConfig("[]");
@@ -146,6 +178,82 @@ class SampleCloudTrafficIntegrationTest {
         trafficProperties.setFallbackToDefault(true);
         trafficProperties.setAllowedTags(Collections.emptySet());
         trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
+    }
+
+    @Test
+    @DisplayName("电商履约切片: 未染色普通订单调度全链路调度至基线实例")
+    void testOrderDispatchBaselineRouting() {
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/dispatch?orderNo=ORD-20261103-1001",
+                HttpMethod.GET,
+                null,
+                ORDER_VO_TYPE_REF
+        );
+
+        OrderFulfillmentVO vo = extractOrderFulfillment(response);
+        assertThat(vo.getTrafficTag()).isNull();
+        assertThat(vo.getOrderNo()).isEqualTo("ORD-20261103-1001");
+        assertThat(vo.getDeliveryStatus()).isEqualTo("FULFILLED");
+
+        // 验证全链路均路由到 default 基线节点 (order-service -> inventory-service -> logistics-service)
+        assertThat(vo.getVisitedNodes()).containsExactly(
+                "Gateway[tag=none]",
+                "OrderService[inst=inst-order-base, tag=default]",
+                "InventoryService[inst=inst-inv-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-base, tag=default]"
+        );
+    }
+
+    @Test
+    @DisplayName("电商履约切片: 静态 Header 染色与跨跳泳道穿透 (Lane Continuity)")
+    void testOrderDispatchHeaderStainingAndCrossHopLaneContinuity() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/dispatch?orderNo=ORD-20261103-1002",
+                HttpMethod.GET,
+                entity,
+                ORDER_VO_TYPE_REF
+        );
+
+        OrderFulfillmentVO vo = extractOrderFulfillment(response);
+        assertThat(vo.getTrafficTag()).isEqualTo("v2");
+        assertThat(vo.getOrderNo()).isEqualTo("ORD-20261103-1002");
+
+        // 核心断言：
+        // 1. Order Service 命中 v2 灰度节点 (inst-order-gray)
+        // 2. Inventory Service 无 v2 节点，平滑降级至基线 (inst-inv-base)
+        // 3. Logistics Service 泳道回升成功，重新命中 v2 灰度节点 (inst-logistics-gray)
+        assertThat(vo.getVisitedNodes()).containsExactly(
+                "Gateway[tag=v2]",
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "InventoryService[inst=inst-inv-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+    }
+
+    @Test
+    @DisplayName("电商履约切片: URL Query 参数 traffic_tag 动态染色透传")
+    void testOrderDispatchQueryParamStaining() {
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/dispatch?traffic_tag=v2&orderNo=ORD-20261103-1003",
+                HttpMethod.GET,
+                null,
+                ORDER_VO_TYPE_REF
+        );
+
+        OrderFulfillmentVO vo = extractOrderFulfillment(response);
+        assertThat(vo.getTrafficTag()).isEqualTo("v2");
+        assertThat(vo.getOrderNo()).isEqualTo("ORD-20261103-1003");
+
+        assertThat(vo.getVisitedNodes()).containsExactly(
+                "Gateway[tag=v2]",
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "InventoryService[inst=inst-inv-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
     }
 
     @Test
