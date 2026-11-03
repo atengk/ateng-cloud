@@ -63,3 +63,11 @@ _Avoid_: 兜底拦截器, 降级切面, 客户端容错代理
 **Hermetic Module Test Suite**:
 在脱离物理注册中心与外部网络环境下，使用纯内存桩对 Starter 自动装配、过滤器链与异常转译进行全分支防御性验证的单测矩阵。
 _Avoid_: 集成测试套件, Dubbo单测, 本地测试用例
+
+**Trade Billing Center**:
+面向分布式高并发交易场景，基于 Triple 协议提供单笔结算、双模强契约断言及 Server Stream 实时分批对账推送的核心微服务领域模型。
+_Avoid_: 交易服务, 计费服务, 结算模块
+
+**Dual-Controller Consumer Architecture**:
+将微服务接入层按职责正交拆分为高频业务消费（Trade）与生产治理容灾（Governance）两大独立控制器的领域分层架构。
+_Avoid_: 混合控制器, 胖控制器, 演示接口集合

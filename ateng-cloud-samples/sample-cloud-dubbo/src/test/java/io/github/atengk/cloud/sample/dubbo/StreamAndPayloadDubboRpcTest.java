@@ -23,6 +23,9 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.TestSocketUtils;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -43,7 +46,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("Triple 流式通信与生产基线防护测试")
 public class StreamAndPayloadDubboRpcTest {
 
-    @DubboReference(url = "tri://127.0.0.1:50051", check = false)
+    @DynamicPropertySource
+    static void configureProperties(DynamicPropertyRegistry registry) {
+        int dubboPort = TestSocketUtils.findAvailableTcpPort();
+        registry.add("dubbo.protocol.port", () -> dubboPort);
+        registry.add("test.stream.dubbo.port", () -> dubboPort);
+    }
+
+    @DubboReference(url = "tri://127.0.0.1:${test.stream.dubbo.port}", check = false)
     private UserRpcService userRpcService;
 
     @Autowired(required = false)
