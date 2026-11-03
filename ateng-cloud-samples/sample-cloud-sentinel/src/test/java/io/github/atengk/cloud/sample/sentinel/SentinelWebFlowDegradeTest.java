@@ -94,7 +94,7 @@ class SentinelWebFlowDegradeTest {
     void testDegradeBlock() throws Exception {
         // 配置异常数降级规则：异常数大于 0 次即熔断 10 秒
         DegradeRule rule = new DegradeRule();
-        rule.setResource("/api/test/degrade");
+        rule.setResource("/sample/cloud/sentinel/payment/circuit-breaker");
         rule.setGrade(RuleConstant.DEGRADE_GRADE_EXCEPTION_COUNT);
         rule.setCount(0);
         rule.setTimeWindow(10);
@@ -103,13 +103,13 @@ class SentinelWebFlowDegradeTest {
 
         // 第 1 次请求：触发业务异常，计入熔断统计
         try {
-            mockMvc.perform(get("/api/test/degrade?fail=true"));
+            mockMvc.perform(get("/sample/cloud/sentinel/payment/circuit-breaker?fail=true"));
         } catch (Exception ignored) {
             // 忽略业务异常
         }
 
         // 第 2 次请求：处于熔断窗口期内，被 DegradeRule 阻断，返回 HTTP 503
-        MvcResult mvcResult = mockMvc.perform(get("/api/test/degrade"))
+        MvcResult mvcResult = mockMvc.perform(get("/sample/cloud/sentinel/payment/circuit-breaker"))
                 .andExpect(status().isServiceUnavailable())
                 .andReturn();
 
