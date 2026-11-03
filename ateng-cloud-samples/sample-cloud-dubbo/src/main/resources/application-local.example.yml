@@ -1,6 +1,7 @@
 # ==============================================================================
 # 本地真实 Nacos 服务注册与发现配置模板（请将本文件复制为 application-local.yml 并填写真实凭据）
 # 注意：application-local.yml 已被 .gitignore 全局物理忽略，严禁向 Git 提交任何真实凭据！
+# 激活方式：启动时添加环境变量 SPRING_PROFILES_ACTIVE=local 或 VM 参数 -Dspring.profiles.active=local
 # ==============================================================================
 spring:
   config:
@@ -28,9 +29,13 @@ dubbo:
       namespace: ${spring.cloud.nacos.discovery.namespace:}
     use-as-config-center: false
     use-as-metadata-center: false
+  consumer:
+    check: false
+    # 置空直连 URL，触发 Dubbo 消费端通过 Nacos 注册中心执行服务发现与客户端负载均衡
+    direct-url: ""
   test:
     reference:
-      # 置空 direct URL，触发 Dubbo 消费端通过 Nacos 注册中心执行服务发现与负载均衡
+      # 测试引用直连 URL 置空
       url: ""
 
 ateng:

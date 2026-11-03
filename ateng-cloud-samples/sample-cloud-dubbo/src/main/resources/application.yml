@@ -1,27 +1,38 @@
+# ==============================================================================
+# Sample Cloud Dubbo 样例服务配置
+# 默认配置保障 100% 离线自洽（无需物理 Nacos 注册中心即可运行全量端到端测试）
+# ==============================================================================
+
 server:
-  port: 0
+  port: 8080
 
 spring:
   application:
     name: sample-cloud-dubbo
   config:
     import:
-      # 弹性探测本地真实服务配置文件；物理不存在时自动静默忽略，保障 CI 100% 离线自洽
+      # 弹性探测本地真实微服务环境配置，存在时增量合并，不存在时静默跳过守护 CI 离线自洽
       - "optional:classpath:application-local.yml"
 
 dubbo:
   application:
     name: sample-cloud-dubbo
+    # 默认应用级服务发现注册模式
     register-mode: instance
   registry:
+    # 默认离线自洽：注册中心设为 N/A，配合直连 URL，完全脱离外部物理 Nacos
     address: N/A
   protocol:
+    # 启用 Triple 现代流式通信协议
     name: tri
     port: 50051
     serialization: fastjson2
   consumer:
+    # 启动阶段不强检服务提供者在线状态，支持消费端平滑自洽启动
     check: false
     scope: remote
+    # 默认直连本机 Provider 实例（激活 local profile 时置空以启用 Nacos 发现）
+    direct-url: tri://127.0.0.1:50051
   provider:
     timeout: 5000
 
@@ -35,3 +46,11 @@ ateng:
       enabled: true
       timeout: 5000ms
       retries: 0
+      validation:
+        enabled: true
+      overload:
+        enabled: true
+        metrics-enabled: true
+      same-token:
+        enabled: true
+        check: true
