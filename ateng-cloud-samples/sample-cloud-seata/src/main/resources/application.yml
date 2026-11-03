@@ -40,6 +40,10 @@ seata:
 
 # ateng-cloud-seata 生产基础设施配置
 ateng:
+  boot:
+    web:
+      shutdown:
+        enabled: false
   cloud:
     seata:
       enabled: true

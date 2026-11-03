@@ -1,5 +1,7 @@
 package io.github.atengk.cloud.sample.seata.service;
 
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.seata.code.SeataResultCode;
 import io.github.atengk.cloud.seata.fallback.SeataFallbackDefense;
 import org.apache.seata.core.context.RootContext;
 import org.slf4j.Logger;
@@ -49,9 +51,23 @@ public class OrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createOrder(String userId, String commodityCode, int orderCount) {
+        return createOrder(userId, commodityCode, orderCount, false);
+    }
+
+    /**
+     * 创建订单全流程分布式事务（支持显式模拟业务异常触发回滚）
+     *
+     * @param userId        用户 ID
+     * @param commodityCode 商品编码
+     * @param orderCount    订购数量
+     * @param forceRollback 是否在落库后模拟抛出异常触发全局两阶段原子回滚
+     * @return 订单 ID
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long createOrder(String userId, String commodityCode, int orderCount, boolean forceRollback) {
         int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
-        log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}], 金额 [{}]",
-                RootContext.getXID(), userId, commodityCode, orderCount, orderMoney);
+        log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}], 金额 [{}], 模拟回滚 [{}]",
+                RootContext.getXID(), userId, commodityCode, orderCount, orderMoney, forceRollback);
 
         // 1. 扣减库存
         storageService.deduct(commodityCode, orderCount);
@@ -62,6 +78,12 @@ public class OrderService {
         // 3. 创建订单记录
         Long orderId = insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
         log.info("订单创建成功，订单 ID: [{}]", orderId);
+
+        // 4. 显式模拟异常触发全局两阶段原子回滚
+        if (forceRollback) {
+            throw new BusinessException(SeataResultCode.SEATA_TRANSACTION_FAILED, "模拟业务异常触发全局两阶段原子回滚: 用户 " + userId);
+        }
+
         return orderId;
     }
 
