@@ -26,9 +26,21 @@ spring:
           predicates:
             - Path=/api/open/data
         - id: auth-login
-          uri: forward:/auth/login
+          uri: forward:/sample/cloud/gateway/auth/login
           predicates:
             - Path=/api/auth/login
+        - id: auth-user-info
+          uri: forward:/sample/cloud/gateway/auth/user-info
+          predicates:
+            - Path=/api/auth/user-info
+        - id: auth-inspect-context
+          uri: forward:/sample/cloud/gateway/auth/inspect-context
+          predicates:
+            - Path=/api/auth/inspect-context
+        - id: auth-logout
+          uri: forward:/sample/cloud/gateway/auth/logout
+          predicates:
+            - Path=/api/auth/logout
         - id: mock-hello
           uri: forward:/mock/hello
           predicates:
@@ -92,8 +104,12 @@ ateng:
           - "/api/mock/hello"
           - "/api/mock/echo-headers"
           - "/mock/echo-headers"
-          - "/api/auth/**"
-          - "/auth/**"
+          - "/api/auth/login"
+          - "/sample/cloud/gateway/auth/login"
+          - "/api/auth/inspect-context"
+          - "/sample/cloud/gateway/auth/inspect-context"
+          - "/api/auth/logout"
+          - "/sample/cloud/gateway/auth/logout"
           - "/mock/hello"
           - "/mock/business-error"
           - "/mock/server-error"

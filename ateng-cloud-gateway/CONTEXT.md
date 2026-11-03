@@ -123,3 +123,7 @@ _Avoid_: 路由冲突覆盖, 路由优先级, 动态路由仲裁
 **Non-Blocking Telemetry Isolation**:
 网关全景诊断端点与访问日志审计坚守的只读无锁、零网络阻塞、异常安全降级的绝对旁路观测隔离机制。
 _Avoid_: 旁路容错, 审计隔离, 端点无锁
+
+**In-Memory Forwarding**:
+在样例工程与离线测试中，利用 Spring Cloud Gateway 原生 `forward:/` 协议断言将路由分发至本地 WebFlux 响应式控制器的离线自洽架构机制，在完整覆盖网关过滤器链与谓词断言的同时消除外部进程开销与网络端口冲突。
+_Avoid_: 内部重定向, Controller直调, 本地Mock转发
