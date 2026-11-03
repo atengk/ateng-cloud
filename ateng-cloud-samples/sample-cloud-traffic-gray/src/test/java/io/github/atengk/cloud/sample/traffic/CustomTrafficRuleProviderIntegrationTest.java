@@ -1,7 +1,7 @@
 package io.github.atengk.cloud.sample.traffic;
 
 import io.github.atengk.boot.core.model.Result;
-import io.github.atengk.cloud.sample.traffic.model.TrafficTraceReport;
+import io.github.atengk.cloud.sample.traffic.model.OrderFulfillmentVO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,41 +47,41 @@ class CustomTrafficRuleProviderIntegrationTest {
     @Test
     @DisplayName("验证自定义 SPI 注入的规则生效命中灰度")
     void testCustomTrafficRuleProviderTakesEffect() {
-        // 配置测试实例拓扑
-        discoveryClient.setInstances("service-a", List.of(
-                new DefaultServiceInstance("inst-a-base", "service-a", "127.0.0.1", port, false, Map.of("tag", "default")),
-                new DefaultServiceInstance("inst-a-gray", "service-a", "127.0.0.1", port, false, Map.of("tag", "v2"))
+        // 配置测试实例拓扑 (电商履约服务拓扑)
+        discoveryClient.setInstances("order-service", List.of(
+                new DefaultServiceInstance("inst-order-base", "order-service", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-order-gray", "order-service", "127.0.0.1", port, false, Map.of("tag", "v2"))
         ));
-        discoveryClient.setInstances("service-b", List.of(
-                new DefaultServiceInstance("inst-b-base", "service-b", "127.0.0.1", port, false, Map.of("tag", "default"))
+        discoveryClient.setInstances("inventory-service", List.of(
+                new DefaultServiceInstance("inst-inv-base", "inventory-service", "127.0.0.1", port, false, Map.of("tag", "default"))
         ));
-        discoveryClient.setInstances("service-c", List.of(
-                new DefaultServiceInstance("inst-c-base", "service-c", "127.0.0.1", port, false, Map.of("tag", "default")),
-                new DefaultServiceInstance("inst-c-gray", "service-c", "127.0.0.1", port, false, Map.of("tag", "v2"))
+        discoveryClient.setInstances("logistics-service", List.of(
+                new DefaultServiceInstance("inst-logistics-base", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-logistics-gray", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "v2"))
         ));
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Channel", "vip_wechat");
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-        ParameterizedTypeReference<Result<TrafficTraceReport>> typeRef = new ParameterizedTypeReference<>() {};
-        ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
-                "http://localhost:" + port + "/gateway/dispatch",
+        ParameterizedTypeReference<Result<OrderFulfillmentVO>> typeRef = new ParameterizedTypeReference<>() {};
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/dispatch?orderNo=ORD-SPI-001",
                 HttpMethod.GET,
                 entity,
                 typeRef
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        Result<TrafficTraceReport> result = response.getBody();
+        Result<OrderFulfillmentVO> result = response.getBody();
         assertThat(result).isNotNull();
         assertThat(result.isSuccess()).isTrue();
-        TrafficTraceReport report = result.getData();
-        assertThat(report).isNotNull();
-        assertThat(report.getTrafficTag()).isEqualTo("v2");
-        assertThat(report.getVisitedNodes()).contains(
-                "ServiceA[inst=inst-a-gray, tag=v2]",
-                "ServiceC[inst=inst-c-gray, tag=v2]"
+        OrderFulfillmentVO vo = result.getData();
+        assertThat(vo).isNotNull();
+        assertThat(vo.getTrafficTag()).isEqualTo("v2");
+        assertThat(vo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
         );
     }
 }
