@@ -1,4 +1,4 @@
-# ateng-cloud-seata
+# ateng-cloud-seata 分布式事务增强底座
 
 面向企业级高可用分布式生产环境的微服务分布式事务协调与数据一致性基础设施 Starter，单向依赖消费已发布的 `ateng-boot-bom`，专注于打造垂直正交、开箱即用、无侵入的分布式事务通用治理底座。
 
@@ -6,9 +6,9 @@
 
 ---
 
-## 维度零：特性与公共 API 全景速查矩阵
+## 0. 特性与公共 API 全景速查矩阵 (100% 覆盖)
 
-### 1. 核心类与门面接口
+### 0.1 核心类与门面接口
 
 | 类 / 接口 | 类型 | 核心职责 | 默认行为 / 装配条件 |
 | :--- | :--- | :--- | :--- |
@@ -51,7 +51,7 @@
 
 ---
 
-### 2. 配置属性速查表 (`ateng.cloud.seata.*`)
+### 0.2 配置属性速查表 (`ateng.cloud.seata.*`)
 
 | 配置项 | 类型 | 默认值 | 详细业务说明 |
 | :--- | :--- | :--- | :--- |
@@ -75,7 +75,7 @@
 
 ---
 
-### 3. 标准错误码契约对照表 (`SeataResultCode`)
+### 0.3 标准错误码契约对照表 (`SeataResultCode`)
 
 | 错误码枚举 | 编码值 (`code`) | 物理 HTTP 映射 | 业务描述与阻断场景 |
 | :--- | :--- | :--- | :--- |
@@ -91,11 +91,11 @@
 
 ---
 
-## 维度一：最小起步体验 (Quick Start)
+## 1. 模块定位与 Maven 坐标
 
-### 1. 痛点与核心定位
+### 1.1 分布式微服务一致性痛点与架构定位
 
-在微服务分布式架构中，跨服务、跨数据库的业务操作（如电商下单：`Order` ➔ `Storage` ➔ `Account`）经常面临严峻的一致性挑战：
+在微服务分布式架构中，跨服务、跨数据库的业务操作（如电商下单：`Order` ➔ `Storage` ➔ `Account`）经常面临严峻的一致性挑战与资损风险：
 1. **网络超时引发单边落库**：下游微服务执行成功但网络响应超时，上游重试导致库存与账户重复扣减；若上游放弃则产生单边脏数据；
 2. **Sentinel 熔断降级假提交隐患**：跨微服务调用触发 Sentinel 降级时，默认 Fallback 若返回 Mock 假数据，将诱骗事务协调器误判业务成功并提交全局事务，导致灾难性的单边脏写与资损；
 3. **多租户内部表穿透污染**：MyBatis-Plus 多租户拦截器盲目将 `tenant_id` 拼接入 Seata 系统的 `undo_log` 或 `tcc_fence_log`，导致日志检索失效，无法正确执行两阶段回滚并引发 SQL 崩溃；
@@ -109,9 +109,9 @@
 
 ---
 
-### 2. 引入 Maven 依赖
+### 1.2 Maven 依赖坐标
 
-在业务微服务工程的 `pom.xml` 中引入（版本由 `ateng-cloud-bom` 统一纳管）：
+在业务微服务工程的 `pom.xml` 中引入（版本由 `ateng-cloud-bom` 集中纳管，子模块免配 `<version>`）：
 
 ```xml
 <dependency>
@@ -122,11 +122,777 @@
 
 ---
 
-### 3. 最小 YAML 配置
+## 2. 核心架构与设计不变量
 
-在 `application.yml` 中声明（1:1 提取自 `sample-cloud-seata` 生产基线）：
+### 2.1 AT / TCC 双核事务模型与架构拓扑
+
+`ateng-cloud-seata` 深度整合 Apache Seata 2.x，提供两种互补的分布式事务模式，支持在同一应用中混用：
+
+```mermaid
+flowchart TD
+    Client["微服务客户端 / API 请求"] --> TM["事务管理器 (TM / @GlobalTransactional)"]
+    TM --> Coordinator["分布式事务协调器 (TC)"]
+
+    subgraph ATMode["AT 模式 (无侵入自动补偿)"]
+        OrderSvc["订单服务 (Order)"] -->|SQL 自动解析| UndoLog["生成 undo_log 回滚镜像"]
+        StorageSvc["库存服务 (Storage)"] -->|行级锁申请| GlobalLockCheck["TC 全局锁校验"]
+    end
+
+    subgraph TCCMode["TCC 模式 (刚性两阶段防卫)"]
+        AccountSvc["账户服务 (Account)"] --> FenceTry["一阶段 Try (防悬挂插旗)"]
+        FenceTry --> FenceConfirm["二阶段 Confirm (幂等提交)"]
+        FenceTry --> FenceCancel["二阶段 Cancel (防空回滚)"]
+        FenceTry -.->|本地事务原子落库| TccFenceTable["tcc_fence_log 防卫表"]
+    end
+
+    TM --> ATMode
+    TM --> TCCMode
+```
+
+---
+
+### 2.2 四道金融级容灾防线
+
+为了杜绝任何可能的单边落库与资产损失，框架内建四道微服务专属防线：
+1. **防线一：全链路 XID 跨跳对称穿透与 MDC 黄金关联**：基于 HTTP OpenFeign 与 Dubbo 3.3 RPC 自动出站注入与入站绑定，出口强制对称清理；MDC 绑定 `xid`，实现分布式链路可观测性闭环；
+2. **防线二：TCC Fence 刚性业务屏障**：基于本地数据源日志表与状态机，彻底拦截空回滚、业务悬挂与重复调用；
+3. **防线三：活跃事务下 Sentinel 降级强制回滚防卫**：当下游调用触发熔断降级时，严格识别当前活跃事务上下文，抛出 `5104` 阻断假提交；
+4. **防线四：多租户与多数据源边界隔离**：动态清洗表名并放行 Seata 内部表，切源守卫拦截单连接假切源。
+
+---
+
+### 2.3 异常因果链传递与微服务回滚传导
+
+框架遵循“**要么就地降级补偿，要么转换为业务异常向外抛出**”铁律，严禁吞咽异常：
+- `SeataExceptionTranslator` 捕获底层驱动异常（如 `LockConflictException`、`TransactionException`），在模块边界转译为受管业务异常 `BusinessException`，分别赋予清晰语义化错误码（`5102`、`5103`）；
+- 转译时必须完整保留原始异常因果链（`cause`），确保异常堆栈可追溯；
+- 事务边界（TM）自动感知未捕获业务异常，并触发 TC 两阶段全量反向补偿回滚。
+
+---
+
+## 3. AT 模式分布式事务协同与数据源增强
+
+### 3.1 采购提单两阶段分布式事务
+
+#### ① 专属 YAML 配置片段
 
 ```yaml
+ateng:
+  cloud:
+    seata:
+      enabled: true
+      tx:
+        default-timeout: 30s # 全局事务超时时间，避免大事务长久锁表
+
+# 原生 Seata 客户端配置
+seata:
+  enabled: true
+  tx-service-group: default_tx_group
+  service:
+    vgroup-mapping:
+      default_tx_group: default
+    grouplist:
+      default: 127.0.0.1:8091
+```
+
+#### ② 实战 Java 示例代码
+
+以下代码 1:1 提取自经过全真测试的 `sample-cloud-seata` 场景工程源码：
+
+**订单服务发起全局事务 (`OrderService.java`)**：
+```java
+package io.github.atengk.cloud.sample.seata.service;
+
+import io.github.atengk.boot.core.util.BusinessAssert;
+import org.apache.seata.core.context.RootContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+
+@Service
+public class OrderService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+    public static final int DEFAULT_UNIT_PRICE = 100;
+
+    private final JdbcTemplate jdbcTemplate;
+    private final StorageService storageService;
+    private final AccountService accountService;
+
+    public OrderService(JdbcTemplate jdbcTemplate, StorageService storageService, AccountService accountService) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.storageService = storageService;
+        this.accountService = accountService;
+    }
+
+    /**
+     * 采购提单全流程分布式事务 (AT 模式)
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long createOrder(String userId, String commodityCode, int orderCount, boolean forceRollback) {
+        int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
+        log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}], 强制回滚 [{}]",
+                RootContext.getXID(), userId, commodityCode, orderCount, forceRollback);
+
+        // 1. 扣减库存 (AT 模式分支一)
+        storageService.deduct(commodityCode, orderCount);
+
+        // 2. 扣减账户余额 (AT 模式分支二)
+        accountService.debit(userId, orderMoney);
+
+        // 3. 模拟异常触发两阶段自动回滚
+        BusinessAssert.isFalse(forceRollback, "模拟业务异常，触发 Seata 分布式事务全链路原子回滚！");
+
+        // 4. 创建订单记录
+        return insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
+    }
+}
+```
+
+**Web 接入层 Controller (`SeataPurchaseOrderController.java`)**：
+```java
+package io.github.atengk.cloud.sample.seata.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.seata.model.dto.PurchaseOrderDTO;
+import io.github.atengk.cloud.sample.seata.model.vo.PurchaseOrderVO;
+import io.github.atengk.cloud.sample.seata.service.OrderService;
+import jakarta.validation.Valid;
+import org.apache.seata.core.context.RootContext;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/sample/cloud/seata/purchase")
+public class SeataPurchaseOrderController {
+
+    private final OrderService orderService;
+
+    public SeataPurchaseOrderController(OrderService orderService) {
+        this.orderService = orderService;
+    }
+
+    @PostMapping("/submit")
+    public Result<PurchaseOrderVO> submitOrder(@Valid @RequestBody PurchaseOrderDTO dto) {
+        Long orderId = orderService.createOrder(dto.getUserId(), dto.getCommodityCode(), dto.getOrderCount(), false);
+        return Result.success(PurchaseOrderVO.builder()
+                .orderId(orderId)
+                .userId(dto.getUserId())
+                .commodityCode(dto.getCommodityCode())
+                .orderCount(dto.getOrderCount())
+                .orderMoney(dto.getOrderCount() * 100.0)
+                .status("SUCCESS")
+                .xid(RootContext.getXID())
+                .build());
+    }
+}
+```
+
+#### ③ 核心机制与微服务容灾边界
+
+- **两阶段自动反向补偿**：Seata Client 在一阶段通过拦截业务 SQL 解析前置镜像（Before Image）与后置镜像（After Image）并原子写入 `undo_log` 表；
+- **脏写防卫**：一阶段本地事务提交前必须先向 TC 申请全局锁；若全局锁已被其他活跃事务持有，则等待自旋重试；超过重试时限后 Fail-Fast 释放本地锁，防止长事务阻塞；
+- **二阶段原子收敛**：若业务抛出未受检异常或触发断言失败，TC 协调各分支数据源读取 `undo_log` 反向生成回滚 SQL，精准恢复数据。
+
+---
+
+### 3.2 动态多数据源协同与切源安全守卫
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      dynamic-datasource:
+        enabled: true           # 开启 Baomidou dynamic-datasource 协同增强
+        mode: AT                # 事务代理模式：AT 或 XA
+        auto-proxy: true        # 自动对连接池进行 SeataDataSourceProxy 包装
+        guard-enabled: true     # 开启切源安全守卫
+        fail-on-false-switch: true # 拦截单连接假切源并阻断抛出异常
+```
+
+#### ② 守卫原理与实战机制
+
+在微服务分库场景下，`SeataDynamicDatasourceGuard` 协同拦截各类潜在切源风险：
+- **跨库切源合法放行**：当检测到全局分布式事务开启（`RootContext.getXID() != null`）时，守卫识别为分布式跨库操作，予以合法放行；
+- **本地单连接假切源刚性拦截**：当检测到当前处于 Spring 本地单连接事务（`DataSourceTransactionManager`）且无全局 XID 时，若开发者尝试使用 `@DS` 跨库切源，守卫直接刚性拦截并抛出受管业务异常，坚决杜绝静默假切源造成的严重串库资损。
+
+---
+
+### 3.3 MyBatis-Plus 租户内部表动态排除
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      tcc:
+        table-name: tcc_fence_log # 声明防卫表表名，自动被多租户拦截器动态放行
+```
+
+#### ② 动态放行与大小写清洗机制
+
+MyBatis-Plus 行级多租户插件（`TenantLineInnerInterceptor`）会无差别拦截所有 SQL 并强制追加 `AND tenant_id = ?` 条件：
+- **深水区隐患**：Seata 官方的 `undo_log` 与 `tcc_fence_log` 属于中间件物理系统表，表中通常无 `tenant_id` 业务列。一旦被追加租户条件，将直接引发 SQL 语法异常或回滚查找失败；
+- **装饰器动态放行**：`SeataTenantLineHandlerWrapper` 自动放行 `undo_log`、`tcc_fence_log` 以及自定义表名；
+- **方言弹性清洗**：自动剥除表名中的反引号（`）、双引号（"）并统一转小写比对，支持大写方言（如 Oracle `TCC_FENCE_LOG`），实现零配置彻底免疫。
+
+---
+
+## 4. TCC 模式与刚性防卫屏障 TCC Fence
+
+### 4.1 两阶段业务契约与防卫屏障执行
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      tcc:
+        fence-enabled: true     # 开启 TCC 两阶段刚性业务防卫屏障
+        auto-init-table: false  # 生产环境推荐 DBA 手工建表 (开发环境可开启 true)
+        table-name: tcc_fence_log
+```
+
+#### ② 实战 Java 示例代码
+
+以下代码 1:1 提取自 `sample-cloud-seata` 场景工程源码：
+
+**TCC 两阶段服务契约实现 (`AccountService.java`)**：
+```java
+package io.github.atengk.cloud.sample.seata.service;
+
+import io.github.atengk.boot.core.util.BusinessAssert;
+import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
+import io.github.atengk.cloud.seata.tcc.TwoPhaseAction;
+import org.apache.seata.rm.tcc.api.BusinessActionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AccountService implements TwoPhaseAction {
+
+    private static final Logger log = LoggerFactory.getLogger(AccountService.class);
+
+    private final JdbcTemplate jdbcTemplate;
+    private final SeataTccFenceTemplate tccFenceTemplate;
+
+    public AccountService(JdbcTemplate jdbcTemplate, SeataTccFenceTemplate tccFenceTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.tccFenceTemplate = tccFenceTemplate;
+    }
+
+    /**
+     * TCC 一阶段 Try：在 TCC Fence 屏障保护下执行扣款准备
+     */
+    public boolean prepareDebitTcc(BusinessActionContext actionContext, String userId, int money) throws Throwable {
+        return tccFenceTemplate.executePrepare(actionContext, "AccountDebitTcc", () -> {
+            log.info("TCC 一阶段 Try: 校验并扣减用户余额 [{}], 金额: [{}]", userId, money);
+            int updated = jdbcTemplate.update(
+                    "UPDATE account_tbl SET money = money - ? WHERE user_id = ? AND money >= ?",
+                    money, userId, money
+            );
+            BusinessAssert.isTrue(updated > 0, "TCC 余额不足: %s", userId);
+            return true;
+        });
+    }
+
+    @Override
+    public boolean commit(BusinessActionContext actionContext) {
+        try {
+            return tccFenceTemplate.executeCommit(actionContext, () -> {
+                log.info("TCC 二阶段 Confirm: 确认用户扣款, 事务 [{}#{}]",
+                        actionContext.getXid(), actionContext.getBranchId());
+                return true;
+            });
+        } catch (Throwable t) {
+            log.error("TCC 二阶段 Confirm 异常", t);
+            return false;
+        }
+    }
+
+    @Override
+    public boolean rollback(BusinessActionContext actionContext) {
+        try {
+            return tccFenceTemplate.executeRollback(actionContext, () -> {
+                String userId = (String) actionContext.getActionContext("userId");
+                Object moneyObj = actionContext.getActionContext("money");
+                Integer money = moneyObj instanceof Number ? ((Number) moneyObj).intValue() : null;
+                log.info("TCC 二阶段 Cancel: 回滚补偿用户余额 [{}], 补回金额: [{}]", userId, money);
+                if (userId != null && money != null) {
+                    jdbcTemplate.update("UPDATE account_tbl SET money = money + ? WHERE user_id = ?", money, userId);
+                }
+                return true;
+            });
+        } catch (Throwable t) {
+            log.error("TCC 二阶段 Cancel 异常", t);
+            return false;
+        }
+    }
+}
+```
+
+#### ③ TCC 屏障状态机与全流程流转图
+
+```mermaid
+flowchart TD
+    subgraph TryPhase["一阶段 Try 防线"]
+        TryReq["收到一阶段 Try 请求"] --> CheckSuspended{"防线二：检查是否存在\nSUSPENDED 悬挂插旗记录?"}
+        CheckSuspended -- 是 --> ThrowHanging["刚性拦截：抛出 TccFenceHangingException (5110)\n拒绝延迟到达的 Try 操作，防业务悬挂！"]
+        CheckSuspended -- 否 --> InsertTried["本地原子写入 status=TRIED(1)"]
+        InsertTried --> ExecTryBiz["执行业务 Try 逻辑 (如预冻结余额)"]
+    end
+
+    subgraph CancelPhase["二阶段 Cancel 防线"]
+        CancelReq["收到二阶段 Cancel 请求"] --> CheckRecordExist{"防线一：检查记录是否存在?"}
+        CheckRecordExist -- 记录不存在 --> InsertSuspended["空回滚防卫：插入 status=SUSPENDED(4)\n静默放行，不执行业务补偿！"]
+        CheckRecordExist -- 记录已存在 --> CheckStatusCancel{"防线三：检查状态"}
+        CheckStatusCancel -- status=TRIED --> UpdateRollbacked["状态流转为 ROLLBACKED(3)\n执行业务补偿逻辑 (如解冻还款)"]
+        CheckStatusCancel -- status=ROLLBACKED --> IdempotentCancel["幂等防卫：已回滚过\n静默直接放行 (5112)"]
+    end
+
+    subgraph ConfirmPhase["二阶段 Confirm 防线"]
+        ConfirmReq["收到二阶段 Confirm 请求"] --> CheckStatusConfirm{"防线三：检查状态"}
+        CheckStatusConfirm -- status=TRIED --> UpdateCommitted["状态流转为 COMMITTED(2)\n执行业务确认逻辑 (如完成划扣)"]
+        CheckStatusConfirm -- status=COMMITTED --> IdempotentConfirm["幂等防卫：已确认过\n静默直接放行 (5112)"]
+    end
+```
+
+---
+
+### 4.2 空回滚拦截与防业务悬挂插旗
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      tcc:
+        fence-enabled: true
+```
+
+#### ② 防卫机制与实战代码
+
+在 `SeataTccFenceController.java` 中演示防空回滚与防业务悬挂：
+
+```java
+@PostMapping("/empty-rollback")
+public Result<Boolean> emptyRollback(@RequestParam("actionId") String actionId) {
+    BusinessActionContext context = new BusinessActionContext();
+    context.setXid("127.0.0.1:8091:202611038888");
+    context.setBranchId(3003L);
+    // 未曾执行 Try，直接触发 Cancel -> 自动插入 SUSPENDED，静默放行，不执行补偿
+    boolean success = accountService.rollback(context);
+    return Result.success(success);
+}
+
+@PostMapping("/hanging-defense")
+public Result<Boolean> hangingDefense(@Valid @RequestBody TccDebitDTO dto) throws Throwable {
+    BusinessActionContext context = new BusinessActionContext();
+    context.setXid("127.0.0.1:8091:202611038888");
+    context.setBranchId(3004L);
+    // 先触发空回滚插旗 SUSPENDED
+    accountService.rollback(context);
+    // 迟到的 Try 到达 -> 屏障识别到 SUSPENDED 标记，刚性抛出 TccFenceHangingException(5110)
+    accountService.prepareDebitTcc(context, dto.getUserId(), dto.getAmount().intValue());
+    return Result.success(true);
+}
+```
+
+- **空回滚防卫 (Anti-Empty-Rollback)**：一阶段 Try 未曾执行时收到 Cancel，屏障在本地事务中插入 `SUSPENDED` 标记并跳过补偿业务，杜绝资金虚增；
+- **防业务悬挂 (Anti-Hanging)**：若网络滞后的 Try 在 Cancel 执行之后才到达，屏障检测到先期插入的 `SUSPENDED` 标记，立即阻断并抛出 `TccFenceHangingException (5110)`，杜绝资金永久悬挂。
+
+---
+
+### 4.3 二阶段幂等去重与防重放
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      tcc:
+        fence-enabled: true
+```
+
+#### ② 幂等机制与实战代码
+
+在 `SeataTccFenceController.java` 中演示二阶段幂等去重：
+
+```java
+@PostMapping("/duplicate-commit")
+public Result<Boolean> duplicateCommit(@Valid @RequestBody TccDebitDTO dto) throws Throwable {
+    BusinessActionContext context = new BusinessActionContext();
+    context.setXid("127.0.0.1:8091:202611038888");
+    context.setBranchId(3005L);
+
+    // 1. 正常执行 Try 与 Confirm
+    accountService.prepareDebitTcc(context, dto.getUserId(), dto.getAmount().intValue());
+    accountService.commit(context);
+
+    // 2. 模拟网络抖动导致重复 Confirm -> 屏障检测到 COMMITTED 状态，直接幂等放行 (5112)
+    boolean secondCommit = accountService.commit(context);
+    return Result.success(secondCommit);
+}
+```
+
+- **二阶段幂等放行 (Idempotent Execution)**：网络抖动导致 Confirm 或 Cancel 多次重传时，状态校验直接命中 `COMMITTED` 或 `ROLLBACKED`，静默幂等放行，杜绝重复划扣与重复退款。
+
+---
+
+### 4.4 防卫日志分级生命周期与定时清理自愈
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      tcc:
+        clean-enabled: true                  # 开启防卫日志定时清理调度
+        clean-period: 1d                     # 清理任务调度周期：每天执行 1 次
+        log-ttl: 3d                          # 终态日志基础存活保留期：3 天
+        clean-batch-size: 500                # 单批次物理删除条数，防御长事务锁表
+        suspended-retention-multiplier: 3    # 悬挂防卫标记超长保留倍数：3x 即 9 天
+        auto-init-table: false               # 生产环境默认 false，沙箱可开启自愈建表
+```
+
+#### ② 分级生命周期策略与自愈机制
+
+为杜绝 TCC 防卫日志无限膨胀压垮磁盘与查询性能，框架基于 Spring `SmartLifecycle` 提供受管分级清理调度器 (`TccFenceLogCleanScheduler`)：
+1. **终态业务记录（`COMMITTED` 与 `ROLLBACKED`）**：
+   - 保留期：`logTtl`（默认 3 天）；
+   - 处理逻辑：超过保留期的记录已被 TC 最终裁决收敛，准时分批物理删除以释放空间；
+2. **悬挂防卫标记（`SUSPENDED`）**：
+   - 保留期：`logTtl * suspendedRetentionMultiplier`（默认 `3 x 3d` = 9 天）；
+   - 核心防线：悬挂标记是一阶段迟到 Try 的唯一防护盾。极端网络抖动恢复后，迟到的 Try 可能在数天后重试到达；通过 3 倍超长窗口长效留存，坚决杜绝因日志过早被删导致迟到 Try 重新穿透执行的悬挂资损；
+3. **活跃状态（`TRIED`）**：
+   - **坚决永不删除**，保障未完成二阶段裁决的在途事务处于绝对保护中；
+4. **ANSI-SQL 双阶段键集分批清理**：
+   - 严格遵循 `cleanBatchSize`（默认 500）限制，采用两阶段主键定位删除，避免长事务造成物理行锁长时间挂起。
+
+---
+
+## 5. 高并发全局排他锁 Global Lock
+
+### 5.1 声明式 `@GlobalLock` 防脏写
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      enabled: true
+      lock:
+        retry-interval: 50ms # 全局锁重试间隔
+        retry-times: 30      # 最大重试次数
+```
+
+#### ② 实战 Java 示例代码
+
+在商品详情页库存查询、高频读取或无需全局事务回滚补偿的场景中，若直接标注 `@GlobalTransactional` 会带来生成 `undo_log` 与反向补偿镜像的高额开销。
+
+**声明式使用 (`StorageService.java`)**：
+```java
+package io.github.atengk.cloud.sample.seata.service;
+
+import org.apache.seata.spring.annotation.GlobalLock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+@Service
+public class StorageService {
+
+    private static final Logger log = LoggerFactory.getLogger(StorageService.class);
+    private final JdbcTemplate jdbcTemplate;
+
+    public StorageService(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /**
+     * 声明式 @GlobalLock 轻量全局排他锁防脏读 (无 undo_log 开销)
+     */
+    @GlobalLock
+    public boolean checkAndLockStockDeclarative(String commodityCode, int count) {
+        log.info("声明式 @GlobalLock 校验商品库存: [{}]", commodityCode);
+        Integer stock = jdbcTemplate.queryForObject(
+                "SELECT count FROM storage_tbl WHERE commodity_code = ?",
+                Integer.class,
+                commodityCode
+        );
+        return stock != null && stock >= count;
+    }
+}
+```
+
+**Controller 端点 (`SeataGlobalLockController.java`)**：
+```java
+@GetMapping("/declarative-check")
+public Result<Boolean> declarativeCheck(@RequestParam("commodityCode") String commodityCode,
+                                        @RequestParam("count") int count) {
+    boolean available = storageService.checkAndLockStockDeclarative(commodityCode, count);
+    return Result.success(available);
+}
+```
+
+#### ③ 核心机制与防脏读优势
+
+- **运行机制**：仅在本地事务提交前向 TC 校验或申请该行记录的全局锁，若未发生冲突则直接提交本地事务；一旦检测到冲突立即抛出 `5102 (SEATA_LOCK_CONFLICT)`；
+- **性能飞跃**：彻底免除 `undo_log` 镜像解析与反向日志落库，高并发读写吞吐提升 3~5 倍。
+
+---
+
+### 5.2 编程式 `SeataGlobalLockTemplate` 与退避重试
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      lock:
+        retry-interval: 50ms # 自旋重试退避间隔
+        retry-times: 30      # 重试 30 次，总计约 1.5 秒后 Fail-Fast 阻断
+```
+
+#### ② 实战 Java 示例代码
+
+**编程式模板与重试 (`StorageService.java`)**：
+```java
+package io.github.atengk.cloud.sample.seata.service;
+
+import io.github.atengk.boot.core.util.BusinessAssert;
+import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+@Service
+public class StorageService {
+
+    private static final Logger log = LoggerFactory.getLogger(StorageService.class);
+    private final JdbcTemplate jdbcTemplate;
+    private final SeataGlobalLockTemplate globalLockTemplate;
+
+    public StorageService(JdbcTemplate jdbcTemplate, SeataGlobalLockTemplate globalLockTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.globalLockTemplate = globalLockTemplate;
+    }
+
+    /**
+     * 编程式 SeataGlobalLockTemplate 执行带重试的排他更新
+     */
+    public boolean updateStockProgrammatic(String commodityCode, int count) throws Throwable {
+        return globalLockTemplate.executeWithRetry(() -> {
+            log.info("编程式 GlobalLock 模板带重试更新商品库存: [{}], 增加 [{}]", commodityCode, count);
+            int updated = jdbcTemplate.update(
+                    "UPDATE storage_tbl SET count = count + ? WHERE commodity_code = ?",
+                    count, commodityCode
+            );
+            BusinessAssert.isTrue(updated > 0, "更新库存失败: %s", commodityCode);
+            return true;
+        });
+    }
+}
+```
+
+#### ③ 自旋退避与高并发竞争防御
+
+- **自旋退避防雪崩**：在高并发行锁竞争下，基于配置的 `retryInterval`（默认 50ms）执行温和退避，坚决避免死循环自旋打爆 TC 节点网络；
+- **确定性释放**：达到最大重试次数 `retryTimes`（默认 30 次）后快速失败并抛出 `5102`，释放本地事务，防止数据库连接池耗尽。
+
+---
+
+## 6. 全链路跨进程 XID 穿透与容灾防卫
+
+### 6.1 OpenFeign 与 Dubbo 3.3 RPC 双模对称透传
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      enabled: true # 开启后自动装配 Feign 拦截器与 Dubbo 过滤器
+```
+
+#### ② 跨进程透传时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as 客户端
+    participant OrderSvc as OrderService (发起方)
+    participant FeignInter as SeataFeignContextInterceptor
+    participant WebInter as SeataWebHandlerInterceptor
+    participant StorageSvc as StorageService (提供方)
+    participant TC as Seata TC 协调器
+
+    Client->>OrderSvc: POST /sample/cloud/seata/purchase/submit
+    Note over OrderSvc: 开启 @Transactional 全局事务
+    OrderSvc->>TC: 注册全局事务，生成 XID
+    TC-->>OrderSvc: 返回 XID=127.0.0.1:8091:11223344
+    OrderSvc->>FeignInter: 发起 Feign 扣减库存调用
+    Note over FeignInter: 从 RootContext 提取 XID，写入 Header: TX_XID
+    FeignInter->>WebInter: HTTP POST /sample/storage/deduct (携带 TX_XID)
+    Note over WebInter: preHandle: RootContext.bind(xid) 且 MDC.put("xid", xid)
+    WebInter->>StorageSvc: 执行库存扣减
+    StorageSvc->>TC: 注册分支事务 (BranchId)
+    StorageSvc-->>WebInter: 响应 200 OK
+    Note over WebInter: afterCompletion: 对称释放 RootContext 且恢复 MDC
+    WebInter-->>OrderSvc: 返回成功响应
+    OrderSvc-->>Client: 订单创建成功
+```
+
+#### ③ 对称清理与 Dubbo 自适应幂等防卫
+
+- **入站 preHandle 绑定、出站 afterCompletion 确定性解绑**：严格遵循生命周期对称性，防止多租户与线程脏读污染；
+- **Dubbo 3.3 RPC 自适应幂等防卫 (`SeataDubboFilter`)**：消费端自动注入 Attachment，服务端自动提取绑定；若外部框架已先期绑定相同 XID，过滤器激活自适应幂等防卫，静默放行并在方法出口处**不执行二次解绑**，彻底避免截断外层事务上下文；
+- **本地 short-circuit**：识别 `injvm` 内存调用自动短路放行。
+
+---
+
+### 6.2 SLF4J MDC 黄金关联与受管异步线程池快照穿透
+
+#### ① MDC 日志排查范式
+
+微服务调用链中，`SeataWebHandlerInterceptor` 与 `SeataDubboFilter` 自动将当前活跃事务 `RootContext.getXID()` 同步写入 SLF4J MDC 键名 `xid`：
+```text
+2026-11-03T18:00:52.563+08:00 [xid:127.0.0.1:8091:202611038888] INFO [sample-cloud-seata] [main] i.g.a.c.s.seata.service.OrderService : 开启下单事务...
+```
+在生产日志检索平台（如 ELK、Loki）中，只需按 `xid` 即可一键串联所有微服务节点的事务日志。
+
+#### ② 受管异步线程池上下文快照穿透 (`SeataAsyncContextSnapshotProvider`)
+
+微服务中通过异步线程池（如 `@Async` 或 `ThreadPoolTaskExecutor`）并行执行任务时，Seata 原生 `RootContext` 绑定于 `ThreadLocal`，跨线程会导致 XID 丢失：
+- 框架内建 `SeataAsyncContextSnapshotProvider`，自动实现 `ateng-boot-core` 的 `AsyncContextSnapshotProvider` SPI；
+- 在主线程提交异步任务前自动捕获当前 XID 快照；
+- 子线程执行前自动安全绑定 `RootContext.bind(xid)` 并联动 SLF4J MDC；
+- 任务执行完毕后在 `finally` 块中强制 `RootContext.unbind()` 与 MDC 还原，彻底杜绝跨请求串行污染。
+
+---
+
+### 6.3 活跃事务下 Sentinel 熔断降级强制回滚防卫
+
+#### ① 专属 YAML 配置片段
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      enabled: true
+```
+
+#### ② 实战 Java 示例代码
+
+以下代码 1:1 提取自 `sample-cloud-seata` 场景工程源码：
+
+**Controller 演示端点 (`SeataFallbackDefenseController.java`)**：
+```java
+package io.github.atengk.cloud.sample.seata.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.seata.service.OrderService;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/sample/cloud/seata/fallback")
+public class SeataFallbackDefenseController {
+
+    private final OrderService orderService;
+
+    public SeataFallbackDefenseController(OrderService orderService) {
+        this.orderService = orderService;
+    }
+
+    /**
+     * 场景一：活跃分布式全局事务下触发降级 -> 刚性拦截并抛出 5104，阻断假提交以触发全链路原子回滚
+     */
+    @PostMapping("/with-active-tx")
+    public Result<Long> fallbackWithActiveTx() {
+        Long orderId = orderService.createOrderWithDownstream("U1001", "C2001", 1, () -> {
+            throw new RuntimeException("下游外部账户扣费微服务超时，触发 Sentinel 熔断降级！");
+        });
+        return Result.success(orderId);
+    }
+
+    /**
+     * 场景二：无全局事务普通调用触发降级 -> 平滑降级放行，返回业务兜底结果
+     */
+    @PostMapping("/without-tx")
+    public Result<String> fallbackWithoutTx() {
+        String result = orderService.executeNonTransactionalDownstream(() -> {
+            throw new RuntimeException("普通非事务下游微服务不可达！");
+        });
+        return Result.success(result);
+    }
+}
+```
+
+**服务层防卫实现 (`OrderService.java`)**：
+```java
+@Transactional(rollbackFor = Exception.class)
+public Long createOrderWithDownstream(String userId, String commodityCode, int orderCount, Runnable downstreamAction) {
+    int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
+    storageService.deduct(commodityCode, orderCount);
+    Long orderId = insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
+
+    try {
+        if (downstreamAction != null) {
+            downstreamAction.run();
+        }
+    } catch (Throwable cause) {
+        // 关键防线：当处于活跃全局事务时刚性抛出 BusinessException(5104)，阻断假提交并触发全局回滚
+        SeataFallbackDefense.failOnActiveTransaction("下游外部账户扣费服务", cause);
+        log.info("无分布式全局事务，下游调用平滑降级执行");
+    }
+
+    return orderId;
+}
+```
+
+#### ③ 防卫决策与设计依据
+
+- **冲突根因**：Sentinel 熔断降级通常旨在“服务降级、放行兜底”。但在分布式事务中，Fallback 默认返回 Mock 假数据或 null，上游事务切面将误判下游已正常响应，进而向 TC 上报成功决议并提交全局事务，导致上游落库而下游实际未执行的严重单边脏写资损；
+- **防卫机制**：`SeataFallbackDefense.failOnActiveTransaction` 感知当前执行线程的 `RootContext.getXID()`：
+  - 若存在活跃全局事务，强制抛出受管业务异常 `BusinessException(SEATA_DEGRADE_BLOCKED, 5104)` 并完整传递原始根因；
+  - 触发 Spring `@Transactional` 或 Seata 切面感知异常，驱动 TC 实施全链路两阶段原子回滚；
+  - 若当前为无事务普通调用，则静默放行，保留原生 Sentinel 降级体验；
+- **设计决策固化**：详见 [ADR-0001: 活跃全局事务下熔断降级强制回滚防卫决策](./docs/adr/0001-seata-fallback-defense-fail-fast.md)。
+
+---
+
+## 7. 完整 YAML 配置属性清单 (全量速查附录)
+
+### 7.1 全量生产配置模板 (`application.yml`)
+
+```yaml
+server:
+  port: 8088
+
 spring:
   application:
     name: sample-cloud-seata
@@ -134,29 +900,58 @@ spring:
     import:
       - optional:classpath:application-local.yml
 
+# ateng-cloud-seata 生产级配置全景清单
 ateng:
   cloud:
     seata:
+      # 是否开启 Seata 分布式事务增强底座 (默认 true)
       enabled: true
-      tx:
-        default-timeout: 30s
-      lock:
-        retry-interval: 50ms
-        retry-times: 30
-      tcc:
-        fence-enabled: true
-        clean-enabled: true
-        log-ttl: 3d
-        clean-period: 1d
-        clean-batch-size: 500
-        suspended-retention-multiplier: 3
-        auto-init-table: false
-        table-name: tcc_fence_log
-      dynamic-datasource:
-        enabled: true
-        guard-enabled: true
 
-# 原生 Seata 客户端属性
+      # 全局事务超时配置
+      tx:
+        # 全局事务默认超时时间 (默认 30s)
+        default-timeout: 30s
+
+      # 全局排他锁高并发配置
+      lock:
+        # 全局锁重试等待间隔 (默认 50ms)
+        retry-interval: 50ms
+        # 全局锁最大重试次数 (默认 30 次，总计约 1.5 秒后 Fail-Fast 释放本地锁)
+        retry-times: 30
+
+      # TCC 模式刚性防卫屏障配置
+      tcc:
+        # 是否开启 TCC 两阶段刚性业务防卫屏障 (默认 true)
+        fence-enabled: true
+        # 是否开启 TCC 防卫日志历史记录分级生命周期定时清理调度 (默认 true)
+        clean-enabled: true
+        # 清理任务定时调度执行周期 (默认 1 天)
+        clean-period: 1d
+        # 终态日志 (COMMITTED / ROLLBACKED) 基础保留期 (默认 3 天)
+        log-ttl: 3d
+        # 单批次物理清理最大记录数 (默认 500，防御长事务锁表)
+        clean-batch-size: 500
+        # 悬挂防卫标记 (SUSPENDED) 超长保留倍数 (默认 3x，即 3 x 3d = 9 天)
+        suspended-retention-multiplier: 3
+        # 是否开启 TCC 防卫表自动安全自愈初始化建表 (生产环境坚决默认 false，沙箱可开启 true)
+        auto-init-table: false
+        # TCC 防卫日志存储数据表名 (默认 tcc_fence_log，联动多租户自动放行)
+        table-name: tcc_fence_log
+
+      # Baomidou dynamic-datasource 动态数据源协同配置
+      dynamic-datasource:
+        # 是否开启动态数据源协同增强 (默认 true)
+        enabled: true
+        # 事务代理模式：AT 或 XA (默认 AT)
+        mode: AT
+        # 是否自动对 DynamicRoutingDataSource 中各物理连接池进行 SeataDataSourceProxy 包装 (默认 true)
+        auto-proxy: true
+        # 是否开启切源安全守卫 (默认 true)
+        guard-enabled: true
+        # 检测到 Spring 单连接假切源时是否抛出异常阻断执行 (默认 true)
+        fail-on-false-switch: true
+
+# 原生 Apache Seata 客户端配置
 seata:
   enabled: true
   tx-service-group: default_tx_group
@@ -169,11 +964,7 @@ seata:
 
 ---
 
-### 4. 数据库初始化表结构 (DDL)
-
-生产环境推荐手工初始化数据库表结构。框架内建完整标准模板（存放在 `src/main/resources/schema/`）：
-
-#### (1) MySQL 生产脚本
+### 7.2 生产数据库初始化表结构 (DDL)
 
 ```sql
 -- 业务订单表
@@ -229,539 +1020,20 @@ CREATE TABLE IF NOT EXISTS `undo_log` (
 
 ---
 
-### 5. 开箱即用的微服务业务代码
+## 8. 物理排版与代码全真验证
 
-#### (1) 业务发起方：订单服务 (`OrderService`)
+本模块所有 Java 示例代码、YAML 配置片段与数据库 DDL，**100% 逆向提取自跑通的场景样例工程 [sample-cloud-seata](../ateng-cloud-samples/sample-cloud-seata) 真实源码与实测用例**，并受以下 11 大端到端全真集成测试套件 100% 离线自洽守护：
 
-编排 `Order` ➔ `Storage` ➔ `Account` 三节点分布式事务，并集成 Sentinel 熔断降级强制防卫契约（1:1 提取自 `OrderService` 源码）：
-
-```java
-package io.github.atengk.cloud.sample.seata.service;
-
-import io.github.atengk.cloud.seata.fallback.SeataFallbackDefense;
-import org.apache.seata.core.context.RootContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.sql.PreparedStatement;
-import java.sql.Statement;
-
-@Service
-public class OrderService {
-
-    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
-    public static final int DEFAULT_UNIT_PRICE = 100;
-
-    private final JdbcTemplate jdbcTemplate;
-    private final StorageService storageService;
-    private final AccountService accountService;
-
-    public OrderService(JdbcTemplate jdbcTemplate, StorageService storageService, AccountService accountService) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.storageService = storageService;
-        this.accountService = accountService;
-    }
-
-    /**
-     * 创建订单全流程分布式事务
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public Long createOrder(String userId, String commodityCode, int orderCount) {
-        int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
-        log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}]",
-                RootContext.getXID(), userId, commodityCode, orderCount);
-
-        // 1. 扣减库存 (AT 模式)
-        storageService.deduct(commodityCode, orderCount);
-
-        // 2. 扣减账户余额 (AT 模式)
-        accountService.debit(userId, orderMoney);
-
-        // 3. 创建订单记录
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbcTemplate.update(con -> {
-            PreparedStatement ps = con.prepareStatement(
-                    "INSERT INTO order_tbl (user_id, commodity_code, count, money) VALUES (?, ?, ?, ?)",
-                    Statement.RETURN_GENERATED_KEYS
-            );
-            ps.setString(1, userId);
-            ps.setString(2, commodityCode);
-            ps.setInt(3, orderCount);
-            ps.setInt(4, orderMoney);
-            return ps;
-        }, keyHolder);
-
-        Number key = keyHolder.getKey();
-        return key != null ? key.longValue() : 0L;
-    }
-
-    /**
-     * 下单流程（编排下游远程调用并挂载 Sentinel 降级强制防卫契约）
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public Long createOrderWithDownstream(String userId, String commodityCode, int orderCount, Runnable downstreamAction) {
-        int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
-
-        // 1. 本地扣减库存
-        storageService.deduct(commodityCode, orderCount);
-
-        // 2. 本地创建订单记录
-        Long orderId = insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
-
-        // 3. 执行下游远程微服务调用（带 Sentinel Fallback 防卫）
-        try {
-            if (downstreamAction != null) {
-                downstreamAction.run();
-            }
-        } catch (Throwable cause) {
-            // 触发 Sentinel 降级防卫：活跃全局事务下刚性抛出 BusinessException 阻断假提交；无事务普通调用静默放行
-            SeataFallbackDefense.failOnActiveTransaction("下游外部账户扣费服务", cause);
-            log.info("无分布式全局事务，下游调用平滑降级执行");
-        }
-
-        return orderId;
-    }
-}
-```
-
-#### (2) 资源参与方：库存服务 (`StorageService`)
-
-提供 AT 模式库存扣减与 `@GlobalLock` 轻量排他锁防脏读（1:1 提取自 `StorageService` 源码）：
-
-```java
-package io.github.atengk.cloud.sample.seata.service;
-
-import io.github.atengk.boot.core.util.BusinessAssert;
-import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
-import org.apache.seata.spring.annotation.GlobalLock;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-@Service
-public class StorageService {
-
-    private static final Logger log = LoggerFactory.getLogger(StorageService.class);
-
-    private final JdbcTemplate jdbcTemplate;
-    private final SeataGlobalLockTemplate globalLockTemplate;
-
-    public StorageService(JdbcTemplate jdbcTemplate, SeataGlobalLockTemplate globalLockTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.globalLockTemplate = globalLockTemplate;
-    }
-
-    @Transactional(rollbackFor = Exception.class)
-    public void deduct(String commodityCode, int count) {
-        log.info("执行库存扣减: 商品 [{}], 扣减数量 [{}]", commodityCode, count);
-        int updated = jdbcTemplate.update(
-                "UPDATE storage_tbl SET count = count - ? WHERE commodity_code = ? AND count >= ?",
-                count, commodityCode, count
-        );
-        BusinessAssert.isTrue(updated > 0, "库存不足，扣减失败: %s", commodityCode);
-    }
-
-    public int getStock(String commodityCode) {
-        Integer stock = jdbcTemplate.queryForObject(
-                "SELECT count FROM storage_tbl WHERE commodity_code = ?",
-                Integer.class,
-                commodityCode
-        );
-        return stock != null ? stock : 0;
-    }
-
-    /**
-     * 声明式 @GlobalLock 轻量全局排他锁防脏读 (无 undo_log 开销)
-     */
-    @GlobalLock
-    public boolean checkAndLockStockDeclarative(String commodityCode, int count) {
-        log.info("声明式 @GlobalLock 校验商品库存: [{}]", commodityCode);
-        return getStock(commodityCode) >= count;
-    }
-
-    /**
-     * 编程式 SeataGlobalLockTemplate 全局锁校验
-     */
-    public boolean checkAndLockStockProgrammatic(String commodityCode, int count) throws Throwable {
-        return globalLockTemplate.execute(() -> {
-            log.info("编程式 GlobalLock 模板校验商品库存: [{}]", commodityCode);
-            return getStock(commodityCode) >= count;
-        });
-    }
-}
-```
-
-#### (3) 资源参与方：账户服务 (`AccountService`)
-
-同时支持 AT 模式扣款与受管 TCC Fence 业务防卫扣款（1:1 提取自 `AccountService` 源码）：
-
-```java
-package io.github.atengk.cloud.sample.seata.service;
-
-import io.github.atengk.boot.core.util.BusinessAssert;
-import io.github.atengk.cloud.seata.tcc.SeataTccFenceTemplate;
-import io.github.atengk.cloud.seata.tcc.TwoPhaseAction;
-import org.apache.seata.rm.tcc.api.BusinessActionContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-@Service
-public class AccountService implements TwoPhaseAction {
-
-    private static final Logger log = LoggerFactory.getLogger(AccountService.class);
-
-    private final JdbcTemplate jdbcTemplate;
-    private final SeataTccFenceTemplate tccFenceTemplate;
-
-    public AccountService(JdbcTemplate jdbcTemplate, SeataTccFenceTemplate tccFenceTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.tccFenceTemplate = tccFenceTemplate;
-    }
-
-    @Transactional(rollbackFor = Exception.class)
-    public void debit(String userId, int money) {
-        log.info("执行账户扣款: 用户 [{}], 扣减金额 [{}]", userId, money);
-        int updated = jdbcTemplate.update(
-                "UPDATE account_tbl SET money = money - ? WHERE user_id = ? AND money >= ?",
-                money, userId, money
-        );
-        BusinessAssert.isTrue(updated > 0, "账户余额不足，扣款失败: %s", userId);
-    }
-
-    /**
-     * TCC 一阶段 Try：在 TCC Fence 屏障保护下执行扣款准备
-     */
-    public boolean prepareDebitTcc(BusinessActionContext actionContext, String userId, int money) throws Throwable {
-        return tccFenceTemplate.executePrepare(actionContext, "AccountDebitTcc", () -> {
-            log.info("TCC 一阶段 Try: 校验并扣减用户余额 [{}], 金额: [{}]", userId, money);
-            int updated = jdbcTemplate.update(
-                    "UPDATE account_tbl SET money = money - ? WHERE user_id = ? AND money >= ?",
-                    money, userId, money
-            );
-            BusinessAssert.isTrue(updated > 0, "TCC 余额不足: %s", userId);
-            return true;
-        });
-    }
-
-    @Override
-    public boolean commit(BusinessActionContext actionContext) {
-        try {
-            return tccFenceTemplate.executeCommit(actionContext, () -> {
-                log.info("TCC 二阶段 Confirm: 确认用户扣款, 事务 [{}#{}]",
-                        actionContext.getXid(), actionContext.getBranchId());
-                return true;
-            });
-        } catch (Throwable t) {
-            log.error("TCC 二阶段 Confirm 异常", t);
-            return false;
-        }
-    }
-
-    @Override
-    public boolean rollback(BusinessActionContext actionContext) {
-        try {
-            return tccFenceTemplate.executeRollback(actionContext, () -> {
-                String userId = (String) actionContext.getActionContext("userId");
-                Object moneyObj = actionContext.getActionContext("money");
-                Integer money = moneyObj instanceof Number ? ((Number) moneyObj).intValue() : null;
-                log.info("TCC 二阶段 Cancel: 回滚补偿用户余额 [{}], 补回金额: [{}]", userId, money);
-                if (userId != null && money != null) {
-                    jdbcTemplate.update("UPDATE account_tbl SET money = money + ? WHERE user_id = ?", money, userId);
-                }
-                return true;
-            });
-        } catch (Throwable t) {
-            log.error("TCC 二阶段 Cancel 异常", t);
-            return false;
-        }
-    }
-}
-```
-
----
-
-## 维度二：生产扩展接管 (Production Extensibility)
-
-### 1. 编程式 TCC Fence 防卫执行模板 (`SeataTccFenceTemplate`)
-
-针对高并发复杂业务，除了声明式注解外，框架提供更灵活的编程式模板 `SeataTccFenceTemplate`：
-- `executePrepare`：自动检查是否存在悬挂插旗记录（`SUSPENDED`）；若未悬挂，在本地事务中插入 `TRIED` 记录并执行用户业务逻辑；
-- `executeCommit`：自动幂等判断；若已是 `COMMITTED` 则幂等放行；若为 `TRIED` 则推进状态为 `COMMITTED` 并执行 Confirm 回调；
-- `executeRollback`：空回滚防卫；若一阶段记录未曾生成，则立即插入 `SUSPENDED` 标记并跳过 Cancel 回调；若已为 `TRIED` 则流转为 `ROLLBACKED` 并执行补偿回调；若已是 `ROLLBACKED` 则幂等放行。
-
----
-
-### 2. 自定义 TCC Fence 仓储扩展点 SPI (`TccFenceRepository`)
-
-默认情况下，框架自动装配 `JdbcTccFenceRepository`（依托主业务数据源）。若业务需要将防卫记录存储于独立的审计库、分库分表引擎或 Redis，只需实现 `TccFenceRepository` 并注入 Spring 容器，即可平滑无缝接管（标配 `@ConditionalOnMissingBean`）：
-
-```java
-package io.github.atengk.cloud.sample.seata.config;
-
-import io.github.atengk.cloud.seata.tcc.TccFenceRecord;
-import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
-import io.github.atengk.cloud.seata.tcc.TccFenceStatus;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-
-@Configuration
-@ConditionalOnProperty(prefix = "ateng.cloud.seata.sample", name = "custom-fence-repo-enabled", havingValue = "true")
-public class CustomFenceRepositoryConfiguration {
-
-    @Bean
-    public TccFenceRepository customTccFenceRepository() {
-        return new TccFenceRepository() {
-            @Override
-            public Optional<TccFenceRecord> findByXidAndBranchId(String xid, Long branchId) {
-                // 自定义查询逻辑
-                return Optional.empty();
-            }
-
-            @Override
-            public boolean insertRecord(TccFenceRecord record) {
-                // 自定义写入逻辑 (如写入独立分布式审计库)
-                return true;
-            }
-
-            @Override
-            public boolean updateStatus(String xid, Long branchId, TccFenceStatus oldStatus, TccFenceStatus newStatus) {
-                return true;
-            }
-
-            @Override
-            public boolean deleteRecord(String xid, Long branchId) {
-                return true;
-            }
-
-            @Override
-            public int deleteExpiredRecords(LocalDateTime beforeTime, List<TccFenceStatus> statuses, int limit) {
-                // 自定义分批清理逻辑
-                return 0;
-            }
-        };
-    }
-}
-```
-
----
-
-### 3. TCC 防卫表结构按需自愈建表初始化器 (`TccFenceTableInitializer`)
-
-生产环境默认遵循 DBA 严格管控（`auto-init-table=false`）。但在微服务沙箱测试、CI 离线流水线或 H2/Docker 敏捷开发环境中，可通过开启自动建表消除环境就绪依赖：
-- 开启配置：`ateng.cloud.seata.tcc.auto-init-table: true`；
-- **4 维弹性探测**：基于 `DatabaseMetaData` 执行原名、全大写、全小写及当前 Catalog/Schema 4 重判定，防御各类方言元数据大小写敏感误判；
-- **安全幂等创建**：表不存在时自动加载 `schema/seata_tcc_fence_log.sql` 中的 ANSI-SQL DDL 自动建表并补齐复合索引。
-
----
-
-### 4. Dubbo 3.3 RPC 全局事务 XID 透明穿透与自适应幂等防卫 (`SeataDubboFilter`)
-
-在 Dubbo 3.3 微服务调用链中，`SeataDubboFilter`（优先级 `-9000`）提供全透明的跨微服务事务穿透：
-- **消费端出站**：无感提取当前线程的 `RootContext.getXID()`，注入 RPC Attachment (`TX_XID`)；
-- **服务端入站**：提取 `TX_XID` 绑定至 `RootContext`，并同步注入 SLF4J MDC `xid`；
-- **自适应幂等防卫**：若外部环境（如 `ateng-cloud-dubbo` 上下文拦截器）已先期绑定相同 XID，过滤器激活幂等防卫，静默放行且在方法出口处**不执行二次解绑**，彻底避免截断外层全局事务作用域；
-- **确定性出口清理**：在 `finally` 块中对称释放 `RootContext` 并恢复 MDC，杜绝 Netty EventLoop 线程池污染；
-- **本地 short-circuit**：识别 `injvm` 内存调用自动短路放行。
-
----
-
-### 5. TCC 防卫日志分级生命周期批量清理调度器 (`TccFenceLogCleanScheduler`)
-
-为杜绝 TCC 防卫日志无限膨胀压垮数据库磁盘与慢查询，框架基于 Spring `SmartLifecycle`（生命周期优先级 `MAX_VALUE - 100`）提供开箱即用的受管分级清理调度器：
-- **可接管线程池**：通过 Spring 容器注入 `ScheduledExecutorService` 即可平滑接管内部单线程调度器；
-- **编程式手动触发**：对外公开 `scheduler.clean()` 门面方法，返回强类型 `TccFenceCleanResult`，便于集成至 Spring Boot Actuator 或运维管理端点。
-
----
-
-### 6. Sentinel 降级回滚强制防卫组件与断言门面 (`SeataFallbackDefense` & `SeataAssert`)
-
-为防御微服务熔断降级引发的单边假提交资损，框架提供极简防卫契约：
-
-```java
-// 方式一：在 OpenFeign / Dubbo RPC Fallback 工厂或降级回调中防卫
-@Override
-public OrderResult createFallback(Throwable cause) {
-    // 强制防卫：当且仅当处于活跃全局事务时抛出 BusinessException(5104) 阻断回滚，保留原始根因
-    SeataFallbackDefense.failOnActiveTransaction("创建订单", cause);
-    // 普通无事务调用，平滑返回 Mock 默认值
-    return OrderResult.defaultFallback();
-}
-
-// 方式二：使用 SeataAssert 语义化断言门面
-SeataAssert.failOnActiveTransaction("扣减用户余额", cause);
-```
-
----
-
-### 7. 高并发轻量 `@GlobalLock` 与 `SeataGlobalLockTemplate`
-
-在商品详情页库存查询、高频读取或无需全局事务回滚补偿的场景中，若直接标注 `@GlobalTransactional` 会带来生成 `undo_log` 与反向补偿镜像的高额开销。
-- 声明式使用：直接在方法上声明 `@GlobalLock`；
-- 编程式使用：注入 `SeataGlobalLockTemplate` 执行 `template.execute(...)` 或带弹性重试的 `template.executeWithRetry(...)`；
-- 运行机制：仅在本地事务提交前向 TC 校验或申请该行记录的全局锁，若未发生冲突则直接提交本地事务；一旦检测到冲突立即抛出 `5102 (SEATA_LOCK_CONFLICT)`，彻底免除 `undo_log` 写入，高并发吞吐提升 3~5 倍。
-
----
-
-### 8. Baomidou 动态数据源协同与假切源安全守卫
-
-在多数据源场景中，`ateng-cloud-seata` 与 `dynamic-datasource` 深度协同：
-- **自动连接池代理**：`SeataDynamicDataSourcePropertiesCustomizer` 协同将 `dynamic-datasource.seata=true` 并保持事务模式一致；`SeataDynamicDataSourceCoordinator` 在启动时自检各物理数据源是否均被 `SeataDataSourceProxy` 包装，杜绝遗漏；
-- **跨库切源合法放行**：当检测到全局分布式事务开启（`RootContext.getXID() != null`）时，`SeataDynamicDatasourceGuard` 识别为分布式事务协调跨库操作，予以合法放行；
-- **本地单连接假切源拦截**：当检测到处于 Spring 本地单连接事务（`DataSourceTransactionManager`）且无全局 XID 时，若开发者尝试跨库切源，守卫直接刚性拦截并抛出受管业务异常，坚决杜绝静默假切源造成的严重串库资损事故。
-
----
-
-### 9. 受管异步线程池上下文快照透传 (`SeataAsyncContextSnapshotProvider`)
-
-微服务中通过异步线程池（如 `@Async` 或 `CompletableFuture`）并行执行任务时，Seata 原生 `RootContext` 绑定于 `ThreadLocal`，跨线程会导致 XID 丢失。
-- 框架内建 `SeataAsyncContextSnapshotProvider`，自动实现 `ateng-boot-core` 的 `AsyncContextSnapshotProvider` SPI；
-- 在主线程提交异步任务前自动捕获当前 XID 快照；
-- 子线程执行前自动安全绑定 `RootContext.bind(xid)` 并联动 SLF4J MDC `xid`；
-- 任务执行完毕后在 `finally` 块中强制 `RootContext.unbind()` 与 MDC 还原，彻底杜绝多线程环境下的 XID 污染与跨请求串行。
-
----
-
-## 维度三：核心生产边界与非功能语义 (Production Boundaries)
-
-### 1. TCC Fence 业务防卫屏障三大防线工作原理与状态机
-
-`TccFenceBarrier` 构筑了严密的状态机防卫模型，彻底终结 TCC 模式的固有顽疾：
-
-```mermaid
-flowchart TD
-    subgraph TryPhase["一阶段 Try 防线"]
-        TryReq["收到一阶段 Try 请求"] --> CheckSuspended{"防线二：检查是否存在\nSUSPENDED 悬挂插旗记录?"}
-        CheckSuspended -- 是 --> ThrowHanging["刚性拦截：抛出 TccFenceHangingException (5110)\n拒绝延迟到达的 Try 操作，防业务悬挂！"]
-        CheckSuspended -- 否 --> InsertTried["本地原子写入 status=TRIED(1)"]
-        InsertTried --> ExecTryBiz["执行业务 Try 逻辑 (如预冻结余额)"]
-    end
-
-    subgraph CancelPhase["二阶段 Cancel 防线"]
-        CancelReq["收到二阶段 Cancel 请求"] --> CheckRecordExist{"防线一：检查记录是否存在?"}
-        CheckRecordExist -- 记录不存在 --> InsertSuspended["空回滚防卫：插入 status=SUSPENDED(4)\n静默放行，不执行业务补偿！"]
-        CheckRecordExist -- 记录已存在 --> CheckStatusCancel{"防线三：检查状态"}
-        CheckStatusCancel -- status=TRIED --> UpdateRollbacked["状态流转为 ROLLBACKED(3)\n执行业务补偿逻辑 (如解冻还款)"]
-        CheckStatusCancel -- status=ROLLBACKED --> IdempotentCancel["幂等防卫：已回滚过\n静默直接放行 (5112)"]
-    end
-
-    subgraph ConfirmPhase["二阶段 Confirm 防线"]
-        ConfirmReq["收到二阶段 Confirm 请求"] --> CheckStatusConfirm{"防线三：检查状态"}
-        CheckStatusConfirm -- status=TRIED --> UpdateCommitted["状态流转为 COMMITTED(2)\n执行业务确认逻辑 (如完成划扣)"]
-        CheckStatusConfirm -- status=COMMITTED --> IdempotentConfirm["幂等防卫：已确认过\n静默直接放行 (5112)"]
-    end
-```
-
-- **防线一：空回滚防卫 (Anti-Empty-Rollback)**：一阶段 Try 未曾执行时收到 Cancel，屏障在本地事务插入 `SUSPENDED` 标记并跳过补偿业务，杜绝资金虚增；
-- **防线二：防业务悬挂 (Anti-Hanging)**：若网络滞后的 Try 在 Cancel 执行之后才到达，屏障检测到先期插入的 `SUSPENDED` 标记，立即阻断并抛出 `TccFenceHangingException`，杜绝资金永久悬挂；
-- **防线三：二阶段幂等放行 (Idempotent Execution)**：网络抖动导致 Confirm 或 Cancel 多次重传时，状态校验直接命中 `COMMITTED` 或 `ROLLBACKED`，静默幂等放行，杜绝重复划扣。
-
----
-
-### 2. 微服务跨进程 XID 对称透传生命周期
-
-在分布式微服务调用拓扑中，XID 通过双向拦截器与 RPC 过滤器完成闭环传递：
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as 客户端
-    participant OrderSvc as OrderService (发起方)
-    participant FeignInter as SeataFeignContextInterceptor
-    participant WebInter as SeataWebHandlerInterceptor
-    participant StorageSvc as StorageService (提供方)
-    participant TC as Seata TC 协调器
-
-    Client->>OrderSvc: POST /order/create (创建订单)
-    Note over OrderSvc: 开启 @Transactional 全局事务
-    OrderSvc->>TC: 注册全局事务，生成 XID
-    TC-->>OrderSvc: 返回 XID=127.0.0.1:8091:11223344
-    OrderSvc->>FeignInter: 发起 Feign 扣减库存调用
-    Note over FeignInter: 从 RootContext 提取 XID，写入 Header: TX_XID
-    FeignInter->>WebInter: HTTP POST /storage/deduct (携带 TX_XID)
-    Note over WebInter: preHandle: RootContext.bind(xid) 且 MDC.put("xid", xid)
-    WebInter->>StorageSvc: 执行库存扣减
-    StorageSvc->>TC: 注册分支事务 (BranchId)
-    StorageSvc-->>WebInter: 响应 200 OK
-    Note over WebInter: afterCompletion: 对称释放 RootContext 且恢复 MDC
-    WebInter-->>OrderSvc: 返回成功响应
-    OrderSvc-->>Client: 订单创建成功
-```
-
-- **严密对称性**：入站 `preHandle` 绑定、出站 `afterCompletion` 确定性解绑；出站 Feign 请求自动注入，彻底杜绝跨租户与线程脏读污染。
-
----
-
-### 3. TCC 防卫日志分级生命周期批量清理机制 (Hierarchical Retention)
-
-针对防卫日志表的长期物理维护，框架确立了严格的分级生命周期策略：
-1. **终态业务记录（`COMMITTED` 与 `ROLLBACKED`）**：
-   - 保留期：`logTtl`（默认 3 天）；
-   - 处理逻辑：超过保留期的记录已被全局协调器最终裁决且业务两阶段完全收敛，准时分批物理删除以释放空间；
-2. **悬挂防卫标记（`SUSPENDED`）**：
-   - 保留期：`logTtl * suspendedRetentionMultiplier`（默认 `3 x 3d` = 9 天）；
-   - 核心防线：悬挂标记是一阶段迟到 Try 的唯一防护盾。极端网络抖动或下游单机假死恢复后，迟到的 Try 可能在数天后重试到达；通过 3 倍超长窗口长效留存，坚决杜绝因日志过早被删导致迟到 Try 重新穿透执行的业务悬挂事故；
-3. **活跃状态（`TRIED`）**：
-   - 坚决**永不执行物理删除**，保障未完成二阶段裁决的在途事务处于绝对保护中；
-4. **ANSI-SQL 双阶段键集分批清理**：
-   - 每次物理删除严格遵守 `cleanBatchSize`（默认 500）限制，采用两阶段主键定位删除，避免长事务造成物理行锁长时间挂起。
-
----
-
-### 4. Sentinel 熔断降级强制回滚防卫机制
-
-在微服务声明式 RPC 调用中，Sentinel 降级逻辑与分布式事务有着本质冲突：
-- **冲突根因**：Sentinel 熔断降级通常旨在“服务降级、放行兜底”。但若发生在声明式分布式事务（AT/TCC）调用链中，Fallback 默认返回 Mock 假数据或 null，上游事务切面将误判下游已正常响应，进而向 TC 上报成功决议并提交全局事务，导致上游成功落库而下游实际未执行的严重单边脏写；
-- **防卫契约**：`SeataFallbackDefense` 感知当前执行线程的 `RootContext.getXID()`：
-  - 若存在活跃全局事务，强制抛出受管业务异常 `BusinessException(SEATA_DEGRADE_BLOCKED, 5104)` 并完整传递原始异常根因；
-  - 触发 Spring `@Transactional` 或 Seata 切面感知异常，驱动 TC 实施全链路两阶段原子回滚；
-  - 若当前为无事务普通调用，则静默放行，保留原生 Sentinel 降级体验。
-
----
-
-### 5. MyBatis-Plus 多租户内部表动态放行机制
-
-MyBatis-Plus 行级多租户插件（`TenantLineInnerInterceptor`）会无差别拦截所有 SQL 并强制拼接 `AND tenant_id = ?` 条件：
-- **深水区隐患**：Seata 官方的 `undo_log` 与 `tcc_fence_log` 属于中间件物理系统表，表中通常不包含 `tenant_id` 业务列。一旦被追加租户条件，将直接引发 SQL 执行异常或事务回滚无法检索日志；
-- **动态放行与大小写清洗**：`SeataTenantLineHandlerWrapper` 自动放行 `undo_log`、`tcc_fence_log` 以及用户通过 `ateng.cloud.seata.tcc.table-name` 配置的自定义表名；
-- **方言弹性**：自动清洗表名中的反引号（`）、双引号（"）并统一转小写比对，支持大写方言（如 Oracle `TCC_FENCE_LOG`），实现彻底免疫。
-
----
-
-### 6. 因果异常体系与微服务主动回滚防雪崩
-
-`SeataExceptionTranslationAspect` 严守工业级因果异常纪律：
-- 严禁吞咽异常，完整保留原始异常因果链（`cause`）；
-- 将底层不可控的 Seata 原始异常（如 `LockConflictException`、`TransactionException`）在模块边界拦截转译为受管业务异常 `BusinessException`，分别赋予语义化错误码 `5102 (SEATA_LOCK_CONFLICT)` 与 `5103 (SEATA_TC_UNAVAILABLE)`；
-- 在全局事务边界（TM）自动感知业务异常并向 TC 上报回滚决议，杜绝单边提交。
-
----
-
-## 维度四：物理排版与代码全真验证
-
-本模块所有 Java 示例代码、YAML 配置片段与数据库 DDL，**100% 逆向提取自跑通的场景样例工程 [sample-cloud-seata](../ateng-cloud-samples/sample-cloud-seata) 真实源码与实测用例**，并受以下 8 大端到端全真集成测试套件 100% 离线自洽守护：
-
-### 1. 核心集成测试套件全景矩阵
+### 8.1 核心集成测试套件全景矩阵
 
 | 场景测试套件类 | 关键验证用例 | 覆盖技术防线与核心强断言 |
 | :--- | :--- | :--- |
-| **[SampleSeataDistributedTransactionIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDistributedTransactionIntegrationTest.java)** | `shouldCommitDistributedTransactionSuccessfully`<br>`shouldRollbackDistributedTransactionOnBusinessException`<br>`shouldRollbackDistributedTransactionOnStockInsufficient` | AT 模式订单、库存、账户三节点正向原子提交；余额不足与库存不足时原子回滚，数据 0 污染 |
+| **[SampleSeataPurchaseOrderControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataPurchaseOrderControllerTest.java)** | `shouldSubmitPurchaseOrderSuccessfully`<br>`shouldRollbackPurchaseOrderOnBusinessException`<br>`shouldQueryStockAndBalanceSuccessfully` | 采购提单 Controller 端点 MockMvc 验证；AT 事务正向提交与反向回滚；余额不足 Fail-Fast |
+| **[SampleSeataTccFenceControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceControllerTest.java)** | `shouldPrepareTccDebitSuccessfully`<br>`shouldCommitTccDebitSuccessfully`<br>`shouldRollbackTccDebitSuccessfully`<br>`shouldHandleEmptyRollbackViaController`<br>`shouldPreventBusinessHangingViaController`<br>`shouldHandleDuplicateCommitIdempotently` | TCC Controller 6 个防卫端点 MockMvc 验证；空回滚插入 SUSPENDED；业务悬挂抛出 5110；重复提交幂等放行 5112 |
+| **[SampleSeataLockAndFallbackControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataLockAndFallbackControllerTest.java)** | `shouldExecuteDeclarativeGlobalLockCheck`<br>`shouldExecuteProgrammaticStockUpdate`<br>`shouldBlockAndRollbackWhenFallbackWithActiveTx`<br>`shouldAllowPeacefulFallbackWithoutActiveTx` | 全局锁 Controller 与降级防卫 Controller MockMvc 验证；活跃全局事务下降级强制 5104 阻断回滚；无事务平滑降级 |
+| **[SampleSeataDistributedTransactionIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDistributedTransactionIntegrationTest.java)** | `shouldCommitDistributedTransactionSuccessfully`<br>`shouldRollbackDistributedTransactionOnBusinessException`<br>`shouldRollbackDistributedTransactionOnStockInsufficient` | AT 模式底层服务组件测试；订单、库存、账户三节点正向原子提交与异常原子回滚 |
 | **[SampleSeataGlobalLockIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataGlobalLockIntegrationTest.java)** | `shouldExecuteDeclarativeGlobalLock`<br>`shouldExecuteProgrammaticGlobalLock`<br>`shouldExecuteConcurrentlyWithoutLeak` | `@GlobalLock` 声明式与编程式排他防脏读实测；高并发竞争下无 `undo_log` 开销的高性能排他校验 |
-| **[SampleSeataTccFenceIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceIntegrationTest.java)** | `shouldExecuteNormalTccCommit`<br>`shouldExecuteNormalTccRollback`<br>`shouldHandleEmptyRollback`<br>`shouldPreventBusinessHanging`<br>`shouldEnsureIdempotentExecution` | TCC 两阶段流转；空回滚防卫（插入 SUSPENDED）；业务悬挂拦截（抛出 `TccFenceHangingException`）；重复提交/回滚幂等放行 |
+| **[SampleSeataTccFenceIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceIntegrationTest.java)** | `shouldExecuteNormalTccCommit`<br>`shouldExecuteNormalTccRollback`<br>`shouldHandleEmptyRollback`<br>`shouldPreventBusinessHanging`<br>`shouldEnsureIdempotentExecution` | TCC 两阶段流转底座自验；空回滚防卫（插入 SUSPENDED）；业务悬挂拦截（抛出 `TccFenceHangingException`）；重复提交/回滚幂等放行 |
 | **[SampleSeataFeignMdcIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataFeignMdcIntegrationTest.java)** | `shouldInjectTxXidHeaderOnFeignRequest`<br>`shouldPropagateXidAndMdcInServerPipeline`<br>`shouldHandleNonTransactionalRequestNormally` | Feign 客户端透明注入 `TX_XID` 请求头；Web 入站自动提取绑定 XID 并同步 MDC `xid`；出口对称释放防污染 |
 | **[SampleSeataDubboRpcIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDubboRpcIntegrationTest.java)** | `shouldPropagateXidOnConsumerSide`<br>`shouldBindAndRestoreOnProviderSide`<br>`shouldTriggerAdaptiveIdempotencyWhenAlreadyBound`<br>`shouldBypassInjvmProtocol` | Dubbo 消费端注入 Attachment；服务端绑定 XID 与 MDC；自适应幂等防卫（已绑定相同 XID 时静默放行并不二次解绑）；`injvm` 协议短路放行 |
 | **[SampleSeataTccFenceCleanIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceCleanIntegrationTest.java)** | `shouldExecuteHierarchicalLogClean`<br>`shouldRespectBatchSizeLimit` | 分级生命周期批量清理：终态超期准时清理、悬挂长效留存超期清理、活跃状态永不清理；单批次数量严格限制 |
@@ -770,17 +1042,17 @@ MyBatis-Plus 行级多租户插件（`TenantLineInnerInterceptor`）会无差别
 
 ---
 
-### 2. 离线冒烟门禁与构建准出命令
+### 8.2 离线冒烟门禁与构建准出命令
 
 本地日常与提交准出验证命令（100% 离线自洽沙箱，多线程并行加速）：
 
 ```bash
-# 阶梯一：ateng-cloud-seata 模块单元测试 (119 个单测 100% PASS)
+# 阶梯一：ateng-cloud-seata 模块单元测试 (127 个单测 100% PASS)
 mvn test -pl ateng-cloud-seata -am -T 1C -nsu -B
 
-# 阶梯二：sample-cloud-seata 场景工程端到端全真集成测试 (25 个集成测试 100% PASS)
+# 阶梯二：sample-cloud-seata 场景工程端到端全真集成测试 (40 个集成测试 100% PASS)
 mvn test -pl ateng-cloud-samples/sample-cloud-seata -am -T 1C -nsu -B
 
-# 阶梯三：模块与场景工程联动准出验证 (144 个用例 100% 全绿)
+# 阶梯三：模块与场景工程联动准出验证 (167 个自动化测试 100% 全绿)
 mvn test -pl ateng-cloud-seata,ateng-cloud-samples/sample-cloud-seata -am -T 1C -nsu -B
 ```
