@@ -47,3 +47,7 @@ _Avoid_: 标签过滤, 防伪拦截, 安全名单
 **Standalone Feign Propagation**:
 在未引入全量 Feign 治理底座的轻量微服务中，按需独立装配 Feign 出站染色拦截器并在全量组件存在时自动平滑让位的正交解耦透传机制。
 _Avoid_: Feign自动注入, 拦截器让位, 独立Feign适配
+
+**Order Fulfillment Lane Trajectory**:
+以电商订单履约（`order-service` ➔ `inventory-service` ➔ `logistics-service`）为领域原型的微服务灰度全链路调用轨迹模型，以强类型 `OrderFulfillmentVO` 显式呈现每个微服务节点真实选中的实例 ID 与版本标签。
+_Avoid_: 链路日志, 追踪报告, TraceReport, 测试链路
