@@ -6,7 +6,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 import static org.hamcrest.Matchers.containsString;
 
@@ -15,6 +24,9 @@ import static org.hamcrest.Matchers.containsString;
  *
  * <p>全面覆盖以下生产边缘防护能力：
  * <ul>
+ *     <li>开放平台商户订单同步接口 HMAC-SHA256 签名与防重放核验；</li>
+ *     <li>签名时间戳偏差防偏与请求体篡改 Fail-Fast 401 阻断；</li>
+ *     <li>载荷防爆硬防御：超大报文 (>2MB) 快速熔断为 HTTP 413 Payload Too Large；</li>
  *     <li>目录穿越（..、%2e%2e）与空字节（\0）探测的 HTTP 400 快速熔断；</li>
  *     <li>连续多斜杠（/// -> /）自动规范化折叠；</li>
  *     <li>公网入站敏感受信标头（X-User-Id、Same-Token 等）物理剥离与防伪造；</li>
@@ -27,8 +39,11 @@ import static org.hamcrest.Matchers.containsString;
  * @since 2026-10-28
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureWebTestClient
+@AutoConfigureWebTestClient(timeout = "15000")
 public class SampleGatewayEdgeSecurityIntegrationTest {
+
+    private static final String SAMPLE_APP_ID = "sample-app";
+    private static final String SAMPLE_APP_SECRET = "sample-secret-123456";
 
     @Autowired
     private WebTestClient webTestClient;
@@ -65,7 +80,7 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
     @DisplayName("测试包含空字节畸形请求快速熔断为 HTTP 400")
     void testNullByteBlocked() {
         webTestClient.get()
-                .uri("/api/mock/hello%00evil")
+                .uri("/api/security/path-guard%00evil")
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectHeader().exists(GatewayConstants.X_TRACE_ID)
@@ -75,22 +90,22 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
     }
 
     @Test
-    @DisplayName("测试多斜杠规范化折叠 (///api///mock/hello -> /mock/hello) 正常放行")
+    @DisplayName("测试多斜杠规范化折叠 (///api///security/path-guard -> /security/path-guard) 正常放行")
     void testMultiSlashNormalization() {
         webTestClient.get()
-                .uri("///api///mock/hello")
+                .uri("///api///security/path-guard")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
     }
 
     @Test
     @DisplayName("测试入站敏感标头物理剥离清洗 (X-User-Id, Same-Token 等)")
     void testHeaderSanitization() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .header(GatewayConstants.X_USER_ID, "forged-user-999")
                 .header(GatewayConstants.X_TENANT_ID, "forged-tenant-888")
                 .header(GatewayConstants.X_IGNORE_TENANT, "true")
@@ -112,7 +127,7 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
     void testClientRealIpResolution() {
         // 模拟外部请求链: 伪造 IP(1.1.1.1) -> 真实公网客户端(203.0.113.195) -> 前置 SLB(自动追加真实 IP)
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .header(GatewayConstants.X_FORWARDED_FOR, "1.1.1.1, 203.0.113.195")
                 .exchange()
                 .expectStatus().isOk()
@@ -126,7 +141,7 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
     @DisplayName("测试单 IP 黑名单快速熔断为 HTTP 403 Forbidden")
     void testExactIpBlacklistBlocked() {
         webTestClient.get()
-                .uri("/api/mock/hello")
+                .uri("/api/security/ip-guard")
                 .header(GatewayConstants.X_FORWARDED_FOR, "192.168.100.1")
                 .exchange()
                 .expectStatus().isForbidden()
@@ -141,7 +156,7 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
     @DisplayName("测试 CIDR 掩码黑名单 (10.99.0.0/16) 快速熔断为 HTTP 403")
     void testCidrIpBlacklistBlocked() {
         webTestClient.get()
-                .uri("/api/mock/hello")
+                .uri("/api/security/ip-guard")
                 .header(GatewayConstants.X_FORWARDED_FOR, "10.99.12.34")
                 .exchange()
                 .expectStatus().isForbidden()
@@ -156,12 +171,175 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
     @DisplayName("测试合法未被拉黑 IP 正常放行通过")
     void testNormalIpAllowed() {
         webTestClient.get()
-                .uri("/api/mock/hello")
+                .uri("/api/security/ip-guard")
                 .header(GatewayConstants.X_FORWARDED_FOR, "203.0.113.50")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.clientIp").isEqualTo("203.0.113.50")
+                .jsonPath("$.data.defenseStatus").isEqualTo("IP_ALLOWED");
+    }
+
+    @Test
+    @DisplayName("测试开放平台商户订单同步接口 HMAC-SHA256 签名正常放行并返回强类型 VO")
+    void testOpenApiSignGuardValidSyncOrderPasses() throws Exception {
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "nonce-" + System.nanoTime();
+        String jsonBody = "{\"orderId\":\"ORD-20261103-001\",\"merchantId\":\"MCH-9988\",\"amount\":199.50,\"channel\":\"ALIPAY\"}";
+
+        String bodyHash = calculateSha256(jsonBody.getBytes(StandardCharsets.UTF_8));
+        String canonical = "appId=" + SAMPLE_APP_ID + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, SAMPLE_APP_SECRET);
+
+        webTestClient.post()
+                .uri("/api/open/merchant/sync-order")
+                .header(GatewayConstants.X_APP_ID, SAMPLE_APP_ID)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(jsonBody)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.orderId").isEqualTo("ORD-20261103-001")
+                .jsonPath("$.data.status").isEqualTo("SYNCED")
+                .jsonPath("$.data.signatureVerified").isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("测试开放平台商户订单同步接口报文被篡改时被 401 阻断")
+    void testOpenApiSignGuardTamperedBodyBlocked() throws Exception {
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "nonce-tamper-" + System.nanoTime();
+        String originalBody = "{\"orderId\":\"ORD-20261103-001\",\"merchantId\":\"MCH-9988\",\"amount\":199.50,\"channel\":\"ALIPAY\"}";
+
+        String bodyHash = calculateSha256(originalBody.getBytes(StandardCharsets.UTF_8));
+        String canonical = "appId=" + SAMPLE_APP_ID + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String signature = calculateHmacSha256(canonical, SAMPLE_APP_SECRET);
+
+        // 发送被恶意篡改的金额
+        String tamperedBody = "{\"orderId\":\"ORD-20261103-001\",\"merchantId\":\"MCH-9988\",\"amount\":0.01,\"channel\":\"ALIPAY\"}";
+        webTestClient.post()
+                .uri("/api/open/merchant/sync-order")
+                .header(GatewayConstants.X_APP_ID, SAMPLE_APP_ID)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(tamperedBody)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("API 签名校验失败"));
+    }
+
+    @Test
+    @DisplayName("测试开放平台接口时间戳偏差超限 (>5m) 被 401 阻断")
+    void testOpenApiSignGuardExpiredTimestampBlocked() throws Exception {
+        // 构造 10 分钟前的过期时间戳
+        String expiredTimestamp = String.valueOf(System.currentTimeMillis() - 600_000L);
+        String nonce = "nonce-" + System.nanoTime();
+
+        String canonical = "appId=" + SAMPLE_APP_ID + "&nonce=" + nonce + "&timestamp=" + expiredTimestamp + "&orderId=ORD-EXPIRED";
+        String signature = calculateHmacSha256(canonical, SAMPLE_APP_SECRET);
+
+        webTestClient.get()
+                .uri("/api/open/merchant/query-order?orderId=ORD-EXPIRED")
+                .header(GatewayConstants.X_APP_ID, SAMPLE_APP_ID)
+                .header(GatewayConstants.X_TIMESTAMP, expiredTimestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("时间戳偏差过大"));
+    }
+
+    @Test
+    @DisplayName("测试开放平台接口 Nonce 重放攻击被 401 阻断")
+    void testOpenApiSignGuardReplayNonceBlocked() throws Exception {
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String nonce = "replay-nonce-" + System.nanoTime();
+
+        // Query 参数参与规范签名: appId + nonce + timestamp + 排序后的 query 参数
+        String canonical = "appId=" + SAMPLE_APP_ID + "&nonce=" + nonce + "&timestamp=" + timestamp + "&orderId=ORD-REPLAY";
+        String signature = calculateHmacSha256(canonical, SAMPLE_APP_SECRET);
+
+        // 首次请求成功通过
+        webTestClient.get()
+                .uri("/api/open/merchant/query-order?orderId=ORD-REPLAY")
+                .header(GatewayConstants.X_APP_ID, SAMPLE_APP_ID)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.orderId").isEqualTo("ORD-REPLAY");
+
+        // 相同 Nonce 重放第二次请求应被拒绝
+        webTestClient.get()
+                .uri("/api/open/merchant/query-order?orderId=ORD-REPLAY")
+                .header(GatewayConstants.X_APP_ID, SAMPLE_APP_ID)
+                .header(GatewayConstants.X_TIMESTAMP, timestamp)
+                .header(GatewayConstants.X_NONCE, nonce)
+                .header(GatewayConstants.X_SIGNATURE, signature)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401)
+                .jsonPath("$.msg").value(containsString("重放攻击"));
+    }
+
+    @Test
+    @DisplayName("测试开放接口超大报文 (>2MB) 快速熔断为 HTTP 413 Payload Too Large")
+    void testPayloadBombExceedingLimitBlocked() {
+        webTestClient.post()
+                .uri("/api/open/merchant/sync-order")
+                .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(3 * 1024 * 1024))
+                .header(GatewayConstants.X_APP_ID, SAMPLE_APP_ID)
+                .header(GatewayConstants.X_TIMESTAMP, String.valueOf(System.currentTimeMillis()))
+                .header(GatewayConstants.X_NONCE, "nonce-oversized")
+                .header(GatewayConstants.X_SIGNATURE, "mock-signature")
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(413)
+                .jsonPath("$.msg").value(containsString("超出最大允许限制"));
+    }
+
+    @Test
+    @DisplayName("测试安全边缘正常小载荷上传与防御检测成功放行")
+    void testPayloadGuardNormalPayloadPasses() {
+        byte[] payload = new byte[1024];
+        java.util.Arrays.fill(payload, (byte) 1);
+
+        webTestClient.post()
+                .uri("/api/security/payload-guard")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .bodyValue(payload)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.receivedBytes").isEqualTo(1024)
+                .jsonPath("$.data.passed").isEqualTo(true);
+    }
+
+    private String calculateHmacSha256(String data, String secret) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private String calculateSha256(byte[] data) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return HexFormat.of().formatHex(digest.digest(data));
     }
 }

@@ -21,6 +21,30 @@ spring:
         ttl: 3s
     gateway:
       routes:
+        - id: open-sync-order
+          uri: forward:/sample/cloud/gateway/security/open/merchant/sync-order
+          predicates:
+            - Path=/api/open/merchant/sync-order
+        - id: open-query-order
+          uri: forward:/sample/cloud/gateway/security/open/merchant/query-order
+          predicates:
+            - Path=/api/open/merchant/query-order
+        - id: security-payload-guard
+          uri: forward:/sample/cloud/gateway/security/payload-guard
+          predicates:
+            - Path=/api/security/payload-guard
+        - id: security-ip-guard
+          uri: forward:/sample/cloud/gateway/security/ip-guard
+          predicates:
+            - Path=/api/security/ip-guard
+        - id: security-path-guard
+          uri: forward:/sample/cloud/gateway/security/path-guard
+          predicates:
+            - Path=/api/security/path-guard
+        - id: security-inspect-headers
+          uri: forward:/sample/cloud/gateway/security/inspect-edge-headers
+          predicates:
+            - Path=/api/security/inspect-edge-headers
         - id: mock-open-data
           uri: forward:/mock/open-data
           predicates:
@@ -116,6 +140,8 @@ ateng:
         trusted-proxy-count: 1
         exclude-paths:
           - "/api/open/**"
+          - "/api/security/**"
+          - "/sample/cloud/gateway/security/**"
           - "/mock/open-data"
           - "/api/mock/hello"
           - "/api/mock/echo-headers"
