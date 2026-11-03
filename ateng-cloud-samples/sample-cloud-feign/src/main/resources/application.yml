@@ -1,3 +1,8 @@
+# ==============================================================================
+# Sample Cloud Feign 样例服务配置
+# 默认配置保障 100% 离线自洽（无需物理 Nacos 注册中心即可运行全量端到端测试）
+# ==============================================================================
+
 test:
   server:
     port: 8080
@@ -5,15 +10,21 @@ test:
     port: 59999
 
 server:
-  port: 0
+  port: 8080
 
 spring:
   application:
     name: sample-cloud-feign
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:test}
+  config:
+    import:
+      # 弹性探测本地真实微服务环境配置，存在时增量合并，不存在时静默跳过守护 CI 离线自洽
+      - "optional:classpath:application-local.yml"
   cloud:
     nacos:
       discovery:
-        enabled: false
+        enabled: false # 默认离线关闭外部物理发现连接，保障 CI 100% 离线自洽
       config:
         enabled: false
 
@@ -25,6 +36,7 @@ ateng:
   cloud:
     feign:
       enabled: true
+      logger-level: HEADERS
       httpclient:
         max-connections: 200
         max-connections-per-route: 50
