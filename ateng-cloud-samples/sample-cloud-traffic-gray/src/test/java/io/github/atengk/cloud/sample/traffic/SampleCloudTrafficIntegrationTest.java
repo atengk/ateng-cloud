@@ -406,6 +406,138 @@ class SampleCloudTrafficIntegrationTest {
     }
 
     @Test
+    @DisplayName("策略切片: 声明式 @TrafficTag 注解自动绑定金丝雀泳道并触发跨跳穿透与出口还原")
+    void testPolicyDeclarativeTagAspect() {
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/declarative-tag?orderNo=ORD-DECL-1001",
+                HttpMethod.GET,
+                null,
+                ORDER_VO_TYPE_REF
+        );
+
+        OrderFulfillmentVO vo = extractOrderFulfillment(response);
+        assertThat(vo.getTrafficTag()).isEqualTo("v2");
+        assertThat(vo.getOrderNo()).isEqualTo("ORD-DECL-1001");
+
+        // 强断言：声明式绑定的 v2 标签成功引导全链路调度并在出口还原
+        // 链路：DeclarativeEntry[tag=v2] ➔ OrderService[inst=inst-order-gray, tag=v2] ➔ InventoryService[inst=inst-inv-base, tag=default] ➔ LogisticsService[inst=inst-logistics-gray, tag=v2]
+        assertThat(vo.getVisitedNodes()).containsExactly(
+                "DeclarativeEntry[tag=v2]",
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "InventoryService[inst=inst-inv-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+
+        // 断言测试线程上下文零污染
+        assertThat(TrafficContextHolder.getTag()).isNull();
+    }
+
+    @Test
+    @DisplayName("策略切片: 应用层外部标签白名单防线 (STRIP 剥离清洗与 REJECT 4212 阻断)")
+    void testPolicyWhitelistDefense() {
+        // 配置白名单仅允许 v2
+        trafficProperties.setAllowedTags(Set.of("v2"));
+
+        // 1. STRIP 模式：携带未授权标签 'forged-tag'，应被安全剥离降级至基线
+        trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
+        HttpHeaders stripHeaders = new HttpHeaders();
+        stripHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "forged-tag");
+        ResponseEntity<Result<OrderFulfillmentVO>> stripResp = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/whitelist-check?orderNo=ORD-WL-STRIP",
+                HttpMethod.GET,
+                new HttpEntity<>(stripHeaders),
+                ORDER_VO_TYPE_REF
+        );
+        OrderFulfillmentVO stripVo = extractOrderFulfillment(stripResp);
+        assertThat(stripVo.getTrafficTag()).isNull();
+        assertThat(stripVo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-base, tag=default]"
+        );
+
+        // 2. REJECT 模式：携带未授权标签 'forged-tag'，必须直接 4212 阻断
+        trafficProperties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+        HttpHeaders rejectHeaders = new HttpHeaders();
+        rejectHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "forged-tag");
+        ResponseEntity<String> rejectResponse = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/whitelist-check?orderNo=ORD-WL-REJECT",
+                HttpMethod.GET,
+                new HttpEntity<>(rejectHeaders),
+                String.class
+        );
+        assertThat(rejectResponse.getBody()).isNotNull();
+        assertThat(rejectResponse.getBody()).contains("4212");
+
+        // 3. 携带已授权标签 'v2'，不受阻断正常放行
+        HttpHeaders allowedHeaders = new HttpHeaders();
+        allowedHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        ResponseEntity<Result<OrderFulfillmentVO>> allowedResp = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/whitelist-check?orderNo=ORD-WL-OK",
+                HttpMethod.GET,
+                new HttpEntity<>(allowedHeaders),
+                ORDER_VO_TYPE_REF
+        );
+        OrderFulfillmentVO allowedVo = extractOrderFulfillment(allowedResp);
+        assertThat(allowedVo.getTrafficTag()).isEqualTo("v2");
+        assertThat(allowedVo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+    }
+
+    @Test
+    @DisplayName("策略切片: 金融级严格泳道强隔离阻断 (Strict Lane 503 Fail-Fast 异常拦截)")
+    void testPolicyStrictLaneIsolationFailFast() {
+        // 开启严格隔离模式
+        trafficProperties.setStrictLane(true);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v3-not-exist");
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/strict-lane?orderNo=ORD-STRICT-001",
+                HttpMethod.GET,
+                entity,
+                String.class
+        );
+
+        // 强断言：严格隔离模式下未命中灰度实例，直接触发 Fail-Fast (阻断调度并由全局异常拦截返回 STRICT_LANE_BLOCK 4210 业务错误)，严禁脏写基线
+        assertThat(response.getStatusCode().value()).isIn(200, 503);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody()).contains("4210");
+        assertThat(response.getBody()).contains("严格泳道隔离阻断");
+    }
+
+    @Test
+    @DisplayName("策略切片: 灰度节点全下线弹性平滑降级 (Resilient Fallback 零 503 报警)")
+    void testPolicyResilientFallback() {
+        // 将 Order Service 的灰度节点下线 (仅保留基线实例)
+        discoveryClient.removeInstance("order-service", "inst-order-gray");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/resilient-fallback?orderNo=ORD-FALLBACK-001",
+                HttpMethod.GET,
+                entity,
+                ORDER_VO_TYPE_REF
+        );
+
+        // 强断言：Order Service 灰度实例全下线时，必须平滑回退至基线，返回 200 OK，绝不抛出 503 报警
+        OrderFulfillmentVO vo = extractOrderFulfillment(response);
+        assertThat(vo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-base, tag=default]"
+        );
+        // 且由于泳道穿透 (Lane Continuity) 保持，下游 logistics-service 仍能重新进入其已发版的 v2 灰度实例
+        assertThat(vo.getVisitedNodes()).contains(
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+    }
+
+    @Test
     @DisplayName("场景 1: 未染色普通请求全链路调度至基线实例")
     void testBaselineRouting() {
         ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
