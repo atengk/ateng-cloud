@@ -22,10 +22,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.TestSocketUtils;
 
+import java.net.ServerSocket;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 
@@ -39,14 +41,28 @@ import static org.junit.jupiter.api.Assertions.*;
  * @since 2026-11-03
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT)
+@DirtiesContext
 public class OrderConsumerFeignTest {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        int port = TestSocketUtils.findAvailableTcpPort();
+        int port = findAvailablePort();
         registry.add("server.port", () -> port);
         registry.add("test.server.port", () -> port);
         registry.add("ateng.cloud.feign.adaptive-unwrap.exclude-clients", () -> "excluded-client");
+    }
+
+    private static int findAvailablePort() {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            socket.setReuseAddress(true);
+            int localPort = socket.getLocalPort();
+            if (localPort < 10000) {
+                return 20000 + (int) (Math.random() * 30000);
+            }
+            return localPort;
+        } catch (Exception e) {
+            return 20000 + (int) (Math.random() * 30000);
+        }
     }
 
     @Autowired

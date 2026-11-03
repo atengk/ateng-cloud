@@ -10,9 +10,14 @@ import org.springframework.web.bind.annotation.GetMapping;
  * @author Ateng
  * @since 2026-10-28
  */
-@FeignClient(name = "isolated-timeout-client", url = "http://localhost:${test.server.port}")
+@FeignClient(name = "isolated-timeout-client", url = "http://localhost:${test.server.port:8080}")
 public interface IsolatedTimeoutFeignClient {
 
-    @GetMapping("/mock/retry/slow")
+    /**
+     * 调用耗时 800ms 的接口，触发 300ms 读取超时
+     *
+     * @return 响应报文
+     */
+    @GetMapping("/sample/cloud/feign/remote/tolerance/slow")
     String slow();
 }

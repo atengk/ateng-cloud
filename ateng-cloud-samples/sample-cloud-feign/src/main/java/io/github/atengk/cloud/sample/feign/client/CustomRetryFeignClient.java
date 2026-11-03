@@ -17,6 +17,6 @@ public interface CustomRetryFeignClient {
      *
      * @return 响应报文
      */
-    @GetMapping("/api/mock/retry/unreachable")
+    @GetMapping("/sample/cloud/feign/remote/tolerance/unreachable")
     String getUnreachable();
 }
