@@ -15,28 +15,34 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 /**
- * Spring Cloud LoadBalancer 负载均衡亲和调度与自适应动态加权演示控制器
+ * Spring Cloud LoadBalancer 负载均衡亲和调度与自适应动态加权控制器
  *
- * <p>演示集成同机房（Zone Affinity）优先路由、冷启动加权预热（Startup Preheating）以及节点负载自适应调谐调度。</p>
+ * <p>显式遵循强类型 {@link Result} 契约，演示集成同机房（Zone Affinity）优先路由、
+ * 60s 冷启动加权平滑预热（Startup Preheating）以及下游节点系统负载自适应调谐调度与阻尼防抖。</p>
  *
  * @author Ateng
- * @since 2026-10-28
+ * @since 2026-11-03
  */
 @RestController
-@RequestMapping("/api/nacos/loadbalancer")
-public class NacosLoadBalancerDemoController {
+@RequestMapping("/sample/cloud/nacos/loadbalancer")
+public class NacosLoadBalancerController {
 
     private final ObjectProvider<LoadBalancerClient> loadBalancerClientProvider;
     private final ObjectProvider<InstanceWeightCalculator> instanceWeightCalculatorProvider;
 
-    public NacosLoadBalancerDemoController(ObjectProvider<LoadBalancerClient> loadBalancerClientProvider,
-                                           ObjectProvider<InstanceWeightCalculator> instanceWeightCalculatorProvider) {
+    public NacosLoadBalancerController(ObjectProvider<LoadBalancerClient> loadBalancerClientProvider,
+                                       ObjectProvider<InstanceWeightCalculator> instanceWeightCalculatorProvider) {
         this.loadBalancerClientProvider = loadBalancerClientProvider;
         this.instanceWeightCalculatorProvider = instanceWeightCalculatorProvider;
     }
 
     /**
-     * 根据负载均衡选择器挑选最优服务实例
+     * 根据客户端负载均衡器挑选最优服务实例
+     *
+     * <p>验证同机房可用区（Zone Affinity）优先路由与 60s 冷启动加权预热综合调度。</p>
+     *
+     * @param serviceName 目标微服务名称，默认为 sample-cloud-nacos
+     * @return 选举出的最优服务实例节点快照
      */
     @GetMapping("/choose")
     public Result<InstanceVO> chooseInstance(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
@@ -49,7 +55,13 @@ public class NacosLoadBalancerDemoController {
     }
 
     /**
-     * 演示基于系统负载指标（CPU/内存）的自适应动态加权调谐
+     * 演示基于系统负载指标（CPU/内存）的自适应动态加权调谐与阻尼防抖
+     *
+     * @param currentWeight 实例当前基准权重
+     * @param cpuUsage 当前 CPU 利用率（0.0 ~ 1.0）
+     * @param instanceId 模拟实例 ID
+     * @param port 模拟实例端口
+     * @return 计算后的有效权重（过载时平滑降权，全集群过载时兜底防雪崩）
      */
     @GetMapping("/calculate-weight")
     public Result<Double> calculateWeight(
