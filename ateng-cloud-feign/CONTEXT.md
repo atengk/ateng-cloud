@@ -16,9 +16,13 @@ _Avoid_: 容错重试, 弹性重试机制, 失败轮询
 在微服务跨进程 HTTP 通信时，出站请求以最高优先级自动抽取当前线程的 MDC traceId、userId、tenantId 及 ignoreTenant 快照并标准化挂载至 HTTP 标头的全链路治理机制。
 _Avoid_: 标头透传, 请求头复制, 线程变量传递
 
-**Zero-Trust Header Guard**:
-协同 Sa-Token 在 Feign 请求出站时动态附加内部同源受信签名凭证（Same-Token），未携带凭证或绕过网关直连内部微服务暴露端口的流量直接 Fail-Fast 401 阻断。
-_Avoid_: 内网认证头, 内部Token, 安全签名
+**Canary Traffic Tag Propagation**:
+在微服务全链路跨进程通信中，出站请求透明捕获当前线程 MDC 中的流量染色标记（`X-Traffic-Tag`），并标准化注入至 HTTP 出站标头的金丝雀灰度发布路由机制。
+_Avoid_: 灰度标头透传, 标签传递, 染色转发
+
+**Same-Token Fail-Fast Guard**:
+依托 Sa-Token `SameTokenProvider` SPI，向出站 Feign 请求动态挂载内部同源受信凭据标头（`same-token`），对绕过网关直连内网暴露端口的非受信任流量实施快速 401 阻断的内网零信任防穿透机制。
+_Avoid_: 内网Token拦截, 鉴权请求头, 安全签名透传
 
 **Causal Error Decoding**:
 当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，优先按对端标准 `Result` 报文的业务错误状态转译为受管的强类型 `BusinessException`，且 100% 完整保留原始因果链（底层 `FeignException` 作为 `cause`）的防御性异常解码器。
