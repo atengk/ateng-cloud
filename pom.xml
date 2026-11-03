@@ -10,7 +10,7 @@
     <packaging>pom</packaging>
 
     <name>${project.groupId}:${project.artifactId}</name>
-    <description>面向企业级高可用分布式生产环境的 Spring Cloud &amp; Apache Dubbo 双模微服务基础设施 Starter 套件</description>
+    <description>面向生产就绪的 Spring Cloud 工业级微服务基础设施 Starter 套件</description>
     <url>https://github.com/atengk/ateng-cloud</url>
 
     <licenses>

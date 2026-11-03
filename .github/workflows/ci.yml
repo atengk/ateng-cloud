@@ -119,8 +119,8 @@ jobs:
           java-version: ${{ matrix.java-version }}
           cache: 'maven'
 
-      - name: 编译并执行全量单元与集成测试
-        run: mvn clean test -B -T 1C -nsu
+      - name: 编译并执行全量 Starter 单元测试与全家桶冒烟准出门禁
+        run: mvn clean test -pl ateng-cloud-gateway,ateng-cloud-seata,ateng-cloud-samples/sample-cloud-smoke-test -am -B -T 1C -nsu
 
   # ----------------------------------------------------------------------------
   # Job 4: 质量门禁终审盖戳 (分支保护规则唯一指定强绑门禁)

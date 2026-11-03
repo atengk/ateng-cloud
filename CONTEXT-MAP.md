@@ -2,6 +2,7 @@
 
 ## Contexts
 
+- [BOM](./ateng-cloud-bom/CONTEXT.md) — 微服务全域依赖版本物料清单、上游基线统管与依赖收敛仲裁
 - [Nacos](./ateng-cloud-nacos/CONTEXT.md) — 微服务动态注册发现、元数据治理与 Nacos 现代配置中心集成
 - [Feign](./ateng-cloud-feign/CONTEXT.md) — 声明式 HTTP/RPC 客户端通信、四维上下文透传、双模自适应解包与防重试雪崩
 - [Dubbo](./ateng-cloud-dubbo/CONTEXT.md) — 高性能 RPC 通信与治理、Triple/TCP 双核协议、四维上下文透传与双模契约校验
@@ -9,9 +10,12 @@
 - [Sentinel](./ateng-cloud-sentinel/CONTEXT.md) — 流量防卫、熔断降级、受管降级工厂、路径防爆清洗与 Nacos 5 大规则全家桶持久化
 - [Traffic](./ateng-cloud-traffic/CONTEXT.md) — 全链路流量染色、泳道隔离、三层复合调度责任链与 Nacos 动态切流热更
 - [Seata](./ateng-cloud-seata/CONTEXT.md) — 分布式事务增强、AT/TCC 双核驱动、TCC 防悬挂业务屏障、XID 全链路透传与假切源守卫协同
+- [All](./ateng-cloud-all/CONTEXT.md) — 通用微服务骨干构件聚合全家桶、响应式网关隔离与裁剪边界
 
 ## Relationships
 
+- **BOM → All Microservices & Cloud Starters**: 作为唯一权威物料清单，统管微服务全域版本基线，消除传递依赖冲突
+- **All → Standard Business Microservices**: 为标准 Servlet 微服务提供一站式起步全家桶，聚合 Nacos、Feign、Dubbo、Sentinel 与 Traffic 骨干能力，网关保持可选隔离
 - **Gateway → Internal Microservices**: 统一收口公网南北向流量，执行外部标头清洗与 Sa-Token 鉴权，向下游安全注入四维上下文与 Same-Token
 - **Sentinel → All Servlet Microservices**: 为 WebMVC 接口提供流量过载防护与路径防爆，为 Feign 客户端提供受管熔断降级
 - **Nacos → All Microservices**: 提供基础服务实例寻址表与全域动态配置源（包含 Gateway 动态路由定义与 Sentinel 动态规则）

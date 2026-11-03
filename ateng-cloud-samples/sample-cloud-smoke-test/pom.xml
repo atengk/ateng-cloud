@@ -22,5 +22,11 @@
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-all</artifactId>
         </dependency>
+
+        <!-- Web 运行时环境 (基于 ateng-boot-web 提供标准 Spring Web 上下文与统一 Result 契约) -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-boot-web</artifactId>
+        </dependency>
     </dependencies>
 </project>

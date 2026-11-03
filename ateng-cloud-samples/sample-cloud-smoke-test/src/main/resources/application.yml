@@ -1,0 +1,49 @@
+# ==============================================================================
+# Sample Cloud Smoke Test 全反应堆冒烟验证配置
+# 默认配置保障 100% 离线自洽（验证 ateng-cloud-all 全家桶离线快速启动与冒烟自检）
+# ==============================================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: sample-cloud-smoke-test
+  config:
+    import:
+      # 弹性探测本地真实微服务环境配置，存在时增量合并，不存在时静默跳过守护 CI 离线自洽
+      - "optional:classpath:application-local.yml"
+  cloud:
+    nacos:
+      discovery:
+        enabled: false # 默认离线关闭外部物理发现连接，保障 CI 100% 离线自洽
+      config:
+        enabled: false # 默认离线关闭外部物理配置中心
+    sentinel:
+      transport:
+        port: 8719
+        dashboard: ""
+      eager: false
+
+dubbo:
+  application:
+    name: sample-cloud-smoke-test
+    register-mode: instance
+  registry:
+    # 离线自洽：注册中心设为 N/A，完全脱离外部物理 Nacos
+    address: N/A
+  protocol:
+    name: tri
+    port: 50059
+    serialization: fastjson2
+  consumer:
+    check: false
+
+ateng:
+  boot:
+    web:
+      shutdown:
+        enabled: false
+  cloud:
+    traffic:
+      enabled: true
