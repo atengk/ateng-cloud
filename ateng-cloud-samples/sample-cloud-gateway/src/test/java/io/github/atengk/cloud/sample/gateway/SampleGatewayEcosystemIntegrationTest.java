@@ -54,7 +54,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试 OWASP 等保三级合规安全响应头出站自动强化")
     void testSecurityHeadersInjected() {
         webTestClient.get()
-                .uri("/api/mock/hello")
+                .uri("/api/security/path-guard")
                 .exchange()
                 .expectStatus().isOk()
                 .expectHeader().valueEquals("X-Content-Type-Options", "nosniff")
@@ -69,7 +69,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试 X-Traffic-Tag 标头染色透明透传至下游微服务")
     void testTrafficTagHeaderPropagation() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .header(GatewayConstants.X_TRAFFIC_TAG, "canary-v2")
                 .exchange()
                 .expectStatus().isOk()
@@ -82,7 +82,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试 URL Query 参数 traffic_tag 转译为 X-Traffic-Tag 标头透传至下游")
     void testTrafficTagQueryPropagation() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers?traffic_tag=canary-query-tag")
+                .uri("/api/security/inspect-edge-headers?traffic_tag=canary-query-tag")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -94,7 +94,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试 Header 优先级高于 Query 参数染色标签")
     void testTrafficTagHeaderPrecedenceOverQuery() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers?traffic_tag=query-fallback")
+                .uri("/api/security/inspect-edge-headers?traffic_tag=query-fallback")
                 .header(GatewayConstants.X_TRAFFIC_TAG, "header-priority")
                 .exchange()
                 .expectStatus().isOk()
@@ -107,7 +107,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试无染色标签请求下游不接收 x-traffic-tag 标头")
     void testNoTrafficTagPassthrough() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -183,7 +183,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试开放接口缺少必需签名标头被 401 阻断")
     void testSignGuardMissingHeadersBlocked() {
         webTestClient.get()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/query-order")
                 .exchange()
                 .expectStatus().isUnauthorized()
                 .expectBody()
@@ -199,12 +199,12 @@ public class SampleGatewayEcosystemIntegrationTest {
         String timestamp = String.valueOf(System.currentTimeMillis());
         String nonce = "nonce-" + System.nanoTime();
 
-        // 规范签名串: appId + nonce + timestamp (无 query 参数)
-        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        // 规范签名串: appId + nonce + timestamp + query 参数
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp + "&orderId=ORD-ECO-001";
         String signature = calculateHmacSha256(canonical, secret);
 
         webTestClient.get()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/query-order?orderId=ORD-ECO-001")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, timestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -213,7 +213,7 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("open-api-verified");
+                .jsonPath("$.data.orderId").isEqualTo("ORD-ECO-001");
     }
 
     @Test
@@ -224,12 +224,12 @@ public class SampleGatewayEcosystemIntegrationTest {
         String timestamp = String.valueOf(System.currentTimeMillis());
         String nonce = "replay-nonce-" + System.nanoTime();
 
-        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp;
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + timestamp + "&orderId=ORD-REPLAY-001";
         String signature = calculateHmacSha256(canonical, secret);
 
         // 首次请求成功
         webTestClient.get()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/query-order?orderId=ORD-REPLAY-001")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, timestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -239,7 +239,7 @@ public class SampleGatewayEcosystemIntegrationTest {
 
         // 相同 Nonce 二次重放请求应被 401 阻断
         webTestClient.get()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/query-order?orderId=ORD-REPLAY-001")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, timestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -260,11 +260,11 @@ public class SampleGatewayEcosystemIntegrationTest {
         String expiredTimestamp = String.valueOf(System.currentTimeMillis() - 600_000L);
         String nonce = "nonce-" + System.nanoTime();
 
-        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + expiredTimestamp;
+        String canonical = "appId=" + appId + "&nonce=" + nonce + "&timestamp=" + expiredTimestamp + "&orderId=ORD-EXPIRED";
         String signature = calculateHmacSha256(canonical, secret);
 
         webTestClient.get()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/query-order?orderId=ORD-EXPIRED")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, expiredTimestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -283,14 +283,14 @@ public class SampleGatewayEcosystemIntegrationTest {
         String secret = "sample-secret-123456";
         String timestamp = String.valueOf(System.currentTimeMillis());
         String nonce = "nonce-post-" + System.nanoTime();
-        String jsonBody = "{\"message\":\"hello-ateng-cloud\"}";
+        String jsonBody = "{\"orderId\":\"ORD-ECO-001\",\"merchantId\":\"MCH-8888\",\"amount\":99.00,\"channel\":\"WECHAT\"}";
 
         String bodyHash = calculateSha256(jsonBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
         String signature = calculateHmacSha256(canonical, secret);
 
         webTestClient.post()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/sync-order")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, timestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -301,7 +301,8 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data.message").isEqualTo("hello-ateng-cloud");
+                .jsonPath("$.data.orderId").isEqualTo("ORD-ECO-001")
+                .jsonPath("$.data.status").isEqualTo("SYNCED");
     }
 
     @Test
@@ -311,16 +312,16 @@ public class SampleGatewayEcosystemIntegrationTest {
         String secret = "sample-secret-123456";
         String timestamp = String.valueOf(System.currentTimeMillis());
         String nonce = "nonce-tamper-" + System.nanoTime();
-        String originalBody = "{\"message\":\"hello-ateng-cloud\"}";
+        String originalBody = "{\"orderId\":\"ORD-ECO-001\",\"merchantId\":\"MCH-8888\",\"amount\":99.00,\"channel\":\"WECHAT\"}";
 
         String bodyHash = calculateSha256(originalBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
         String signature = calculateHmacSha256(canonical, secret);
 
         // 发送被篡改的 Body
-        String tamperedBody = "{\"message\":\"tampered-malicious-body\"}";
+        String tamperedBody = "{\"orderId\":\"ORD-ECO-001\",\"merchantId\":\"MCH-8888\",\"amount\":0.01,\"channel\":\"WECHAT\"}";
         webTestClient.post()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/sync-order")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, timestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -338,7 +339,7 @@ public class SampleGatewayEcosystemIntegrationTest {
     @DisplayName("测试开放接口 POST 超大报文 (>2MB) 快速熔断为 HTTP 413 Payload Too Large")
     void testSignGuardOversizedPayloadPostBlocked() {
         webTestClient.post()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/sync-order")
                 .header(org.springframework.http.HttpHeaders.CONTENT_LENGTH, String.valueOf(3 * 1024 * 1024))
                 .header(GatewayConstants.X_APP_ID, "sample-app")
                 .header(GatewayConstants.X_TIMESTAMP, String.valueOf(System.currentTimeMillis()))
@@ -364,7 +365,7 @@ public class SampleGatewayEcosystemIntegrationTest {
         String signature = calculateHmacSha256(canonical, secret);
 
         webTestClient.post()
-                .uri("/api/open/data")
+                .uri("/api/open/merchant/sync-order")
                 .header(GatewayConstants.X_APP_ID, appId)
                 .header(GatewayConstants.X_TIMESTAMP, timestamp)
                 .header(GatewayConstants.X_NONCE, nonce)
@@ -373,7 +374,7 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data.status").isEqualTo("empty-body");
+                .jsonPath("$.data.status").isEqualTo("EMPTY_BODY");
     }
 
     @ParameterizedTest
@@ -404,22 +405,22 @@ public class SampleGatewayEcosystemIntegrationTest {
     void testAccessLogQueryMaskingAndBypassInSampleGateway() {
         // 1. 发送携带内置敏感参数 (password, token) 与自定义敏感参数 (customSecret) 的请求
         webTestClient.get()
-                .uri("/api/mock/hello?keyword=ateng&password=plain123&token=tok456&customSecret=sec789")
+                .uri("/api/security/path-guard?keyword=ateng&password=plain123&token=tok456&customSecret=sec789")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
 
         // 2. 发送超长 Query 请求（>256 字符），验证防爆截断与请求正常处理
         String longQuery = "desc=" + "x".repeat(300);
         webTestClient.get()
-                .uri("/api/mock/hello?" + longQuery)
+                .uri("/api/security/path-guard?" + longQuery)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
     }
 
     private String calculateSha256(byte[] data) throws Exception {

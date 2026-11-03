@@ -36,7 +36,7 @@ public class SampleGatewayCustomTrafficTagResolverTest {
     @DisplayName("测试自定义 SPI 动态打标：VIP 用户等级自动染色为 vip-lane")
     void testDynamicTaggingByCustomResolver() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .header("X-User-Tier", "VIP")
                 .exchange()
                 .expectStatus().isOk()
@@ -59,7 +59,7 @@ public class SampleGatewayCustomTrafficTagResolverTest {
     @DisplayName("测试自定义 SPI 权威覆盖：外部传入陈旧标头被权威决议器强制纠正")
     void testCustomResolverOverridesForgedHeader() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .header("X-User-Tier", "VIP")
                 .header(GatewayConstants.X_TRAFFIC_TAG, "forged-external-tag")
                 .exchange()
@@ -73,7 +73,7 @@ public class SampleGatewayCustomTrafficTagResolverTest {
     @DisplayName("测试非 VIP 请求且私自伪造染色标头：决议器返回空，伪造标头被物理剥离")
     void testForgedHeaderStrippedWhenUnresolved() {
         webTestClient.get()
-                .uri("/api/mock/echo-headers")
+                .uri("/api/security/inspect-edge-headers")
                 .header("X-User-Tier", "STANDARD")
                 .header(GatewayConstants.X_TRAFFIC_TAG, "spoofed-canary-tag")
                 .exchange()

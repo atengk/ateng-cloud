@@ -80,12 +80,12 @@ public class SampleGatewayDynamicRouteIntegrationTest {
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(404);
 
-        // 2. 模拟 Nacos 推送标准合法 JSON 动态路由 (映射到 /mock/hello)
+        // 2. 模拟 Nacos 推送标准合法 JSON 动态路由 (映射到 /sample/cloud/gateway/security/path-guard)
         String validRouteJson = """
                 [
                   {
                     "id": "dynamic-order-route",
-                    "uri": "forward:/mock/hello",
+                    "uri": "forward:/sample/cloud/gateway/security/path-guard",
                     "predicates": [
                       {
                         "name": "Path",
@@ -109,7 +109,7 @@ public class SampleGatewayDynamicRouteIntegrationTest {
                 .expectHeader().exists(GatewayConstants.X_TRACE_ID)
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
 
         // 4. 模拟运维失误推送畸形破损的 JSON 报文
         String brokenRouteJson = "[ { \"id\": \"corrupted-route\", \"uri\": ";
@@ -124,17 +124,17 @@ public class SampleGatewayDynamicRouteIntegrationTest {
                 .expectHeader().exists(GatewayConstants.X_TRACE_ID)
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
 
-        // 6. 强断言：本地 YAML 静态路由兜底与共存 (静态配置的 /api/mock/hello 依然正常服务)
+        // 6. 强断言：本地 YAML 静态路由兜底与共存 (静态配置的 /api/security/path-guard 依然正常服务)
         webTestClient.get()
-                .uri("/api/mock/hello")
+                .uri("/api/security/path-guard")
                 .exchange()
                 .expectStatus().isOk()
                 .expectHeader().exists(GatewayConstants.X_TRACE_ID)
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
 
         // 7. 删除动态路由后，路径平滑恢复为 404
         nacosRouteDefinitionRepository.delete(Mono.just("dynamic-order-route")).block();
@@ -160,11 +160,11 @@ public class SampleGatewayDynamicRouteIntegrationTest {
 
         // 2. 模拟外部配置刷新，向 Spring Environment 注入主配置路由定义 (包含现有基线路由与新增热更路由)
         TestPropertyValues.of(
-                "spring.cloud.gateway.routes[0].id=mock-test-route",
-                "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
-                "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/mock/**",
+                "spring.cloud.gateway.routes[0].id=security-path-guard",
+                "spring.cloud.gateway.routes[0].uri=forward:/sample/cloud/gateway/security/path-guard",
+                "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/security/path-guard",
                 "spring.cloud.gateway.routes[1].id=main-hot-route",
-                "spring.cloud.gateway.routes[1].uri=forward:/mock/hello",
+                "spring.cloud.gateway.routes[1].uri=forward:/sample/cloud/gateway/security/path-guard",
                 "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/main-hot/**"
         ).applyTo(environment);
 
@@ -180,7 +180,7 @@ public class SampleGatewayDynamicRouteIntegrationTest {
                 [
                   {
                     "id": "dynamic-order-route",
-                    "uri": "forward:/mock/hello",
+                    "uri": "forward:/sample/cloud/gateway/security/path-guard",
                     "predicates": [
                       {
                         "name": "Path",
@@ -206,9 +206,9 @@ public class SampleGatewayDynamicRouteIntegrationTest {
 
         // 5. 模拟主配置推送非法路由 (缺少 scheme 协议头)
         TestPropertyValues.of(
-                "spring.cloud.gateway.routes[0].id=mock-test-route",
-                "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
-                "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/mock/**",
+                "spring.cloud.gateway.routes[0].id=security-path-guard",
+                "spring.cloud.gateway.routes[0].uri=forward:/sample/cloud/gateway/security/path-guard",
+                "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/security/path-guard",
                 "spring.cloud.gateway.routes[1].id=corrupted-route",
                 "spring.cloud.gateway.routes[1].uri=/no-scheme-uri",
                 "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/main-hot/**"
@@ -307,6 +307,6 @@ public class SampleGatewayDynamicRouteIntegrationTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
     }
 }

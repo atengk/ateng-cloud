@@ -192,7 +192,7 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
     @DisplayName("端到端断言：携带灰度标签的外部 HTTP 请求精准命中同机房灰度实例")
     void testHttpBoundaryGrayTagMatchesSameZoneCanaryInstance() {
         webTestClient.get()
-                .uri("/mock/lb/gray-precision/instance-info")
+                .uri("/api/lb/gray-precision/instance-info")
                 .header(GatewayConstants.X_TRAFFIC_TAG, "v2")
                 .exchange()
                 .expectStatus().isOk()
@@ -205,7 +205,7 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
     @DisplayName("端到端断言：灰度节点全下线时平滑降级调度至同机房基线实例 (HTTP 200，杜绝 503)")
     void testHttpBoundaryGrayAllDownFallsBackToSameZoneBaseline() {
         webTestClient.get()
-                .uri("/mock/lb/gray-fallback/instance-info")
+                .uri("/api/lb/gray-fallback/instance-info")
                 .header(GatewayConstants.X_TRAFFIC_TAG, "v2")
                 .exchange()
                 .expectStatus().isOk()
@@ -219,7 +219,7 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
     void testHttpBoundaryUncoloredRequestNeverTouchesCanary() {
         for (int i = 0; i < 10; i++) {
             webTestClient.get()
-                    .uri("/mock/lb/baseline-isolation/instance-info")
+                    .uri("/api/lb/baseline-isolation/instance-info")
                     .exchange()
                     .expectStatus().isOk()
                     .expectBody()
@@ -243,7 +243,7 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
 
         for (int i = 0; i < 40; i++) {
             webTestClient.get()
-                    .uri("/mock/lb/warmup/instance-info")
+                    .uri("/api/lb/warmup/instance-info")
                     .exchange()
                     .expectStatus().isOk()
                     .expectBody()
@@ -269,7 +269,7 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
 
         for (int i = 0; i < 40; i++) {
             webTestClient.get()
-                    .uri("/mock/lb/adaptive-overload/instance-info")
+                    .uri("/api/lb/adaptive-overload/instance-info")
                     .exchange()
                     .expectStatus().isOk()
                     .expectBody()
@@ -294,7 +294,7 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
 
         for (int i = 0; i < 40; i++) {
             webTestClient.get()
-                    .uri("/mock/lb/all-overloaded/instance-info")
+                    .uri("/api/lb/all-overloaded/instance-info")
                     .exchange()
                     .expectStatus().isOk()
                     .expectBody()
@@ -319,28 +319,28 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
         NacosRouteDefinitionRepository repository = applicationContext.getBean(NacosRouteDefinitionRepository.class);
         RouteDefinition dynamicRouteA = new RouteDefinition();
         dynamicRouteA.setId("dynamic-track-a-route");
-        dynamicRouteA.setUri(URI.create("forward:/mock/hello"));
-        PredicateDefinition predicateA = new PredicateDefinition("Path=/mock/dynamic-track-a/test");
+        dynamicRouteA.setUri(URI.create("forward:/sample/cloud/gateway/security/path-guard"));
+        PredicateDefinition predicateA = new PredicateDefinition("Path=/dynamic/track-a/test");
         dynamicRouteA.setPredicates(List.of(predicateA));
 
         repository.save(Mono.just(dynamicRouteA)).block();
 
         webTestClient.get()
-                .uri("/mock/dynamic-track-a/test")
+                .uri("/dynamic/track-a/test")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
 
         // 2. 验证 Track B: 主配置动态路由热更通知
         TestPropertyValues.of(
-                "spring.cloud.gateway.routes[0].id=mock-test-route",
-                "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
-                "spring.cloud.gateway.routes[0].predicates[0]=Path=/mock/test-baseline/**",
+                "spring.cloud.gateway.routes[0].id=security-path-guard",
+                "spring.cloud.gateway.routes[0].uri=forward:/sample/cloud/gateway/security/path-guard",
+                "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/security/path-guard",
                 "spring.cloud.gateway.routes[1].id=dynamic-track-b-route",
-                "spring.cloud.gateway.routes[1].uri=forward:/mock/hello",
-                "spring.cloud.gateway.routes[1].predicates[0]=Path=/mock/dynamic-track-b/test"
+                "spring.cloud.gateway.routes[1].uri=forward:/sample/cloud/gateway/security/path-guard",
+                "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/track-b/test"
         ).applyTo(environment);
 
         applicationContext.publishEvent(new EnvironmentChangeEvent(
@@ -348,12 +348,16 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
         ));
 
         webTestClient.get()
-                .uri("/mock/dynamic-track-b/test")
+                .uri("/dynamic/track-b/test")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
+
+        // 清理 Track A 路由定义与恢复主配置基线
+        repository.delete(Mono.just("dynamic-track-a-route")).block();
+        applicationContext.publishEvent(new EnvironmentChangeEvent(Set.of("spring.cloud.gateway.routes")));
     }
 
     @TestConfiguration
@@ -362,22 +366,22 @@ public class SampleGatewayHttpBoundaryE2EIntegrationTest {
         @Bean
         public RouteLocator customLbRouteLocator(RouteLocatorBuilder builder) {
             return builder.routes()
-                    .route("lb-gray-precision", r -> r.path("/mock/lb/gray-precision/**")
+                    .route("lb-gray-precision", r -> r.path("/api/lb/gray-precision/**")
                             .filters(f -> f.stripPrefix(3))
                             .uri("lb://gray-precision-service"))
-                    .route("lb-gray-fallback", r -> r.path("/mock/lb/gray-fallback/**")
+                    .route("lb-gray-fallback", r -> r.path("/api/lb/gray-fallback/**")
                             .filters(f -> f.stripPrefix(3))
                             .uri("lb://gray-fallback-service"))
-                    .route("lb-baseline-isolation", r -> r.path("/mock/lb/baseline-isolation/**")
+                    .route("lb-baseline-isolation", r -> r.path("/api/lb/baseline-isolation/**")
                             .filters(f -> f.stripPrefix(3))
                             .uri("lb://baseline-isolation-service"))
-                    .route("lb-warmup", r -> r.path("/mock/lb/warmup/**")
+                    .route("lb-warmup", r -> r.path("/api/lb/warmup/**")
                             .filters(f -> f.stripPrefix(3))
                             .uri("lb://warmup-service"))
-                    .route("lb-adaptive-overload", r -> r.path("/mock/lb/adaptive-overload/**")
+                    .route("lb-adaptive-overload", r -> r.path("/api/lb/adaptive-overload/**")
                             .filters(f -> f.stripPrefix(3))
                             .uri("lb://adaptive-overload-service"))
-                    .route("lb-all-overloaded", r -> r.path("/mock/lb/all-overloaded/**")
+                    .route("lb-all-overloaded", r -> r.path("/api/lb/all-overloaded/**")
                             .filters(f -> f.stripPrefix(3))
                             .uri("lb://all-overloaded-service"))
                     .build();

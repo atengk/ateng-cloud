@@ -45,10 +45,6 @@ spring:
           uri: forward:/sample/cloud/gateway/security/inspect-edge-headers
           predicates:
             - Path=/api/security/inspect-edge-headers
-        - id: mock-open-data
-          uri: forward:/mock/open-data
-          predicates:
-            - Path=/api/open/data
         - id: auth-login
           uri: forward:/sample/cloud/gateway/auth/login
           predicates:
@@ -121,40 +117,6 @@ spring:
           uri: forward:/sample/cloud/gateway/resilience/satoken/not-permission
           predicates:
             - Path=/api/resilience/satoken/not-permission
-        - id: mock-hello
-          uri: forward:/mock/hello
-          predicates:
-            - Path=/api/mock/hello
-        - id: mock-echo-headers
-          uri: forward:/mock/echo-headers
-          predicates:
-            - Path=/api/mock/echo-headers
-        - id: mock-protected
-          uri: forward:/mock/protected
-          predicates:
-            - Path=/api/mock/protected
-        - id: mock-retry-test
-          uri: forward:/mock/retry-counter
-          predicates:
-            - Path=/api/mock/retry-counter
-          filters:
-            - AtengRetry=1
-        - id: mock-upload-echo
-          uri: forward:/mock/upload-echo
-          predicates:
-            - Path=/api/mock/upload-echo
-        - id: mock-sse
-          uri: forward:/mock/sse
-          predicates:
-            - Path=/api/mock/sse
-        - id: mock-rate-limit
-          uri: forward:/mock/simulate-rate-limit
-          predicates:
-            - Path=/api/mock/simulate-rate-limit
-        - id: mock-fallback
-          uri: forward:/mock/hello
-          predicates:
-            - Path=/api/**
 
 ateng:
   cloud:
@@ -184,10 +146,7 @@ ateng:
           - "/sample/cloud/gateway/security/**"
           - "/api/resilience/**"
           - "/sample/cloud/gateway/resilience/**"
-          - "/mock/open-data"
-          - "/api/mock/hello"
-          - "/api/mock/echo-headers"
-          - "/mock/echo-headers"
+          - "/api/lb/**"
           - "/api/auth/login"
           - "/sample/cloud/gateway/auth/login"
           - "/api/auth/inspect-context"
@@ -197,14 +156,6 @@ ateng:
           - "/api/order/**"
           - "/sample/cloud/gateway/route/**"
           - "/api/route/**"
-          - "/mock/hello"
-          - "/mock/business-error"
-          - "/mock/server-error"
-          - "/api/mock/sse"
-          - "/api/mock/upload-echo"
-          - "/api/mock/simulate-rate-limit"
-          - "/api/mock/retry-counter"
-          - "/mock/**"
           - "/dynamic/**"
           - "/actuator/**"
         ip-blacklist:
