@@ -43,6 +43,7 @@ ateng:
         exclude-patterns:
           - "/actuator/**"
           - "/v3/api-docs/**"
+          - "/sample/cloud/sentinel/security/public/**"
       origin-parser:
         origin-header: "X-Origin-Service"
         gateway-header: "X-Gateway-From"

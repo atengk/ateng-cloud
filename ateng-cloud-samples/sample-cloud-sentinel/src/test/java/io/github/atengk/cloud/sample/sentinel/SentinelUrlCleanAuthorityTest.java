@@ -56,26 +56,35 @@ class SentinelUrlCleanAuthorityTest {
     }
 
     @Test
-    @DisplayName("RESTful 路径收敛防爆：/users/1001 与 /users/1002 均被归一化为 /api/test/users/{id} 并命中统一流控")
+    @DisplayName("RESTful 路径收敛防爆：/orders/1001 与 /orders/1002 均被归一化为 /sample/cloud/sentinel/security/orders/{id} 并命中统一流控")
     void testUrlCleanResourceAggregation() throws Exception {
-        // 对归一化后的模板资源 /api/test/users/{id} 配置 QPS = 0 限流
+        // 1. 无规则正常请求放行并验证返回的归一化资源信息
+        MvcResult normalResult = mockMvc.perform(get("/sample/cloud/sentinel/security/orders/1001"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode normalJson = objectMapper.readTree(normalResult.getResponse().getContentAsString());
+        assertThat(normalJson.get("code").asInt()).isEqualTo(200);
+        assertThat(normalJson.get("data").get("orderNo").asText()).isEqualTo("ORD-SEC-1001");
+        assertThat(normalJson.get("data").get("cleanedResource").asText()).isEqualTo("/sample/cloud/sentinel/security/orders/{id}");
+
+        // 2. 对归一化后的模板资源 /sample/cloud/sentinel/security/orders/{id} 配置 QPS = 0 限流
         FlowRule rule = new FlowRule();
-        rule.setResource("/api/test/users/{id}");
+        rule.setResource("/sample/cloud/sentinel/security/orders/{id}");
         rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
         rule.setCount(0);
         rule.setLimitApp("default");
         FlowRuleManager.loadRules(List.of(rule));
 
         // 请求具体 ID 1001 -> 触发 429
-        MvcResult result1 = mockMvc.perform(get("/api/test/users/1001"))
+        MvcResult result1 = mockMvc.perform(get("/sample/cloud/sentinel/security/orders/1001"))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
 
         JsonNode json1 = objectMapper.readTree(result1.getResponse().getContentAsString());
         assertThat(json1.get("code").asInt()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
 
-        // 请求不同 ID 1002 -> 同样命中 /api/test/users/{id} 触发 429
-        MvcResult result2 = mockMvc.perform(get("/api/test/users/1002"))
+        // 请求不同 ID 1002 -> 同样命中 /sample/cloud/sentinel/security/orders/{id} 触发 429
+        MvcResult result2 = mockMvc.perform(get("/sample/cloud/sentinel/security/orders/1002"))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
 
@@ -88,23 +97,23 @@ class SentinelUrlCleanAuthorityTest {
     void testOriginAuthorityControl() throws Exception {
         // 配置白名单授权规则：仅允许 trusted-service 访问
         AuthorityRule rule = new AuthorityRule();
-        rule.setResource("/api/test/admin/secure");
+        rule.setResource("/sample/cloud/sentinel/security/admin/dashboard");
         rule.setStrategy(RuleConstant.AUTHORITY_WHITE);
         rule.setLimitApp("trusted-service");
         AuthorityRuleManager.loadRules(List.of(rule));
 
         // 携带白名单服务名标头 -> 200 放行
-        MvcResult passResult = mockMvc.perform(get("/api/test/admin/secure")
+        MvcResult passResult = mockMvc.perform(get("/sample/cloud/sentinel/security/admin/dashboard")
                         .header("X-Origin-Service", "trusted-service"))
                 .andExpect(status().isOk())
                 .andReturn();
 
         JsonNode passJson = objectMapper.readTree(passResult.getResponse().getContentAsString());
         assertThat(passJson.get("code").asInt()).isEqualTo(200);
-        assertThat(passJson.get("data").asText()).isEqualTo("admin-ok");
+        assertThat(passJson.get("data").asText()).isEqualTo("admin-dashboard-access-granted");
 
         // 携带未授权服务名标头 -> 429 阻断
-        MvcResult blockResult = mockMvc.perform(get("/api/test/admin/secure")
+        MvcResult blockResult = mockMvc.perform(get("/sample/cloud/sentinel/security/admin/dashboard")
                         .header("X-Origin-Service", "evil-service"))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
@@ -121,8 +130,10 @@ class SentinelUrlCleanAuthorityTest {
         assertThat(urlCleaner.clean("/actuator/health")).isEmpty();
         assertThat(urlCleaner.clean("/actuator/sentinel-panorama")).isEmpty();
         assertThat(urlCleaner.clean("/v3/api-docs/swagger-config")).isEmpty();
+        assertThat(urlCleaner.clean("/sample/cloud/sentinel/security/public/ping")).isEmpty();
 
         // 常规业务 RESTful 数字 ID 与 UUID 均被模板化
+        assertThat(urlCleaner.clean("/sample/cloud/sentinel/security/orders/10086")).isEqualTo("/sample/cloud/sentinel/security/orders/{id}");
         assertThat(urlCleaner.clean("/api/users/10086")).isEqualTo("/api/users/{id}");
         assertThat(urlCleaner.clean("/api/orders/e0b11568-1cdb-4028-a400-9892ee510fa6")).isEqualTo("/api/orders/{uuid}");
     }
