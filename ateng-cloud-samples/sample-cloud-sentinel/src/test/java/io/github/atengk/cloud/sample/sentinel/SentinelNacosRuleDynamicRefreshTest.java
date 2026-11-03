@@ -96,7 +96,7 @@ class SentinelNacosRuleDynamicRefreshTest {
     @DisplayName("动态推送 FlowRule 限流规则：实时热更并拦截超额请求 (HTTP 429 + FLOW_LIMIT)")
     void testDynamicFlowRulePushAndBlock() throws Exception {
         // 1. 未推送规则前，请求畅通无阻
-        MvcResult passResult = mockMvc.perform(get("/api/test/flow"))
+        MvcResult passResult = mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode passJson = objectMapper.readTree(passResult.getResponse().getContentAsString());
@@ -106,7 +106,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         String flowRuleJson = """
                 [
                     {
-                        "resource": "/api/test/flow",
+                        "resource": "/sample/cloud/sentinel/seckill/vip-channel",
                         "grade": 1,
                         "count": 2.0,
                         "limitApp": "default"
@@ -117,13 +117,13 @@ class SentinelNacosRuleDynamicRefreshTest {
 
         // 强断言规则被热加载到 FlowRuleManager
         assertThat(FlowRuleManager.getRules()).hasSize(1);
-        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/api/test/flow");
+        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/sample/cloud/sentinel/seckill/vip-channel");
         assertThat(FlowRuleManager.getRules().get(0).getCount()).isEqualTo(2.0);
 
         // 3. 发起调用：配额允许内通过，超过 2 次后触发限流拦截
-        mockMvc.perform(get("/api/test/flow")).andExpect(status().isOk());
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel")).andExpect(status().isOk());
 
-        MvcResult blockedResult = mockMvc.perform(get("/api/test/flow"))
+        MvcResult blockedResult = mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
 
@@ -135,7 +135,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         mockNacosFactory.push("sample-cloud-sentinel-flow.json", "[]");
         assertThat(FlowRuleManager.getRules()).isEmpty();
 
-        mockMvc.perform(get("/api/test/flow")).andExpect(status().isOk());
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel")).andExpect(status().isOk());
     }
 
     @Test
@@ -145,7 +145,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         String paramFlowJson = """
                 [
                     {
-                        "resource": "custom-param-resource",
+                        "resource": "seckill-product-hotspot",
                         "grade": 1,
                         "paramIdx": 0,
                         "count": 1.0
@@ -155,13 +155,13 @@ class SentinelNacosRuleDynamicRefreshTest {
         mockNacosFactory.push("sample-cloud-sentinel-param-flow.json", paramFlowJson);
 
         assertThat(ParamFlowRuleManager.getRules()).hasSize(1);
-        assertThat(ParamFlowRuleManager.getRules().get(0).getResource()).isEqualTo("custom-param-resource");
+        assertThat(ParamFlowRuleManager.getRules().get(0).getResource()).isEqualTo("seckill-product-hotspot");
 
         // 2. 针对指定参数调用：第 1 次通过，第 2 次被热点限流拦截
-        mockMvc.perform(get("/api/test/param-flow").param("itemId", "goods-101"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/product/1001"))
                 .andExpect(status().isOk());
 
-        MvcResult blockedResult = mockMvc.perform(get("/api/test/param-flow").param("itemId", "goods-101"))
+        MvcResult blockedResult = mockMvc.perform(get("/sample/cloud/sentinel/seckill/product/1001"))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
 
@@ -176,7 +176,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         String authorityJson = """
                 [
                     {
-                        "resource": "/api/test/admin/secure",
+                        "resource": "/sample/cloud/sentinel/security/admin/dashboard",
                         "limitApp": "trusted-gateway",
                         "strategy": 0
                     }
@@ -187,7 +187,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         assertThat(AuthorityRuleManager.getRules()).hasSize(1);
 
         // 2. 未授权来源访问，立即被阻断
-        MvcResult blockedResult = mockMvc.perform(get("/api/test/admin/secure")
+        MvcResult blockedResult = mockMvc.perform(get("/sample/cloud/sentinel/security/admin/dashboard")
                         .header("X-Origin-Service", "untrusted-caller"))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
@@ -196,7 +196,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.AUTHORITY_BLOCK.getCode());
 
         // 3. 受信网关白名单来源访问，正常放行 200
-        mockMvc.perform(get("/api/test/admin/secure")
+        mockMvc.perform(get("/sample/cloud/sentinel/security/admin/dashboard")
                         .header("X-Origin-Service", "trusted-gateway"))
                 .andExpect(status().isOk());
     }
@@ -208,7 +208,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         String degradeJson = """
                 [
                     {
-                        "resource": "/api/test/degrade",
+                        "resource": "/sample/cloud/sentinel/payment/circuit-breaker",
                         "grade": 0,
                         "count": 50.0,
                         "timeWindow": 10
@@ -217,7 +217,7 @@ class SentinelNacosRuleDynamicRefreshTest {
                 """;
         mockNacosFactory.push("sample-cloud-sentinel-degrade.json", degradeJson);
         assertThat(DegradeRuleManager.getRules()).hasSize(1);
-        assertThat(DegradeRuleManager.getRules().get(0).getResource()).isEqualTo("/api/test/degrade");
+        assertThat(DegradeRuleManager.getRules().get(0).getResource()).isEqualTo("/sample/cloud/sentinel/payment/circuit-breaker");
 
         // 2. 动态推送 SystemRule
         String systemJson = """
@@ -239,7 +239,7 @@ class SentinelNacosRuleDynamicRefreshTest {
         String validFlowJson = """
                 [
                     {
-                        "resource": "/api/test/flow",
+                        "resource": "/sample/cloud/sentinel/seckill/vip-channel",
                         "grade": 1,
                         "count": 0.0,
                         "limitApp": "default"
@@ -250,7 +250,7 @@ class SentinelNacosRuleDynamicRefreshTest {
 
         assertThat(FlowRuleManager.getRules()).hasSize(1);
         // 验证当前请求已被限流
-        mockMvc.perform(get("/api/test/flow"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isTooManyRequests());
 
         // 2. 模拟运维人员误发布损坏的 JSON (语法错误)
@@ -259,10 +259,10 @@ class SentinelNacosRuleDynamicRefreshTest {
 
         // 3. 强断言：Rule Fail-Safe 抛出受控异常阻止 updateValue，内存规则坚决保留，不被清空为 0
         assertThat(FlowRuleManager.getRules()).hasSize(1);
-        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/api/test/flow");
+        assertThat(FlowRuleManager.getRules().get(0).getResource()).isEqualTo("/sample/cloud/sentinel/seckill/vip-channel");
 
         // 4. 请求仍然受限流保护，坚决杜绝因规则被清空导致流量打穿
-        mockMvc.perform(get("/api/test/flow"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isTooManyRequests());
     }
 

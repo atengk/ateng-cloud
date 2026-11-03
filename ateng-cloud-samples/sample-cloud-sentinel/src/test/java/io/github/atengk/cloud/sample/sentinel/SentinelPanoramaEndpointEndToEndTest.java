@@ -92,16 +92,16 @@ class SentinelPanoramaEndpointEndToEndTest {
     @Test
     @DisplayName("端到端验证发生流控阻断后，自省端点中的内存规则与阻断计数器联动实时递增")
     void testPanoramaEndpointReflectsRulesAndBlockMetricsIncrement() throws Exception {
-        // 1. 注入内存限流规则：针对 /api/test/flow 设置 QPS = 0
+        // 1. 注入内存限流规则：针对 /sample/cloud/sentinel/seckill/vip-channel 设置 QPS = 0
         FlowRule rule = new FlowRule();
-        rule.setResource("/api/test/flow");
+        rule.setResource("/sample/cloud/sentinel/seckill/vip-channel");
         rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
         rule.setCount(0);
         rule.setLimitApp("default");
         FlowRuleManager.loadRules(List.of(rule));
 
         // 2. 模拟发起业务请求 -> 触发 429 阻断
-        mockMvc.perform(get("/api/test/flow"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isTooManyRequests());
 
         // 3. 访问诊断端点 -> 验证内存规则与阻断统计均准确记录
@@ -114,7 +114,7 @@ class SentinelPanoramaEndpointEndToEndTest {
         // 强断言：生效规则准确识别
         JsonNode inMemory = root.get("inMemoryRules");
         assertThat(inMemory.get("flowRuleCount").asInt()).isEqualTo(1);
-        assertThat(inMemory.get("flowRules").get(0).get("resource").asText()).isEqualTo("/api/test/flow");
+        assertThat(inMemory.get("flowRules").get(0).get("resource").asText()).isEqualTo("/sample/cloud/sentinel/seckill/vip-channel");
 
         // 强断言：阻断统计计数器已原子递增并捕获最近一次事件
         JsonNode metrics = root.get("blockMetrics");
@@ -124,7 +124,7 @@ class SentinelPanoramaEndpointEndToEndTest {
 
         JsonNode lastEvent = metrics.get("lastBlockEvent");
         assertThat(lastEvent).isNotNull();
-        assertThat(lastEvent.get("resource").asText()).isEqualTo("/api/test/flow");
+        assertThat(lastEvent.get("resource").asText()).isEqualTo("/sample/cloud/sentinel/seckill/vip-channel");
         assertThat(lastEvent.get("ruleType").asText()).isEqualTo("FLOW");
     }
 }

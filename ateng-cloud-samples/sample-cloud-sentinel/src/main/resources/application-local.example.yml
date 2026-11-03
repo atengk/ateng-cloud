@@ -1,0 +1,34 @@
+# ==============================================================================
+# 本地真实微服务环境连接配置模板（请将本文件复制为 application-local.yml 并填写真实凭据）
+# 注意：application-local.yml 已被 .gitignore 全局物理忽略，严禁向 Git 提交任何真实凭据！
+# ==============================================================================
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    nacos:
+      server-addr: YOUR_NACOS_SERVER:8848
+      username: YOUR_NACOS_USERNAME
+      password: YOUR_NACOS_PASSWORD
+      discovery:
+        enabled: true
+        namespace: YOUR_NAMESPACE
+      config:
+        enabled: false
+    sentinel:
+      transport:
+        dashboard: YOUR_SENTINEL_DASHBOARD:8080
+        port: 8719
+
+ateng:
+  cloud:
+    sentinel:
+      nacos-rules:
+        enabled: true
+        server-addr: YOUR_NACOS_SERVER:8848
+        username: YOUR_NACOS_USERNAME
+        password: YOUR_NACOS_PASSWORD
+        namespace: YOUR_NAMESPACE
+        group-id: SENTINEL_GROUP
+        data-id-prefix: sample-cloud-sentinel

@@ -13,6 +13,10 @@ management:
 spring:
   application:
     name: sample-cloud-sentinel
+  config:
+    import:
+      # 弹性探测本地真实微服务环境配置，存在时增量合并，不存在时静默跳过守护 CI 离线自洽
+      - "optional:classpath:application-local.yml"
   cloud:
     nacos:
       discovery:
