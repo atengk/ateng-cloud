@@ -310,16 +310,17 @@ class SampleCloudNacosApplicationTest {
     @DisplayName("测试 ateng-boot-encrypt 密文透明解密与内存真明文/展示脱敏契约")
     void testConfigTransparentDecryptionAndInMemoryPlaintext() throws Exception {
         // 1. 读取展示视图：验证敏感字段已实施星号掩码脱敏
-        mockMvc.perform(get("/api/nacos/config/current")
+        mockMvc.perform(get("/sample/cloud/nacos/config/current")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
-                .andExpect(jsonPath("$.data.title", is("Nacos Cloud Platform")))
-                .andExpect(jsonPath("$.data.maskedSecretKey", is("******")))
-                .andExpect(jsonPath("$.data.poolSize", is(20)));
+                .andExpect(jsonPath("$.data.freightRate", is(10.0)))
+                .andExpect(jsonPath("$.data.freeFreightThreshold", is(99.0)))
+                .andExpect(jsonPath("$.data.maskedPayChannelSecretKey", is("******")))
+                .andExpect(jsonPath("$.data.maxItemsPerOrder", is(50)));
 
         // 2. 读取业务真实字段：验证 ENC(...) 密文已由 ateng-boot-encrypt 透明解密且内存中为真实明文
-        mockMvc.perform(get("/api/nacos/config/secret")
+        mockMvc.perform(get("/sample/cloud/nacos/config/secret")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
@@ -330,9 +331,9 @@ class SampleCloudNacosApplicationTest {
     @DisplayName("测试模拟安全配置热更并触发 NacosConfigChangeListener SPI 与 Spring @EventListener")
     void testSimulateRefreshAndSpiAndEventListenerPropagation() throws Exception {
         // 1. 发起模拟热更
-        mockMvc.perform(post("/api/nacos/config/simulate-refresh")
+        mockMvc.perform(post("/sample/cloud/nacos/config/simulate-refresh")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"keys\": [\"demo.config.title\", \"demo.config.secret-key\"]}"))
+                        .content("{\"keys\": [\"sample.order.config.freight-rate\", \"sample.order.config.pay-channel-secret-key\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data.success", is(true)))
@@ -340,7 +341,7 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.data.traceId", notNullValue()));
 
         // 2. 验证 SPI 与 Spring EventListener 均成功感知并处理
-        mockMvc.perform(get("/api/nacos/config/listener-status")
+        mockMvc.perform(get("/sample/cloud/nacos/config/listener-status")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
@@ -353,7 +354,7 @@ class SampleCloudNacosApplicationTest {
     @Test
     @DisplayName("测试参数校验防卫：热更变更键名列表为空时 Fail-Fast 阻断")
     void testSimulateRefreshValidationError() throws Exception {
-        mockMvc.perform(post("/api/nacos/config/simulate-refresh")
+        mockMvc.perform(post("/sample/cloud/nacos/config/simulate-refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"keys\": []}"))
                 .andExpect(status().isOk())
@@ -366,7 +367,7 @@ class SampleCloudNacosApplicationTest {
     @DisplayName("测试编程式动态配置泛型强类型订阅、回调触发与 MDC 链路追踪传递")
     void testTypedConfigSubscriptionAndMdcTracing() throws Exception {
         // 1. 读取初始风控规则
-        mockMvc.perform(get("/api/nacos/config/trade-rule")
+        mockMvc.perform(get("/sample/cloud/nacos/config/trade-rule")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
@@ -375,7 +376,7 @@ class SampleCloudNacosApplicationTest {
 
         // 2. 模拟推送 TradeRuleConfig 泛型强类型配置（全真反序列化与 MDC traceId 穿透）
         String ruleJson = "{\"ruleName\": \"AntiFraud-HighRisk-Block\", \"maxLimit\": 200000, \"enabled\": true}";
-        mockMvc.perform(post("/api/nacos/config/trade-rule/simulate")
+        mockMvc.perform(post("/sample/cloud/nacos/config/trade-rule/simulate")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(ruleJson))
                 .andExpect(status().isOk())
@@ -389,7 +390,7 @@ class SampleCloudNacosApplicationTest {
 
         // 3. JSR-303 参数校验防卫：非法入参应被 Fail-Fast 拦截返回业务 400
         String invalidJson = "{\"ruleName\": \"\", \"maxLimit\": -100, \"enabled\": true}";
-        mockMvc.perform(post("/api/nacos/config/trade-rule/simulate")
+        mockMvc.perform(post("/sample/cloud/nacos/config/trade-rule/simulate")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidJson))
                 .andExpect(status().isOk())
@@ -529,9 +530,9 @@ class SampleCloudNacosApplicationTest {
     @Test
     @DisplayName("配置热更异常端到端：异常隔离屏障、SafeConfigRefreshFailureEvent 广播与 Actuator 状态联动")
     void testSafeConfigRefreshFailureEventAndActuatorLinkage() throws Exception {
-        // 1. 触发模拟热更失败（携带 demo.config.simulate-failure 键名）
+        // 1. 触发模拟热更失败（携带 sample.order.config.simulate-failure 键名）
         // 验证框架异常隔离屏障生效：未击穿 Spring 容器抛出 500，依然受控响应 200
-        mockMvc.perform(post("/api/nacos/config/simulate-refresh-failure")
+        mockMvc.perform(post("/sample/cloud/nacos/config/simulate-refresh-failure")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
@@ -540,14 +541,14 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.data.traceId", notNullValue()));
 
         // 2. 验证业务侧 DemoConfigRefreshFailureEventListener 成功捕获失败领域事件并完成告警联动
-        mockMvc.perform(get("/api/nacos/config/refresh-failure-status")
+        mockMvc.perform(get("/sample/cloud/nacos/config/refresh-failure-status")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data.failureCount", org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
-                .andExpect(jsonPath("$.data.lastDataId", is("demo-failure.yml")))
+                .andExpect(jsonPath("$.data.lastDataId", is("order-service-failure.yml")))
                 .andExpect(jsonPath("$.data.lastGroup", is("DEFAULT_GROUP")))
-                .andExpect(jsonPath("$.data.lastChangedKeys[0]", is("demo.config.simulate-failure")))
+                .andExpect(jsonPath("$.data.lastChangedKeys[0]", is("sample.order.config.simulate-failure")))
                 .andExpect(jsonPath("$.data.lastErrorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")))
                 .andExpect(jsonPath("$.data.lastTraceId", notNullValue()));
 
@@ -565,7 +566,7 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.lastRefresh.success", is(false)))
                 .andExpect(jsonPath("$.lastRefresh.errorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")))
                 .andExpect(jsonPath("$.lastRefresh.traceId", notNullValue()))
-                .andExpect(jsonPath("$.lastRefresh.changedKeys[0]", is("demo.config.simulate-failure")))
+                .andExpect(jsonPath("$.lastRefresh.changedKeys[0]", is("sample.order.config.simulate-failure")))
                 .andExpect(jsonPath("$.config.lastRefresh.success", is(false)))
                 .andExpect(jsonPath("$.config.lastRefresh.errorMessage", org.hamcrest.Matchers.containsString("One or more NacosConfigChangeListener failed")));
     }

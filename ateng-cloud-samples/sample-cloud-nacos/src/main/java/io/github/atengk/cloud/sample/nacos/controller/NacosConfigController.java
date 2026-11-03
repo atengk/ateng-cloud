@@ -5,13 +5,13 @@ import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.mask.ConfigMasker;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
-import io.github.atengk.cloud.sample.nacos.config.DemoConfigProperties;
 import io.github.atengk.cloud.sample.nacos.config.DemoNacosConfigChangeListener;
 import io.github.atengk.cloud.sample.nacos.config.DemoSafeRefreshEventListener;
 import io.github.atengk.cloud.sample.nacos.config.DemoTypedSubscriptionService;
+import io.github.atengk.cloud.sample.nacos.config.OrderConfigProperties;
 import io.github.atengk.cloud.sample.nacos.event.DemoConfigRefreshFailureEventListener;
-import io.github.atengk.cloud.sample.nacos.model.DemoConfigVO;
 import io.github.atengk.cloud.sample.nacos.model.ListenerStatusVO;
+import io.github.atengk.cloud.sample.nacos.model.OrderConfigVO;
 import io.github.atengk.cloud.sample.nacos.model.RefreshFailureStatusVO;
 import io.github.atengk.cloud.sample.nacos.model.RefreshRequestDTO;
 import io.github.atengk.cloud.sample.nacos.model.SafeConfigRefreshVO;
@@ -24,36 +24,33 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-
 /**
- * Nacos 现代配置中心安全动态热更演示控制器
+ * Nacos 现代配置中心安全动态热更与电商订单配置演示控制器
  *
  * <p>显式遵循强类型 {@link Result} 契约与 JSR-303 格式校验防卫，演示纯属性增量重绑、
  * 敏感脱敏掩码与 SPI / EventListener 双模协同。</p>
  *
  * @author Ateng
- * @since 2026-10-27
+ * @since 2026-11-03
  */
 @RestController
-@RequestMapping("/api/nacos/config")
-public class NacosConfigDemoController {
+@RequestMapping("/sample/cloud/nacos/config")
+public class NacosConfigController {
 
-    private final DemoConfigProperties demoConfigProperties;
+    private final OrderConfigProperties orderConfigProperties;
     private final NacosTemplate nacosTemplate;
     private final DemoNacosConfigChangeListener demoListener;
     private final DemoSafeRefreshEventListener demoEventListener;
     private final DemoConfigRefreshFailureEventListener failureEventListener;
     private final DemoTypedSubscriptionService typedSubscriptionService;
 
-    public NacosConfigDemoController(DemoConfigProperties demoConfigProperties,
-                                     NacosTemplate nacosTemplate,
-                                     DemoNacosConfigChangeListener demoListener,
-                                     DemoSafeRefreshEventListener demoEventListener,
-                                     DemoConfigRefreshFailureEventListener failureEventListener,
-                                     DemoTypedSubscriptionService typedSubscriptionService) {
-        this.demoConfigProperties = demoConfigProperties;
+    public NacosConfigController(OrderConfigProperties orderConfigProperties,
+                                 NacosTemplate nacosTemplate,
+                                 DemoNacosConfigChangeListener demoListener,
+                                 DemoSafeRefreshEventListener demoEventListener,
+                                 DemoConfigRefreshFailureEventListener failureEventListener,
+                                 DemoTypedSubscriptionService typedSubscriptionService) {
+        this.orderConfigProperties = orderConfigProperties;
         this.nacosTemplate = nacosTemplate;
         this.demoListener = demoListener;
         this.demoEventListener = demoEventListener;
@@ -62,16 +59,17 @@ public class NacosConfigDemoController {
     }
 
     /**
-     * 读取当前业务配置（展示脱敏视图）
+     * 读取当前电商订单业务配置（展示脱敏视图）
      */
     @GetMapping("/current")
-    public Result<DemoConfigVO> getCurrentConfig() {
-        String maskedKey = ConfigMasker.mask("demo.config.secret-key", demoConfigProperties.getSecretKey());
-        DemoConfigVO vo = new DemoConfigVO(
-                demoConfigProperties.getTitle(),
+    public Result<OrderConfigVO> getCurrentConfig() {
+        String maskedKey = ConfigMasker.mask("sample.order.config.pay-channel-secret-key", orderConfigProperties.getPayChannelSecretKey());
+        OrderConfigVO vo = new OrderConfigVO(
+                orderConfigProperties.getFreightRate(),
+                orderConfigProperties.getFreeFreightThreshold(),
                 maskedKey,
-                demoConfigProperties.getTimeout(),
-                demoConfigProperties.getPoolSize()
+                orderConfigProperties.getOrderTimeout(),
+                orderConfigProperties.getMaxItemsPerOrder()
         );
         return Result.success(vo);
     }
@@ -81,7 +79,7 @@ public class NacosConfigDemoController {
      */
     @GetMapping("/secret")
     public Result<String> getRawSecret() {
-        return Result.success(demoConfigProperties.getSecretKey());
+        return Result.success(orderConfigProperties.getPayChannelSecretKey());
     }
 
     /**
@@ -136,8 +134,8 @@ public class NacosConfigDemoController {
     @PostMapping("/simulate-refresh-failure")
     public Result<SafeConfigRefreshVO> simulateRefreshFailure() {
         SafeConfigRefreshEvent event = nacosTemplate.refreshConfig(
-                java.util.Set.of("demo.config.simulate-failure"),
-                "demo-failure.yml",
+                java.util.Set.of("sample.order.config.simulate-failure"),
+                "order-service-failure.yml",
                 "DEFAULT_GROUP"
         );
         SafeConfigRefreshVO vo = new SafeConfigRefreshVO(

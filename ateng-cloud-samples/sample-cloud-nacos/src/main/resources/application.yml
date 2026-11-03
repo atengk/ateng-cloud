@@ -55,9 +55,11 @@ ateng:
           damping-ratio: 0.15
           sample-interval: 5s
 
-demo:
-  config:
-    title: "Nacos Cloud Platform"
-    secret-key: "ENC(ydS/bhIcoogPc1a6V/whVwUR54CsaUtyWWu9LgIZai9jksDqNO2g5yRaprANGUdt8biXgfIE)"
-    timeout: 5s
-    pool-size: 20
+sample:
+  order:
+    config:
+      freight-rate: 10.0
+      free-freight-threshold: 99.0
+      pay-channel-secret-key: "ENC(ydS/bhIcoogPc1a6V/whVwUR54CsaUtyWWu9LgIZai9jksDqNO2g5yRaprANGUdt8biXgfIE)"
+      order-timeout: 30m
+      max-items-per-order: 50
