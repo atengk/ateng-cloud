@@ -5,7 +5,8 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import feign.RetryableException;
 import io.github.atengk.cloud.feign.retry.AtengFeignRetryer;
-import io.github.atengk.cloud.sample.feign.client.BaselineFeignClient;
+import io.github.atengk.cloud.sample.feign.client.ProductFeignClient;
+import io.github.atengk.cloud.sample.feign.model.ProductDetailVO;
 import io.github.atengk.cloud.sample.feign.client.CustomRetryFeignClient;
 import io.github.atengk.cloud.sample.feign.client.IsolatedTimeoutFeignClient;
 import io.github.atengk.cloud.sample.feign.client.RetryFeignClient;
@@ -56,7 +57,7 @@ public class RetryFeignClientTest {
     private CustomRetryFeignClient customRetryFeignClient;
 
     @Autowired
-    private BaselineFeignClient baselineFeignClient;
+    private ProductFeignClient productFeignClient;
 
     @Autowired
     private RetryMockController retryMockController;
@@ -64,7 +65,7 @@ public class RetryFeignClientTest {
     @BeforeEach
     void setUp() {
         try {
-            baselineFeignClient.echo("warmup");
+            productFeignClient.getProductById(1L);
         } catch (Exception ignored) {
         }
         retryMockController.reset();
@@ -112,9 +113,10 @@ public class RetryFeignClientTest {
         RetryableException ex = assertThrows(RetryableException.class, () -> isolatedTimeoutFeignClient.slow());
         assertNotNull(ex);
 
-        // 全局默认客户端 baseline-client 拥有默认 5000ms 读超时，常规接口调用不受影响正常成功
-        String echo = baselineFeignClient.echo("timeout-isolation");
-        assertEquals("Echo: timeout-isolation", echo, "未覆盖超时的客户端平滑继承全局基线，正常通信成功");
+        // 全局默认客户端 product-client 拥有默认 5000ms 读超时，常规接口调用不受影响正常成功
+        ProductDetailVO product = productFeignClient.getProductById(1L);
+        assertNotNull(product, "未覆盖超时的客户端平滑继承全局基线，正常通信成功");
+        assertEquals(1L, product.getId());
     }
 
     @Test
