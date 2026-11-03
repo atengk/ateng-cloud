@@ -7,6 +7,7 @@ import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.sample.sentinel.model.seckill.SecKillOrderDTO;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +24,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -49,29 +51,36 @@ class SentinelWebFlowDegradeTest {
     }
 
     @Test
-    @DisplayName("端到端无规则：Web 接口正常返回 200 与业务数据")
+    @DisplayName("端到端无规则：秒杀提单接口正常返回 200 与订单业务数据")
     void testNormalRequestWithoutRules() throws Exception {
-        MvcResult mvcResult = mockMvc.perform(get("/api/test/flow"))
+        SecKillOrderDTO orderDTO = new SecKillOrderDTO(1001L, 2001L, 2);
+        MvcResult mvcResult = mockMvc.perform(post("/sample/cloud/sentinel/seckill/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(orderDTO)))
                 .andExpect(status().isOk())
                 .andReturn();
 
         JsonNode json = objectMapper.readTree(mvcResult.getResponse().getContentAsString());
         assertThat(json.get("code").asInt()).isEqualTo(200);
-        assertThat(json.get("data").asText()).isEqualTo("flow-pass");
+        assertThat(json.get("data").get("orderNo").asText()).startsWith("SK-");
+        assertThat(json.get("data").get("status").asText()).isEqualTo("SUCCESS");
     }
 
     @Test
-    @DisplayName("端到端流量控制：触发 QPS 限流时返回 HTTP 429 与 FLOW_LIMIT (4201)")
+    @DisplayName("端到端流量控制：秒杀提单触发 QPS 限流时返回 HTTP 429 与 FLOW_LIMIT (4201)")
     void testFlowLimitBlock() throws Exception {
         // 配置流控规则：QPS 上限为 0，必定触发拦截
         FlowRule rule = new FlowRule();
-        rule.setResource("/api/test/flow");
+        rule.setResource("/sample/cloud/sentinel/seckill/order");
         rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
         rule.setCount(0);
         rule.setLimitApp("default");
         FlowRuleManager.loadRules(List.of(rule));
 
-        MvcResult mvcResult = mockMvc.perform(get("/api/test/flow"))
+        SecKillOrderDTO orderDTO = new SecKillOrderDTO(1001L, 2001L, 2);
+        MvcResult mvcResult = mockMvc.perform(post("/sample/cloud/sentinel/seckill/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(orderDTO)))
                 .andExpect(status().isTooManyRequests())
                 .andReturn();
 

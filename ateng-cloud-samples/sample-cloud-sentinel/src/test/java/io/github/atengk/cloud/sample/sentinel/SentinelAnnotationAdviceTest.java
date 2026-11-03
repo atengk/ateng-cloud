@@ -45,20 +45,20 @@ class SentinelAnnotationAdviceTest {
     @Test
     @DisplayName("无 blockHandler 的 @SentinelResource 触发限流：SentinelBlockExceptionAdvice 兜底返回 HTTP 429 与 FLOW_LIMIT(4201)")
     void testAnnotationResourceFlowLimitBlocked() throws Exception {
-        String resourceName = "custom-annotation-resource";
+        String resourceName = "seckill-vip-channel";
         FlowRule rule = new FlowRule(resourceName);
         rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
         rule.setCount(1);
         FlowRuleManager.loadRules(List.of(rule));
 
         // 1. 第一次请求放行
-        mockMvc.perform(get("/api/test/annotation-resource"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.data").value("annotation-resource-pass"));
+                .andExpect(jsonPath("$.data").value("vip-pass"));
 
         // 2. 第二次请求超限，验证切面捕获逃逸异常并映射为 429
-        mockMvc.perform(get("/api/test/annotation-resource"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value(SentinelResultCode.FLOW_LIMIT.getCode()))
                 .andExpect(jsonPath("$.msg").value(SentinelResultCode.FLOW_LIMIT.getMsg()));
@@ -67,29 +67,30 @@ class SentinelAnnotationAdviceTest {
     @Test
     @DisplayName("无 blockHandler 的 @SentinelResource 触发热点限流：切面捕获并返回 HTTP 429 与 PARAM_FLOW_LIMIT(4203)")
     void testParamFlowBlocked() throws Exception {
-        String resourceName = "custom-param-resource";
+        String resourceName = "seckill-product-hotspot";
         ParamFlowRule rule = new ParamFlowRule(resourceName);
         rule.setParamIdx(0);
         rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
         rule.setCount(100); // 普通参数阈值较高
 
-        // 配置指定热点参数 item-hot 阈值为 0 (立即阻断)
+        // 配置指定热点参数 9999L 阈值为 0 (立即阻断)
         ParamFlowItem item = new ParamFlowItem()
-                .setObject("item-hot")
-                .setClassType(String.class.getName())
+                .setObject(String.valueOf(9999L))
+                .setClassType(Long.class.getName())
                 .setCount(0);
         rule.setParamFlowItemList(List.of(item));
 
         ParamFlowRuleManager.loadRules(List.of(rule));
 
         // 1. 普通参数正常通行
-        mockMvc.perform(get("/api/test/param-flow").param("itemId", "item-normal"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/product/1001"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.data").value("item-item-normal"));
+                .andExpect(jsonPath("$.data.productId").value(1001))
+                .andExpect(jsonPath("$.data.status").value("AVAILABLE"));
 
         // 2. 触发热点参数限流，验证返回 429 与 4203
-        mockMvc.perform(get("/api/test/param-flow").param("itemId", "item-hot"))
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/product/9999"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value(SentinelResultCode.PARAM_FLOW_LIMIT.getCode()))
                 .andExpect(jsonPath("$.msg").value(SentinelResultCode.PARAM_FLOW_LIMIT.getMsg()));

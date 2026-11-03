@@ -26,7 +26,9 @@ public class SampleSentinelController {
     @GetMapping("/degrade")
     public Result<String> testDegrade(@RequestParam(name = "fail", defaultValue = "false") boolean fail) {
         if (fail) {
-            throw new IllegalStateException("Simulated business exception for degrade");
+            IllegalStateException ex = new IllegalStateException("Simulated business exception for degrade");
+            com.alibaba.csp.sentinel.Tracer.trace(ex);
+            throw ex;
         }
         return Result.success("degrade-pass");
     }

@@ -26,6 +26,10 @@ spring:
       eager: true
 
 ateng:
+  boot:
+    web:
+      shutdown:
+        enabled: false
   cloud:
     sentinel:
       enabled: true

@@ -23,10 +23,10 @@
             <artifactId>ateng-cloud-sentinel</artifactId>
         </dependency>
 
-        <!-- Spring Boot Web Starter (提供 Servlet / Spring MVC 运行时) -->
+        <!-- ateng-boot-web (微服务通用 Web 底座，提供统一 Result<T>、JSR-303 参数校验与 MDC 追踪) -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-boot-web</artifactId>
         </dependency>
 
         <!-- Spring Cloud OpenFeign Starter (用于声明式 Feign 熔断自测) -->
