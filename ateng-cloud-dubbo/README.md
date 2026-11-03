@@ -1,12 +1,12 @@
-# ateng-cloud-dubbo
+# ateng-cloud-dubbo 架构设计与使用指南
 
-面向企业级分布式生产环境的 Apache Dubbo 3.3 高性能 RPC 通信与微服务治理 Starter，单向依赖消费已发布的 `ateng-boot-bom`，专注于打造垂直正交、开箱即用、无侵入的双模微服务通信与生产治理底座。
+面向企业级高可用分布式生产环境的 Apache Dubbo 3.3 高性能 RPC 通信与微服务生产治理 Starter，单向依赖消费已发布的 `ateng-boot-bom`，专注于打造垂直正交、开箱即用、无侵入的双模微服务通信与治理底座。
 
 全面拥抱现代原生 **Triple 协议** (基于 HTTP/2 与 gRPC 工业级标准)，标配 **Fastjson2 JSONB** 超高速二进制序列化引擎与应用级服务发现模式 (`register-mode: instance`)；深度融合微服务专属治理铁律：双模自适应契约校验与结果断言、因果异常保真与反序列化防御、全链路四维上下文透明透传、零信任 Same-Token 内网防穿透、Seata 分布式事务 XID 状态对称穿透、TrafficContext 全域流量染色与泳道元数据联动、客户端原生 Mock 服务降级、金丝雀灰度发布标签路由平滑降级、服务端线程池过载保护与 Micrometer 监控、JSR-303 参数防卫、Triple Server Stream 原生流式通信、16MB 报文载荷硬防爆以及 15 秒优雅停机无损上下线。
 
 ---
 
-## 维度零：特性与公共 API 全景速查矩阵
+## 0. 特性与公共 API 全景速查矩阵 (100% 覆盖)
 
 ### 1. 核心类与治理门面
 
@@ -63,9 +63,9 @@
 | 配置项 | 类型 | 默认值 | 详细业务说明 |
 | :--- | :--- | :--- | :--- |
 | `ateng.cloud.dubbo.enabled` | `boolean` | `true` | 是否激活 ateng-cloud-dubbo 核心通信与治理能力 |
-| `ateng.cloud.dubbo.timeout` | `Duration` | `5000ms` | 全局 RPC 默认调用超时时限（消除无量纲裸数值） |
+| `ateng.cloud.dubbo.timeout` | `Duration` | `5000ms` | 全局 RPC 默认调用超时时限（强类型 Duration 消除无量纲歧义） |
 | `ateng.cloud.dubbo.retries` | `int` | `0` | 全局 RPC 默认重试次数（写请求读超时绝不重试防雪崩铁律） |
-| `ateng.cloud.dubbo.payload` | `DataSize` | `16MB` | 单个 RPC 请求/响应报文载荷硬防爆上限（防止黑客报文击穿 OOM） |
+| `ateng.cloud.dubbo.payload` | `DataSize` | `16MB` | 单个 RPC 请求/响应报文载荷硬防爆上限（防止黑客恶意报文击穿 JVM OOM） |
 | `ateng.cloud.dubbo.protocol.name` | `String` | `"tri"` | 默认通信协议名称，全面推行现代原生 Triple 协议 |
 | `ateng.cloud.dubbo.protocol.port` | `Integer` | `50051` | 默认服务暴露端口，对齐 gRPC / Triple 工业级标准推荐端口 |
 | `ateng.cloud.dubbo.protocol.serialization` | `String` | `"fastjson2"` | 默认序列化算法，采用 Fastjson2 JSONB 高速二进制格式 |
@@ -73,7 +73,8 @@
 | `ateng.cloud.dubbo.application.shut-wait` | `Duration` | `15000ms` | 优雅停机等待超时时间（由 AtengDubboEnvironmentPostProcessor 注入原生 dubbo.application.shut-down.wait 与 shutwait，默认 15000ms 硬兜底） |
 | `ateng.cloud.dubbo.context.enabled` | `boolean` | `true` | 是否开启全链路四维上下文透传与 Netty 线程池确定性清理 |
 | `ateng.cloud.dubbo.same-token.enabled` | `boolean` | `true` | 是否开启内部微服务零信任 Same-Token 防穿透隔离校验 |
-| `ateng.cloud.dubbo.exception.enabled` | `boolean` | `true` | 是否开启因果异常保真与反序列化防御 |
+| `ateng.cloud.dubbo.same-token.check` | `boolean` | `true` | Provider 端是否强制校验 Same-Token（未携带或非法直接 401 快速失败） |
+| `ateng.cloud.dubbo.exception.enabled` | `boolean` | `true` | 是否开启因果异常保真与第三方未知未受检异常转译 |
 | `ateng.cloud.dubbo.contract.enabled` | `boolean` | `true` | 是否开启双模契约校验与非 200 业务结果自动断言转译 |
 | `ateng.cloud.dubbo.traffic.enabled` | `boolean` | `true` | 是否开启金丝雀灰度流量染色与标签路由支持 |
 | `ateng.cloud.dubbo.traffic.tag-force` | `boolean` | `false` | 标签路由是否强制隔离（`false` 平滑降级至基线实例；`true` 严格强隔离） |
@@ -100,9 +101,9 @@
 
 ---
 
-## 维度一：最小起步体验
+## 1. 模块定位与 Maven 坐标
 
-### 1. 引入 Starter 依赖
+`ateng-cloud-dubbo` 是 `ateng-cloud` 微服务基础设施的核心远程调用套件。针对传统 RPC 体系中易出现的“协议过时（旧 TCP 协议穿透性差）、序列化安全黑洞、异常反序列化崩溃（ClassNotFoundException）、多租户上下文线程污染、公网绕过网关直连穿透、写请求读超时重试雪崩”等痛点，提供高可用、生产就绪的统一治理基线。
 
 ```xml
 <dependency>
@@ -112,483 +113,906 @@
 ```
 
 > [!TIP]
-> 依赖版本已由 `ateng-cloud-bom` 统一纳管，业务子工程中无需声明 `<version>` 标签。
+> 依赖版本由父工程 `ateng-cloud-bom` 统一纳管，业务模块中无需显式声明 `<version>` 标签。
 
-### 2. 最小起步配置 (`application.yml`)
+---
 
-以下配置逆向提取自真实跑通的场景样例工程 [application.yml](../ateng-cloud-samples/sample-cloud-dubbo/src/main/resources/application.yml)：
+## 2. 核心架构与微服务 RPC 调用拓扑
+
+模块采用双模通信体系与分层拦截器责任链架构，支持 POJO 强契约与统一 `Result<T>` 响应契约，将接入层正交解耦为**高频交易业务消费端**与**微服务生产治理容灾端**两大独立切片：
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer["客户端 / 网关接入层"]
+        GW["ateng-cloud-gateway / 外部 HTTP 请求"]
+    end
+
+    subgraph ConsumerLayer["Dubbo 消费端 (Web 接入层)"]
+        TC["DubboTradeConsumerController<br>(/sample/cloud/dubbo/trade/*)"]
+        GC["DubboGovernanceConsumerController<br>(/sample/cloud/dubbo/governance/*)"]
+        
+        subgraph ConsumerFilters["Consumer 拦截过滤器链"]
+            F_SAME_OUT["DubboSameTokenFilter<br>(出站凭据注入)"]
+            F_CTX_OUT["DubboContextPropagationFilter<br>(4D上下文/Seata/Traffic注入)"]
+            F_TAG_OUT["DubboTrafficTagFilter<br>(标签路由染色)"]
+            F_ASSERT["DubboContractAssertFilter<br>(Result 业务状态自动断言)"]
+        end
+    end
+
+    subgraph TripleNetwork["Triple 通信通道 (HTTP/2 多路复用)"]
+        TRI["Triple Protocol (tri://host:50051)<br>Fastjson2 JSONB 二进制序列化 | 16MB 载荷硬防爆"]
+    end
+
+    subgraph ProviderLayer["Dubbo 服务提供端 (RPC 执行层)"]
+        subgraph ProviderFilters["Provider 拦截过滤器链"]
+            F_SAME_IN["DubboSameTokenFilter<br>(零信任 401 校验阻断)"]
+            F_OVERLOAD["DubboOverloadFilter<br>(429 线程池过载限流)"]
+            F_VALID["DubboValidationFilter<br>(JSR-303 参数防卫)"]
+            F_CTX_IN["DubboContextPropagationFilter<br>(上下文还原 & finally 对称清理)"]
+            F_EXC["AtengDubboExceptionFilter<br>(因果保真 & 底层异常转译)"]
+        end
+        
+        TS["TradeBillingDubboServiceImpl<br>(交易结算核心业务)"]
+        US["UserRpcServiceImpl<br>(治理容灾演示业务)"]
+    end
+
+    GW --> TC
+    GW --> GC
+    TC --> F_ASSERT --> F_TAG_OUT --> F_CTX_OUT --> F_SAME_OUT
+    GC --> F_TAG_OUT --> F_CTX_OUT --> F_SAME_OUT
+    F_SAME_OUT --> TRI
+    TRI --> F_SAME_IN --> F_OVERLOAD --> F_VALID --> F_CTX_IN --> F_EXC
+    F_EXC --> TS
+    F_EXC --> US
+```
+
+---
+
+## 3. Triple 协议基线与双模契约调用
+
+### 3.1 Triple 现代流式协议与极简起步配置
 
 ```yaml
-server:
-  port: 0
-
-spring:
-  application:
-    name: sample-cloud-dubbo
-
+# 本节专属 YAML 配置 (application.yml)
 dubbo:
   application:
     name: sample-cloud-dubbo
-    register-mode: instance
-  registry:
-    address: N/A
+    register-mode: instance # 应用级服务发现注册模式
   protocol:
-    name: tri
-    port: 50051
-    serialization: fastjson2
+    name: tri               # 启用现代原生 Triple 协议
+    port: 50051             # 标准 Triple/gRPC 工业端口
+    serialization: fastjson2 # Fastjson2 JSONB 超高速二进制序列化
   consumer:
-    check: false
-  provider:
-    timeout: 5000
+    check: false            # 启动期不强检 Provider 在线状态，支持自洽解耦
+    direct-url: tri://127.0.0.1:50051 # 离线直连 URL (激活 local profile 时置空走注册中心)
 
 ateng:
   cloud:
     dubbo:
       enabled: true
-      timeout: 5000ms
-      retries: 0
+      timeout: 5000ms       # 默认 RPC 调用超时
+      retries: 0            # 默认写请求禁重试防雪崩
 ```
 
-### 3. 服务端契约接口与实现
+面向分布式高频交易撮合与结算的 RPC 契约定义：
 
-#### 服务接口契约声明 ([UserRpcService.java](../ateng-cloud-samples/sample-cloud-dubbo/src/main/java/io/github/atengk/cloud/sample/dubbo/api/UserRpcService.java))
 ```java
-public interface UserRpcService {
+package io.github.atengk.cloud.sample.dubbo.api;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.model.TradeBillingRequest;
+import io.github.atengk.cloud.sample.dubbo.model.TradeBillingResult;
+import jakarta.validation.Valid;
+
+/**
+ * 高频交易撮合与结算 Dubbo RPC 契约接口
+ */
+public interface TradeBillingDubboService {
 
     /**
-     * 健康探活 ping 方法
+     * 单笔同步结算（原生强类型 POJO 契约）
      */
-    String ping(String message);
+    TradeBillingResult settlePojo(@Valid TradeBillingRequest request);
 
     /**
-     * 依据 ID 查询用户信息（原生 POJO 强类型返回契约）
+     * 单笔包装结算（Result 强契约返回，由消费端 DubboContractAssertFilter 自动断言成功状态）
      */
-    UserVO getUserById(Long id);
+    Result<TradeBillingResult> settleResult(@Valid TradeBillingRequest request);
 
     /**
-     * 依据 ID 查询用户信息（显式包装 Result 强契约返回）
+     * 模拟结算失败（返回 Result.fail，触发消费端自动断言并转换为 BusinessException）
      */
-    Result<UserVO> getUserResult(Long id);
+    Result<TradeBillingResult> settleFailedResult(@Valid TradeBillingRequest request);
 }
 ```
 
-#### 服务提供端实现 ([UserRpcServiceImpl.java](../ateng-cloud-samples/sample-cloud-dubbo/src/main/java/io/github/atengk/cloud/sample/dubbo/service/UserRpcServiceImpl.java))
-```java
-@DubboService
-public class UserRpcServiceImpl implements UserRpcService {
-
-    @Override
-    public String ping(String message) {
-        return "pong: " + message;
-    }
-
-    @Override
-    public UserVO getUserById(Long id) {
-        return new UserVO(id, "ateng_" + id, "ateng_" + id + "@example.com");
-    }
-
-    @Override
-    public Result<UserVO> getUserResult(Long id) {
-        return Result.success(new UserVO(id, "ateng_result_" + id, "result_" + id + "@example.com"));
-    }
-}
-```
-
-### 4. 消费端远程调用
-
-#### 消费端引用与直接调用 ([BaselineDubboRpcTest.java](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/BaselineDubboRpcTest.java))
-```java
-@SpringBootTest
-public class BaselineDubboRpcTest {
-
-    @DubboReference(url = "tri://127.0.0.1:50051", check = false)
-    private UserRpcService userRpcService;
-
-    @Test
-    void testPing() {
-        // 1. 探活调用
-        String response = userRpcService.ping("hello-triple");
-        assertEquals("pong: hello-triple", response);
-    }
-
-    @Test
-    void testGetUserById() {
-        // 2. 原生 POJO 强契约调用
-        UserVO user = userRpcService.getUserById(888L);
-        assertNotNull(user);
-        assertEquals(888L, user.getId());
-        assertEquals("ateng_888", user.getUsername());
-        assertEquals("ateng_888@example.com", user.getEmail());
-    }
-}
-```
+**核心机制与容灾边界**：
+- **原生 Triple 架构**：基于 HTTP/2 帧实现多路复用，穿透云原生网关与代理防火墙，免除传统私有二进制协议的序列化漏洞与防火墙阻断问题；
+- **Fastjson2 JSONB 引擎**：吞吐量比经典 Hessian2 提升 30% 以上，具备严苛的反序列化安全边界。
 
 ---
 
-## 维度二：生产扩展接管
+### 3.2 原生 POJO 强契约单笔结算
 
-### 1. 双模契约校验与非 200 结果自动断言转译
-
-当 RPC 接口返回 `Result<T>` 统一包装对象时，`DubboContractAssertFilter` 自动校验对端业务状态码。当 `code != 200` 时，自动转译为本地 `BusinessException` 抛出，守住业务正确性防线，彻底消除消费端漏判 `isSuccess()` 导致的“带着错误码继续往下跑”隐患：
+高频交易结算服务在 Web 接入层的消费调用：
 
 ```java
-@Test
-void testFailedResultConvertedToBusinessException() {
-    // 服务端返回 Result.fail(4001, "用户状态已被冻结")
-    // 消费端自动断言转译为 BusinessException，无需显式 if (!result.isSuccess()) 判断
-    BusinessException ex = assertThrows(BusinessException.class, () -> {
-        userRpcService.getFailedResult(999L);
-    });
+package io.github.atengk.cloud.sample.dubbo.controller;
 
-    assertEquals(4001, ex.getCode(), "必须原样保留服务端返回的具体业务错误码");
-    assertTrue(ex.getMessage().contains("用户状态已被冻结"), "必须原样保留服务端返回的业务错误描述");
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.TradeBillingDubboService;
+import io.github.atengk.cloud.sample.dubbo.model.TradeBillingRequest;
+import io.github.atengk.cloud.sample.dubbo.model.TradeBillingResult;
+import jakarta.validation.Valid;
+import org.apache.dubbo.config.annotation.DubboReference;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/trade")
+public class DubboTradeConsumerController {
+
+    @DubboReference(url = "${dubbo.consumer.direct-url:${dubbo.test.reference.url:tri://127.0.0.1:50051}}", check = false)
+    private TradeBillingDubboService tradeBillingDubboService;
+
+    /**
+     * 单笔同步结算（原生强类型 POJO 契约）
+     */
+    @PostMapping("/settle/pojo")
+    public Result<TradeBillingResult> settlePojo(@RequestBody @Valid TradeBillingRequest request) {
+        // RPC 接口直接返回强类型 POJO，消除二次拆包损耗
+        TradeBillingResult result = tradeBillingDubboService.settlePojo(request);
+        return Result.success(result);
+    }
 }
 ```
 
-若需对全局关闭业务断言，配置：
+**核心机制与容灾边界**：
+- **强类型零开销**：对于内部紧密微服务调用，接口直接声明业务对象 `TradeBillingResult`，兼具极致性能与强类型 IDE 校验能力；
+- **异常直接捕获**：服务端执行抛出的业务异常直接被 `AtengDubboExceptionFilter` 白名单放行，因果链完整保留。
+
+---
+
+### 3.3 统一 Result 契约与自动断言防呆
+
 ```yaml
+# 本节专属 YAML 配置 (application.yml)
 ateng:
   cloud:
     dubbo:
       contract:
-        enabled: false
+        enabled: true # 开启双模契约校验与结果自动断言（生产默认启用）
 ```
+
+当团队推行规范化分布式微服务架构时，RPC 接口统一声明返回 `Result<T>`。消费端接入层调用示例：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.TradeBillingDubboService;
+import io.github.atengk.cloud.sample.dubbo.model.TradeBillingRequest;
+import io.github.atengk.cloud.sample.dubbo.model.TradeBillingResult;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/trade")
+public class DubboTradeConsumerController {
+
+    private TradeBillingDubboService tradeBillingDubboService;
+
+    /**
+     * 单笔统一包装结算（Result 契约，自动断言防呆剥壳）
+     */
+    @PostMapping("/settle/result")
+    public Result<TradeBillingResult> settleResult(@RequestBody @Valid TradeBillingRequest request) {
+        return tradeBillingDubboService.settleResult(request);
+    }
+
+    /**
+     * 模拟结算失败（对端返回非 200 Result，触发 DubboContractAssertFilter 自动转译为 BusinessException）
+     */
+    @PostMapping("/settle/failed")
+    public Result<TradeBillingResult> settleFailedResult(@RequestBody @Valid TradeBillingRequest request) {
+        return tradeBillingDubboService.settleFailedResult(request);
+    }
+}
+```
+
+**核心机制与容灾边界**：
+- **防呆自动断言**：当对端服务返回 `Result<T>` 且其业务状态码 `code != 200` 时，消费端拦截器 `DubboContractAssertFilter` 自动将其转译为本地 `BusinessException(code, msg)` 抛出；
+- **彻底杜绝静默带病运行**：彻底终结了调用方忘记编写 `if (!result.isSuccess())` 校验、带着 `null` 数据或业务失败码继续执行导致数据库产生脏数据的生产隐患。
 
 ---
 
-### 2. 全链路四维上下文透传与零信任 Same-Token 防穿透
+## 4. 全链路四维上下文、Seata 事务与金丝雀灰度透传
 
-出站自动提取上下文与受信凭据，入站自动还原至工作线程并在执行完毕后强制清空：
+### 4.1 四维上下文跨进程透明透传与确定性对称清理
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      context:
+        enabled: true # 激活四维上下文透明透传与线程清理
+```
+
+消费端接收到外部请求后，四维上下文快照（$\langle\text{MDC traceId}, \text{userId}, \text{tenantId}, \text{ignoreTenant}\rangle$）自动随 Dubbo RPC 隐式参数穿透至下游服务：
 
 ```java
-@Test
-void testFourDimensionalContextPropagation() {
-    // 1. 在消费端线程设置四维上下文快照与灰度染色标记
-    MDC.put("traceId", "dubbo-trace-99998888");
-    UserContextHolder.setUserId("user-ateng-admin");
-    TenantContextHolder.setTenantId("tenant-enterprise-001");
-    TenantContextHolder.setIgnoreTenant(true);
-    TrafficContextHolder.setContext(TrafficContext.of("gray-canary-v2", "user-lane-01", "rule-user-vip"));
+package io.github.atengk.cloud.sample.dubbo.controller;
 
-    // 2. 发起 RPC 调用，服务端自动还原上下文
-    Map<String, String> providerContext = userRpcService.getProviderContext();
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.dubbo.filter.DubboContextPropagationFilter;
+import io.github.atengk.cloud.sample.dubbo.api.TradeBillingDubboService;
+import org.slf4j.MDC;
+import org.springframework.web.bind.annotation.*;
 
-    // 3. 强断言对端上下文镜像完全一致
-    assertNotNull(providerContext);
-    assertEquals("dubbo-trace-99998888", providerContext.get("traceId"));
-    assertEquals("user-ateng-admin", providerContext.get("userId"));
-    assertEquals("tenant-enterprise-001", providerContext.get("tenantId"));
-    assertEquals("true", providerContext.get("ignoreTenant"));
-    assertEquals("gray-canary-v2", providerContext.get("trafficTag"));
-}
+import java.util.Map;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/trade")
+public class DubboTradeConsumerController {
+
+    private TradeBillingDubboService tradeBillingDubboService;
+
+    /**
+     * 探查跨进程 RPC 四维上下文、Seata XID 与金丝雀灰度染色穿透
+     */
+    @GetMapping("/context/probe")
+    public Result<Map<String, String>> probeContext(
+            @RequestHeader(value = "X-Traffic-Tag", required = false) String trafficTag,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Tenant-Id", required = false) String tenantId) {
+
+        if (userId != null && !userId.isBlank()) {
+            UserContextHolder.setUserId(userId);
+        }
+        if (tenantId != null && !tenantId.isBlank()) {
+            TenantContextHolder.setTenantId(tenantId);
+        }
+        if (trafficTag != null && !trafficTag.isBlank()) {
+            MDC.put(DubboContextPropagationFilter.TRAFFIC_TAG, trafficTag);
+        }
+
+        try {
+            // 发起 RPC 调用，服务端自动还原上下文
+            Map<String, String> providerContext = tradeBillingDubboService.getProviderContext();
+            return Result.success(providerContext);
+        } finally {
+            // 确定性对称清理，防止当前 Web 线程池上下文污染
+            UserContextHolder.clear();
+            TenantContextHolder.clear();
+            MDC.remove(DubboContextPropagationFilter.TRAFFIC_TAG);
+        }
+    }
 }
 ```
 
+**核心机制与容灾边界**：
+- **Netty 线程确定性清理铁律**：`DubboContextPropagationFilter` 在服务端请求执行的 `finally` 块中强制执行 `cleanContexts()`，无条件注销 `UserContextHolder`、`TenantContextHolder` 及 MDC，杜绝线程复用时引发的多租户数据泄露与上下文残留脏读；
+- **标准 W3C 协议对齐**：调用链 `traceId` 采用统一 MDC 门面，无缝对接 SkyWalking、OpenTelemetry 及 Zipkin。
+
 ---
 
-### 3. Seata 全局事务 XID 跨 RPC 透明穿透与状态判断对称释放
-
-基于 `DubboSeataPropagationSupport` 反射与 ClassUtils 条件探测实现 Seata 解耦桥接：消费端出站时探测 `RootContext.getXID()`，若处于分布式事务中则自动将 XID 注入 RPC 隐式参数 `TX_XID`；服务端入站时自动还原绑定至对端 `RootContext`。
-
-> [!IMPORTANT]
-> **状态判断对称释放范式**：服务提供端通过局部布尔标志 `boundByCurrent` 记录是否由当前 RPC 调用真实绑定 XID；在 `finally` 块中**仅当本端真实绑定成功时才触发 `RootContext.unbind()`**。严禁盲目解绑导致外层全局事务上下文被篡改或丢失！当环境未引入 Seata 依赖时，自动静默短路，不发生 `ClassNotFoundException`。
+### 4.2 Seata 全局分布式事务 XID 状态对称穿透
 
 ```java
-// 消费端出站：处于全局事务中时自动将 XID 注入 RPC Attachment
-RootContext.bind("192.168.1.100:8091:123456789");
+// 消费端处于 Seata 全局分布式事务中
+String globalXid = "192.168.1.50:8091:8877665544";
+RootContext.bind(globalXid);
+
 try {
-    userRpcService.ping("seata-call");
+    // 发起 Dubbo RPC 调用，DubboSeataPropagationSupport 自动将 XID 注入 TX_XID Attachment
+    tradeBillingDubboService.settlePojo(request);
 } finally {
     RootContext.unbind();
 }
 ```
 
+**核心机制与容灾边界**：
+- **状态判断对称解绑范式**：服务提供端在入站时记录局部标志 `boundByCurrent`；在 `finally` 块中**仅当本端由于当前 RPC 请求真实绑定 XID 时才触发 `RootContext.unbind()`**；
+- **静默条件探测**：当应用环境未引入 Seata 依赖时，适配桥梁自动静默短路，坚决不发生 `NoClassDefFoundError`。
+
 ---
 
-### 4. TrafficContext 泳道双向联动与流量染色透传
+### 4.3 TrafficContext 全域流量染色与标签路由平滑降级
 
-Dubbo 深度联动全域流量治理底座 `TrafficContextHolder`。消费端出站自动提取流量标签、泳道名称及匹配规则并压入 RPC Attachment：
-- `X-Traffic-Tag`：流量染色标签（同时自动激活 Dubbo 原生标签路由 `CommonConstants.TAG_KEY`）
-- `X-Traffic-Lane`：隔离泳道名称（如 `payment-gray-lane`）
-- `X-Traffic-Rule`：命中的动态分流规则标识（如 `rule-user-vip`）
-
-服务端入站时将多维泳道元数据完整还原至 `TrafficContextHolder`，并在 `finally` 块中确定性清空，杜绝跨请求线程污染。若环境未引入 `ateng-cloud-traffic`，自动平滑降级至 MDC 模式。
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      traffic:
+        enabled: true      # 开启金丝雀灰度流量染色
+        tag-force: false   # 默认 false：平滑降级至基线实例；true：强隔离
+```
 
 ```java
-// 设置当前线程 TrafficContext 泳道元数据
-TrafficContextHolder.setContext(TrafficContext.of("gray-v3", "payment-lane", "rule-999"));
+// 设置当前线程隔离泳道与流量规则
+TrafficContextHolder.setContext(TrafficContext.of("canary-v2", "trade-lane-01", "rule-vip-trade"));
 try {
-    userRpcService.ping("traffic-call");
+    tradeBillingDubboService.settlePojo(request);
 } finally {
     TrafficContextHolder.clear();
 }
 ```
 
+**核心机制与容灾边界**：
+- **金丝雀平滑降级**：出站时将流量标签自动映射至 Dubbo 原生 `CommonConstants.TAG_KEY`。在 `tag-force: false` 默认模式下，若集群中不存在对应 `canary-v2` 的灰度服务节点，流量自动回退至基线实例正常响应，防止版本发布期间因灰度节点未就绪引发整网雪崩。
+
 ---
 
-### 5. 自定义反序列化安全包白名单配置
+## 5. 零信任 Same-Token 防穿透与反序列化安全
 
-在 Dubbo 3 严格安全模式下，为防止恶意序列化载荷注入，需显式声明业务传输对象 (DTO/VO) 的包路径。`ateng-cloud-dubbo` 支持通过配置属性动态注入白名单，自动注册至 Dubbo `SerializeSecurityManager`：
+### 5.1 零信任 Same-Token 内网防穿透隔离
 
 ```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      same-token:
+        enabled: true # 开启 Sa-Token 内部受信凭据校验
+        check: true   # Provider 端强制校验（未携带或非法直接 401 快速失败）
+```
+
+微服务生产治理控制器接入示例：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.dubbo.filter.DubboSameTokenFilter;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.apache.dubbo.config.annotation.DubboReference;
+import org.apache.dubbo.rpc.RpcContext;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/governance")
+public class DubboGovernanceConsumerController {
+
+    @DubboReference(url = "${dubbo.consumer.direct-url:${dubbo.test.reference.url:tri://127.0.0.1:50051}}", check = false)
+    private UserRpcService userRpcService;
+
+    /**
+     * 零信任 Same-Token 内部受信凭据防穿透校验
+     */
+    @GetMapping("/same-token")
+    public Result<String> testSameToken(@RequestHeader(value = "Same-Token", required = false) String sameToken) {
+        if (sameToken != null) {
+            // 模拟显式覆盖凭据（如测试非法或空白凭据）
+            RpcContext.getClientAttachment().setAttachment(DubboSameTokenFilter.SAME_TOKEN_KEY, sameToken);
+            RpcContext.getClientAttachment().setAttachment(DubboSameTokenFilter.SA_SAME_TOKEN_KEY, sameToken);
+        }
+        try {
+            String pingResult = userRpcService.ping("same-token-check");
+            return Result.success("Same-Token 受信凭据校验通过: " + pingResult);
+        } finally {
+            RpcContext.removeClientAttachment();
+        }
+    }
+}
+```
+
+**核心机制与容灾边界**：
+- **公网穿透 Fail-Fast 阻断**：所有流量必须先经由 `ateng-cloud-gateway` 鉴权并注入受信凭据；凡黑客或恶意扫描绕过网关直连内部微服务暴露端口（50051），`DubboSameTokenFilter` 在 Provider 边界直接抛出 `BusinessException(401, "微服务内部调用未携带合法 Same-Token 受信凭据")` 快速阻断；
+- **短路调用豁免**：本地 JVM 内部调用 (`injvm`) 自动豁免，保障单体集成单测极速运行。
+
+---
+
+### 5.2 反序列化动态包安全白名单配置
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
 ateng:
   cloud:
     dubbo:
       security:
         serialize:
           allow-packages:
-            - com.company.biz.dto
-            - com.company.biz.vo
-            - com.company.order.model
+            - io.github.atengk.cloud.sample.dubbo.model
+            - io.github.atengk.boot.core.model
 ```
+
+**核心机制与容灾边界**：
+- **安全沙箱隔离**：深度接入 Dubbo 3 `SerializeSecurityManager` 机制，在 Fastjson2 二进制解码阶段对非允许路径的类执行拒绝反序列化，从根本上杜绝任意代码执行（RCE）类反序列化攻击。
 
 ---
 
-### 6. Dubbo 客户端原生 Mock 服务降级
+## 6. 服务端线程池过载保护与参数校验统一防卫
 
-遵循微服务弹性容灾与服务降级规范，对齐 Dubbo 3 原生 Mock 同包约定。在服务接口同包下编写 `*Mock` 实现类（例如 `UserRpcServiceMock` 实现 `UserRpcService`）：
+### 6.1 服务端线程池过载 429 保护与 Micrometer 指标监控
 
-#### 降级实现类 ([UserRpcServiceMock.java](../ateng-cloud-samples/sample-cloud-dubbo/src/main/java/io/github/atengk/cloud/sample/dubbo/api/UserRpcServiceMock.java))
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      overload:
+        enabled: true         # 启用线程池过载保护
+        metrics-enabled: true # 启用 Micrometer 指标导出
+```
+
+微服务生产治理控制器模拟过载请求：
+
 ```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/governance")
+public class DubboGovernanceConsumerController {
+
+    private UserRpcService userRpcService;
+
+    /**
+     * 服务端并发线程池打满 429 过载保护限流
+     */
+    @GetMapping("/overload")
+    public Result<String> testOverload() {
+        // 模拟触发线程池耗尽，DubboOverloadFilter 将其转译为受管 429 限流异常
+        userRpcService.simulateOverload();
+        return Result.success("未抛出预期异常");
+    }
+}
+```
+
+**核心机制与容灾边界**：
+- **生产级拒绝策略**：`DubboOverloadHandler` 替代传统无脑丢弃或直接崩溃策略，记录过载诊断并递增计数器；
+- **429 标准状态码映射**：`DubboOverloadFilter` 与 `DubboOverloadExceptionHandler` 将线程池拒绝转译为 `BusinessException(429, "服务端并发线程池已耗尽，触发过载保护限流")`，告知调用方立即触发退避削峰；
+- **Actuator 指标导出**：自动暴露 `dubbo.threadpool.reject` 计数器与当前活跃线程度量。
+
+---
+
+### 6.2 分层双防参数校验防卫 (Web 边界与 RPC 边界)
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      validation:
+        enabled: true # 启用 Provider 端 JSR-303 参数格式快速失败防卫
+```
+
+控制层双层防卫示例：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
+import io.github.atengk.cloud.sample.dubbo.model.UserVO;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/governance")
+public class DubboGovernanceConsumerController {
+
+    private UserRpcService userRpcService;
+
+    /**
+     * Web 传输边界参数校验快速失败防卫（第一道防线）
+     */
+    @PostMapping("/validation")
+    public Result<UserVO> validateUser(@RequestBody @Valid UserCreateRequest request) {
+        UserVO vo = userRpcService.createUser(request);
+        return Result.success(vo);
+    }
+
+    /**
+     * RPC 协议边界参数校验快速失败防卫（第二道防线，由 DubboValidationFilter 拦截转译）
+     */
+    @PostMapping("/validation/rpc")
+    public Result<UserVO> validateUserRpcDirect(@RequestBody UserCreateRequest request) {
+        // 未在 Web 边界显式标注 @Valid 时，数据直发 RPC 仍由 DubboValidationFilter 执行严格防卫
+        UserVO vo = userRpcService.createUser(request);
+        return Result.success(vo);
+    }
+}
+```
+
+**核心机制与容灾边界**：
+- **Defense-in-Depth 双防体系**：第一道防线在 Web Controller 边界拦截非法请求；第二道防线在 RPC 服务端入口处拦截，自动提取 `ConstraintViolationException` 并结构化转译为统一业务异常 `BusinessException(400, "参数校验失败: ...")`。
+
+---
+
+### 6.3 因果异常保真与底层未声明异常安全转译
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      exception:
+        enabled: true # 启用因果异常保真与未知异常防反序列化崩溃转译
+```
+
+治理控制器异常场景验证：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/governance")
+public class DubboGovernanceConsumerController {
+
+    private UserRpcService userRpcService;
+
+    /**
+     * 受管业务异常因果保真拦截（白名单放行受管 BusinessException，精准还原 404 状态码）
+     */
+    @GetMapping("/business-exception")
+    public Result<String> testBusinessException() {
+        userRpcService.throwBusinessException();
+        return Result.success("未抛出预期异常");
+    }
+
+    /**
+     * 底层未声明异常安全因果转译（防反序列化崩溃，转译为受管 BusinessException，统一映射为 500 状态码）
+     */
+    @GetMapping("/custom-exception")
+    public Result<String> testCustomException() {
+        userRpcService.throwCustomException();
+        return Result.success("未抛出预期异常");
+    }
+}
+```
+
+**核心机制与容灾边界**：
+- **业务异常 100% 因果保真**：受管 `BusinessException` 列入白名单放行，错误码与多语言消息完全无损穿透；
+- **防御 ClassNotFoundException 崩溃**：对端抛出未声明的底层非 JDK 私有异常（如驱动层死锁异常），由 `AtengDubboExceptionFilter` 安全转译为通用 `BusinessException(500, "系统执行异常: ...")`，杜绝消费端因缺少私有异常类导致的二次反序列化瘫痪。
+
+---
+
+## 7. 客户端原生 Mock 容灾与防重试雪崩纪律
+
+### 7.1 Dubbo 3 客户端原生同包 Mock 服务降级
+
+当微服务发生网络分区、下游服务宕机或出现读超时时，消费端依据 Dubbo 3 原生同包约定自动平滑触发 `*Mock` 保底实现。
+
+同包降级类声明：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.api;
+
+import io.github.atengk.cloud.sample.dubbo.model.UserVO;
+
+/**
+ * 用户 RPC 服务原生客户端降级契约实现 (对齐 Dubbo 3 原生 Mock 同包约定)
+ */
 public class UserRpcServiceMock implements UserRpcService {
 
     public static final String MOCK_TAG = "[MOCK-FALLBACK]";
     public static final String DEFAULT_MOCK_EMAIL = "mock@example.com";
 
     @Override
-    public String ping(String message) {
-        return MOCK_TAG + " pong: " + message;
-    }
-
-    @Override
     public UserVO getUserById(Long id) {
+        // 下游宕机不可达时返回兜底用户模型
         return new UserVO(id != null ? id : 0L, "mock-user-fallback", DEFAULT_MOCK_EMAIL);
     }
-
-    @Override
-    public Result<UserVO> getUserResult(Long id) {
-        return Result.success(new UserVO(id != null ? id : 0L, "mock-result-fallback", DEFAULT_MOCK_EMAIL));
-    }
-
-    @Override
-    public Result<UserVO> getFailedResult(Long id) {
-        return Result.fail(CommonResultCode.SERVICE_UNAVAILABLE.getCode(), "下游服务不可用，已触发客户端 Mock 降级");
-    }
+    
+    // ... 其他降级保底方法
 }
 ```
 
-#### 声明式挂载 Mock 引用与容灾实测 ([MockFallbackDubboRpcTest.java](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/MockFallbackDubboRpcTest.java))
-```java
-@SpringBootTest
-public class MockFallbackDubboRpcTest {
+治理控制器消费降级调用：
 
-    // 声明 mock = "true"：当下游不可用时自动触发 UserRpcServiceMock 降级兜底
-    @DubboReference(url = "tri://127.0.0.1:50051", check = false, mock = "true", timeout = 1000)
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import io.github.atengk.cloud.sample.dubbo.model.UserVO;
+import org.apache.dubbo.config.annotation.DubboReference;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/governance")
+public class DubboGovernanceConsumerController {
+
+    // 声明 mock = "true"：下游服务不可达时自动触发 UserRpcServiceMock 降级
+    @DubboReference(url = "${dubbo.test.unreachable.url:tri://127.0.0.1:59999}", check = false, mock = "true", timeout = 1000)
     private UserRpcService fallbackMockRpcService;
 
-    @Test
-    void testMockFallbackWhenProviderUnreachable() {
-        // 下游宕机时自动无感返回业务保底对象，防止调用级联雪崩
-        UserVO fallbackUser = fallbackMockRpcService.getUserById(888L);
-        assertNotNull(fallbackUser);
-        assertEquals("mock-user-fallback", fallbackUser.getUsername());
+    @DubboReference(url = "${dubbo.consumer.direct-url:${dubbo.test.reference.url:tri://127.0.0.1:50051}}", check = false)
+    private UserRpcService userRpcService;
+
+    /**
+     * Dubbo 3 原生客户端同包 Mock 自动降级（当远端服务不可达时自动平滑返回兜底数据）
+     */
+    @GetMapping("/mock/fallback")
+    public Result<UserVO> testMockFallback(@RequestParam(required = false, defaultValue = "888") Long id) {
+        UserVO vo = fallbackMockRpcService.getUserById(id);
+        return Result.success(vo);
+    }
+
+    /**
+     * 正常在线直连调用（验证服务健康时正常响应真实 Provider 数据）
+     */
+    @GetMapping("/mock/live")
+    public Result<UserVO> testMockLive(@RequestParam(required = false, defaultValue = "123") Long id) {
+        UserVO vo = userRpcService.getUserById(id);
+        return Result.success(vo);
     }
 }
 ```
+
+**核心机制与容灾边界**：
+- **同包无侵入约定**：服务契约接口名为 `UserRpcService`，Mock 类名严格为 `UserRpcServiceMock` 并与接口同包；
+- **健康直通不降级**：服务正常健康时优先响应真实数据，仅在故障时毫秒级切换降级，阻断级联雪崩。
 
 ---
 
-### 7. 金丝雀灰度发布流量染色与标签路由
-
-消费端出站时提取染色标记，自动转化为 Dubbo 原生标签路由参数 `CommonConstants.TAG_KEY`：
+### 7.2 读写超时与写请求绝对禁止重试不变量
 
 ```yaml
+# 本节专属 YAML 配置 (application.yml)
 ateng:
   cloud:
     dubbo:
+      timeout: 5000ms # 全局 RPC 默认调用超时
+      retries: 0      # 写请求重试次数严格为 0
+```
+
+**核心机制与容灾边界**：
+- **写请求绝对禁止重试铁律**：对于非幂等写接口（如转账、扣减库存、落单），发生读超时（`SocketTimeoutException`）默认坚决关闭重试（`retries: 0`），坚决杜绝下游重复落库产生资金损失与并发死锁。
+
+---
+
+## 8. Triple 原生流式通信与载荷硬防爆
+
+### 8.1 Triple 原生 Server Stream 服务端流式推送
+
+对于大批量对账单、流式数据导出场景，Triple 原生基于 HTTP/2 Data 帧提供高效流式传输。
+
+RPC 契约与流式方法声明：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.api;
+
+import io.github.atengk.cloud.sample.dubbo.model.BillingStreamItemVO;
+import io.github.atengk.cloud.sample.dubbo.model.BillingStreamQuery;
+import org.apache.dubbo.common.stream.StreamObserver;
+
+public interface TradeBillingDubboService {
+
+    /**
+     * Triple 原生 Server Stream 服务端流式推送对账明细
+     */
+    void streamBillings(BillingStreamQuery query, StreamObserver<BillingStreamItemVO> responseObserver);
+}
+```
+
+控制器接入端异步汇聚拉取：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.code.CommonResultCode;
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.TradeBillingDubboService;
+import io.github.atengk.cloud.sample.dubbo.model.BillingStreamItemVO;
+import io.github.atengk.cloud.sample.dubbo.model.BillingStreamQuery;
+import org.apache.dubbo.common.stream.StreamObserver;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/trade")
+public class DubboTradeConsumerController {
+
+    private TradeBillingDubboService tradeBillingDubboService;
+
+    /**
+     * Triple 原生 Server Stream 服务端流式拉取对账明细
+     */
+    @GetMapping("/stream/bills")
+    public Result<List<BillingStreamItemVO>> streamBillings(
+            @RequestParam(required = false, defaultValue = "10001") Long accountId,
+            @RequestParam(required = false, defaultValue = "5") Integer limit) {
+
+        List<BillingStreamItemVO> items = new CopyOnWriteArrayList<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        BillingStreamQuery query = new BillingStreamQuery(accountId, 5, limit);
+        tradeBillingDubboService.streamBillings(query, new StreamObserver<BillingStreamItemVO>() {
+            @Override
+            public void onNext(BillingStreamItemVO data) {
+                items.add(data);
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                errorRef.set(throwable);
+                latch.countDown();
+            }
+
+            @Override
+            public void onCompleted() {
+                latch.countDown();
+            }
+        });
+
+        try {
+            boolean completed = latch.await(5, TimeUnit.SECONDS);
+            if (!completed) {
+                throw new BusinessException(CommonResultCode.SERVICE_UNAVAILABLE, "流式对账单拉取超时");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, "流式对账单处理线程中断");
+        }
+
+        if (errorRef.get() != null) {
+            throw new BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, "流式对账单推送失败: " + errorRef.get().getMessage());
+        }
+
+        return Result.success(items);
+    }
+}
+```
+
+**核心机制与容灾边界**：
+- **契约断言自动豁免**：流式调用参数与出参为 `StreamObserver`，`DubboContractAssertFilter` 自动探测并放行，绝不破坏流式调用管道；
+- **全链路上下文穿透**：请求建立帧中随行透传四维上下文与灰度染色标记。
+
+---
+
+### 8.2 16MB 报文载荷硬防爆防护
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      payload: 16MB # 单请求报文载荷硬防爆上限（强类型 DataSize）
+```
+
+**核心机制与容灾边界**：
+- **Netty 解码前置熔断**：配置统一注入底层 Netty 与 Triple 协议层；超大畸形报文直接在解码入口触发 `ExceedPayloadLimitException` 熔断拦截，守卫 JVM 堆外内存安全。
+
+---
+
+### 8.3 15 秒优雅停机无损上下线状态机
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      application:
+        shut-wait: 15000ms # 优雅停机硬兜底时限
+```
+
+**核心机制与容灾边界**：
+- **停机三部曲**：由 `AtengDubboEnvironmentPostProcessor` 预设 15s 硬兜底。应用退出时：①先向 Nacos 注销当前实例以切断入口流量；②等待在途（in-flight）请求排空；③超时后关闭 Netty 线程池与物理连接，保障 Pod 滚动更新无损上下线。
+
+---
+
+## 9. 附录：生产级全量配置速查与排障指南
+
+### 1. 生产级全量配置速查字典
+
+```yaml
+# ==============================================================================
+# ateng-cloud-dubbo 生产级全量配置属性速查清单
+# ==============================================================================
+ateng:
+  cloud:
+    dubbo:
+      # 核心总开关
+      enabled: true
+      # 全局 RPC 默认调用超时时限
+      timeout: 5000ms
+      # 写请求防重试雪崩铁律（默认 0，禁读超时重试）
+      retries: 0
+      # 单个 RPC 请求/响应报文载荷硬防爆上限
+      payload: 16MB
+
+      # 协议基线配置
+      protocol:
+        name: tri
+        port: 50051
+        serialization: fastjson2
+
+      # 应用与停机治理
+      application:
+        register-mode: instance
+        shut-wait: 15000ms
+
+      # 全链路四维上下文透传
+      context:
+        enabled: true
+
+      # 零信任 Same-Token 内部防穿透
+      same-token:
+        enabled: true
+        check: true
+
+      # 因果异常保真与私有异常转译
+      exception:
+        enabled: true
+
+      # 双模契约校验与结果自动断言
+      contract:
+        enabled: true
+
+      # 金丝雀灰度流量染色与标签路由
       traffic:
         enabled: true
-        tag-force: false   # 默认 false：平滑降级（无灰度实例时回退基线实例）；true：强隔离阻断
-```
+        tag-force: false
 
-```java
-@Test
-void testTrafficTagAttachmentAndFallback() {
-    // 注入金丝雀灰度染色标记
-    MDC.put(DubboTrafficTagFilter.DEFAULT_TRAFFIC_TAG_HEADER, "canary-v2");
+      # 服务端核心线程池过载保护与度量
+      overload:
+        enabled: true
+        metrics-enabled: true
 
-    // 默认 tag-force=false：无对应灰度实例时平滑降级至基线实例正常响应
-    String result = grayEchoRpcService.echo("hello");
-    assertEquals("baseline:hello", result);
-}
-```
+      # Provider 边界 JSR-303 参数防卫
+      validation:
+        enabled: true
 
----
-
-### 8. 服务端线程池过载保护与 Micrometer 指标监控
-
-服务端并发打满触发拒绝时，`DubboOverloadHandler` 打印过载诊断并递增计数器，`DubboOverloadFilter` 与 `DubboOverloadExceptionHandler` 将其结构化转译为 `BusinessException(429 / TOO_MANY_REQUESTS)`，同时导出指标至 Micrometer：
-
-- **导出的核心度量项**：
-  - `dubbo.threadpool.active`：当前活跃执行线程数
-  - `dubbo.threadpool.size`：当前物理线程池大小
-  - `dubbo.threadpool.core`：核心线程数
-  - `dubbo.threadpool.max`：最大线程数
-  - `dubbo.threadpool.queue.size`：等待队列积压任务数
-  - `dubbo.threadpool.completed`：已完成任务总数
-  - `dubbo.threadpool.reject`：累计过载拒绝请求总次数（Counter）
-
-```java
-@Test
-void testProviderThreadOverloadProtection() {
-    // 模拟服务端线程池过载拒绝，DubboOverloadFilter 自动转译为 BusinessException(TOO_MANY_REQUESTS)
-    BusinessException ex = assertThrows(BusinessException.class, () -> userRpcService.simulateOverload());
-    assertEquals(CommonResultCode.TOO_MANY_REQUESTS.getCode(), ex.getCode());
-    assertTrue(ex.getMessage().contains("服务端并发线程池已耗尽"));
-}
+      # 反序列化安全白名单
+      security:
+        serialize:
+          allow-packages:
+            - io.github.atengk.cloud.sample.dubbo.model
+            - io.github.atengk.boot.core.model
 ```
 
 ---
 
-### 9. JSR-303 参数格式防卫与结构化转译
+### 2. 核心生产排障指南
 
-Provider 入口处拦截入参违规注解，自动提取字段路径并转译为标准 `BusinessException(400 / BAD_REQUEST)`：
+#### Q1: 调用返回非 200 Result 时为什么直接抛出 `BusinessException`？
+- **原因**：框架默认启用了 `DubboContractAssertFilter` 双模契约防呆机制；
+- **排查与解决**：若对端返回非 200 Result，框架自动转译为受管业务异常，防止业务层漏判。若确实需要获取原始失败 Result，可配置 `ateng.cloud.dubbo.contract.enabled: false` 关闭全局断言。
 
-```java
-@Test
-void testUserValidationFailureOnBlankUsername() {
-    // 构造非法入参（username 为空）
-    UserCreateRequest invalidReq = new UserCreateRequest("", 25);
-    BusinessException ex = assertThrows(BusinessException.class, () -> userRpcService.createUser(invalidReq));
+#### Q2: 直连 RPC 端口时抛出 `401 / UNAUTHORIZED` 拦截异常？
+- **原因**：触发了 `DubboSameTokenFilter` 零信任内网防穿透保护；
+- **排查与解决**：内部微服务通信必须通过网关受信凭据透传，或在 Consumer 容器中加载 Sa-Token 环境；若为非生产单测，可设置 `ateng.cloud.dubbo.same-token.check: false`。
 
-    assertEquals(CommonResultCode.BAD_REQUEST.getCode(), ex.getCode());
-    assertTrue(ex.getMessage().contains("用户名不能为空") || ex.getMessage().contains("username"));
-}
+#### Q3: 高峰期接口抛出 `429 / TOO_MANY_REQUESTS`？
+- **原因**：服务端 Netty / Dubbo 业务线程池打满，触发了 `DubboOverloadFilter` 限流熔断；
+- **排查与解决**：检查 Prometheus `dubbo.threadpool.reject` 计数器与活动线程指标；适度调大服务端工作线程数 `dubbo.provider.threads`，或通过网关层实施前置限流削峰。
+
+#### Q4: 反序列化报错 `ClassNotFoundException` 或安全拦截？
+- **原因**：传输对象的实体包路径未注册在安全白名单中；
+- **排查与解决**：在 `ateng.cloud.dubbo.security.serialize.allow-packages` 中追加声明该 DTO/VO 的 package 前缀。
+
+#### Q5: Triple 流式通信发生中断或阻塞？
+- **原因**：流式调用处理未正确闭环，缺少 `onCompleted()` 或被同步阻塞；
+- **排查与解决**：确保在 `onError` 或 `onCompleted` 中调用 `latch.countDown()`，并且流式传输中不要在 `onNext` 执行耗时过长阻塞操作。
+
+---
+
+### 3. 配套样例工程与全真回归验证
+
+配套可交互微服务工程已落地于 [sample-cloud-dubbo](../ateng-cloud-samples/sample-cloud-dubbo/)。
+
+执行微服务精准自动化全量回归测试命令：
+
+```bash
+mvn test -pl ateng-cloud-dubbo,ateng-cloud-samples/sample-cloud-dubbo -am -T 1C -nsu -B
 ```
-
----
-
-### 10. Triple Server Stream 原生流式通信
-
-基于 `StreamObserver` 实现高效服务端流式推送，四维上下文随请求帧完整透传，流数据自然豁免单体结果断言：
-
-```java
-@Test
-void testServerStreamSuccessWithContextPropagation() throws InterruptedException {
-    UserContextHolder.setUserId("stream-user-888");
-    TenantContextHolder.setTenantId("stream-tenant-666");
-    MDC.put("traceId", "trace-stream-9999");
-    MDC.put(DubboTrafficPropagationSupport.TRAFFIC_TAG, "canary-v2");
-
-    List<UserLogVO> receivedLogs = new CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(1);
-
-    // 发起 Triple Server Stream 流式调用
-    UserLogStreamRequest request = new UserLogStreamRequest("ORDER_EXPORT", 3);
-    userRpcService.streamUserLogs(request, new StreamObserver<>() {
-        @Override
-        public void onNext(UserLogVO data) {
-            receivedLogs.add(data);
-        }
-
-        @Override
-        public void onError(Throwable throwable) {
-            latch.countDown();
-        }
-
-        @Override
-        public void onCompleted() {
-            latch.countDown();
-        }
-    });
-
-    latch.await(5, TimeUnit.SECONDS);
-    assertThat(receivedLogs).hasSize(3);
-    assertThat(receivedLogs.get(0).getUserId()).isEqualTo("stream-user-888");
-    assertThat(receivedLogs.get(0).getTraceId()).isEqualTo("trace-stream-9999");
-}
-```
-
----
-
-## 维度三：核心生产边界与非功能语义
-
-### 1. 读写超时与写请求绝对禁重试防雪崩铁律
-- **默认重试次数为 0** (`retries: 0`)：对于非幂等写接口（如落库、发券、转账），发生读超时（`SocketTimeoutException`）默认坚决关闭重试，彻底杜绝下游重复落库与并发死锁；
-- **超时保护生产基线**：默认全局 RPC 超时时间为 `5000ms`，禁止无超时无界挂起耗尽工作线程。
-
-### 2. 报文载荷硬防爆上限与内存安全
-- **16MB 载荷硬防爆** (`ateng.cloud.dubbo.payload: 16MB`)：统一注入 Netty 与 Triple 协议层；超大报文在解码边界立即触发 `ExceedPayloadLimitException` 熔断拦截，防范黑客超大报文引起堆外内存 OOM 导致进程崩溃。
-
-### 3. 优雅停机无损上下线状态机协同
-- **停机等待 15 秒硬兜底**：
-  - 由 `AtengDubboEnvironmentPostProcessor` 默认向底层 Spring 环境注入原生 `dubbo.application.shut-down.wait=15000` 与 `dubbo.application.shutwait=15000`；
-  - 支持通过配置属性 `ateng.cloud.dubbo.application.shut-wait`（支持带时间单位如 `15s`、`15000ms` 或 ISO-8601 `PT15S`）进行定制；
-  - 挂载优先级设为最低优先级（`Ordered.LOWEST_PRECEDENCE`），保证用户在 `application.yml` 中配置的原生 Dubbo 停机参数绝对优先生效；
-  - **停机协同三部曲**：
-    - 步骤一（注销服务）：停机钩子触发时，优先向 Nacos / 注册中心注销当前实例，令新流量不再路由进来；
-    - 步骤二（排空在途）：等待线程池中的在途（in-flight）请求执行完毕；
-    - 步骤三（超时硬兜底）：达到 15 秒超时阈值后平稳释放 Netty 线程池与网络连接，杜绝僵死进程阻碍容器平滑发布与 Pod 滚动更新。
-
-### 4. 分布式事务生命周期状态判断对称释放
-- 在跨 RPC 调用中传递 Seata XID 时，服务提供端基于局部变量 `boundByCurrent` 强判定；
-- 只有在当前调用入栈由本端新绑定 XID 时，才在 `finally` 块中执行 `RootContext.unbind()`，杜绝误解绑外部调用方已存在的全局事务；若出现异常，在对称释放前完整保留原始因果链。
-
-### 5. 全域流量泳道双向穿透与零硬依赖弹性降级
-- 支持条件探测 `TrafficContextHolder`，当存在 `ateng-cloud-traffic` 时自动双向透传流量标签、隔离泳道与匹配规则；
-- 缺失流量组件时平滑回退至 MDC 模式，入站出口 `finally` 块中无条件幂等执行清理，确保零硬依赖与线程池零污染。
-
-### 6. 反序列化动态包白名单与安全防御
-- 针对 Fastjson2 / 原生反序列化黑客漏洞，接入 Dubbo 3 序列化安全校验规范；
-- 运行时通过配置属性 `ateng.cloud.dubbo.security.serialize.allow-packages` 动态向 `SerializeSecurityManager` 注入白名单，严格防御未知反序列化恶意载荷注入。
-
-### 7. 客户端原生 Mock 降级与 Failover
-- 遵循 Dubbo 3 客户端原生 Mock 规范，在服务端不可达、网络超时或线程池耗尽等极端故障时，透明触发同包 `*Mock` 保底实现，快速阻断服务雪崩。
-
-### 8. 确定性生命周期与线程池上下文清理
-- 在 `DubboContextPropagationFilter` 的 `finally` 块中强制执行 `cleanContexts()`，无条件清空 `UserContextHolder`、`TenantContextHolder`、`TrafficContextHolder` 及 MDC，杜绝 Netty/Dubbo 线程池复用污染与多租户越权。
-
-### 9. 链式异常保真与反序列化防御
-- 受管 `BusinessException`、JSR-303 参数校验异常及 JDK 核心异常白名单放行，100% 完整保留原始状态码与因果链；
-- 未受检的第三方底层私有异常（如数据库驱动死锁异常），安全转译为框架标准受管 `BusinessException`，彻底防御消费端发生 `ClassNotFoundException` 反序列化灾难。
-
----
-
-## 维度四：物理排版与代码全真验证
-
-所有特性与场景用例均 100% 逆向提取自场景工程 `sample-cloud-dubbo` 与模块白盒单元测试中已跑通的代码（**总计 119 个用例，100% PASS**）：
-
-### 1. 场景样例工程端到端集成测试矩阵 (34 Tests PASS)
-
-| 测试类 | 验证维度 | 对应测试用例方法 | 执行结果 |
-| :--- | :--- | :--- | :--- |
-| [`BaselineDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/BaselineDubboRpcTest.java) | Triple 基础通信 | `testPing`<br>`testGetUserById`<br>`testDubboProperties` | 100% PASS |
-| [`ClassicDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/ClassicDubboRpcTest.java) | 经典 TCP Dubbo 协议 | `testClassicDubboGetUserById`<br>`testClassicDubboPing` | 100% PASS |
-| [`ContextAndSameTokenDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/ContextAndSameTokenDubboRpcTest.java) | 四维上下文与零信任隔离 | `testFourDimensionalContextPropagation`<br>`testProviderThreadDeterministicCleanup`<br>`testTrafficContextLanePropagationAndDeterministicCleanup`<br>`testSeataDistributedTransactionPropagationAndSymmetricRelease`<br>`testSameTokenInvalidRejection`<br>`testSameTokenMissingRejection` | 100% PASS |
-| [`ContractAndExceptionDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/ContractAndExceptionDubboRpcTest.java) | 契约解包与异常保真 | `testSuccessfulResultReturn`<br>`testFailedResultConvertedToBusinessException`<br>`testBusinessExceptionCausalPreservation`<br>`testCustomExceptionTranslatedToBusinessException` | 100% PASS |
-| [`MockFallbackDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/MockFallbackDubboRpcTest.java) | 客户端原生 Mock 服务降级 | `testMockFallbackWhenProviderUnreachable`<br>`testLiveProviderCallSucceedsWhenHealthy` | 100% PASS |
-| [`StreamAndPayloadDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/StreamAndPayloadDubboRpcTest.java) | 流式通信与载荷/停机防护 | `testServerStreamSuccessWithContextPropagation`<br>`testServerStreamErrorHandling`<br>`testServerStreamValidationFailFast`<br>`testDubboGracefulShutdownAndPayloadConfig`<br>`testEchoNormalPayload`<br>`testExceedPayloadLimitDefense` | 100% PASS |
-| [`TrafficTagDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/TrafficTagDubboRpcTest.java) | 流量染色与标签路由 | `testDefaultRouteToBaseline`<br>`testTrafficTagAttachmentAndFallback`<br>`testSmoothFallbackToBaselineWhenTagNotMatched`<br>`testStrictTagIsolationWhenTagForceIsTrue` | 100% PASS |
-| [`ValidationAndOverloadDubboRpcTest`](../ateng-cloud-samples/sample-cloud-dubbo/src/test/java/io/github/atengk/cloud/sample/dubbo/ValidationAndOverloadDubboRpcTest.java) | 参数校验与过载保护 | `testUserValidationSuccess`<br>`testUserValidationFailureOnBlankUsername`<br>`testUserValidationFailureOnInvalidAge`<br>`testProviderThreadOverloadProtection`<br>`testDubboOverloadHandlerExecution`<br>`testMicrometerMetricsExport`<br>`testDubboOverloadThreadPoolSpi` | 100% PASS |
-
-### 2. Starter 核心模块离线自洽白盒测试矩阵 (85 Tests PASS)
-
-| 测试类 | 验证维度 | 对应测试用例方法 / 覆盖特性 | 执行结果 |
-| :--- | :--- | :--- | :--- |
-| [`AtengDubboAutoConfigurationTest`](src/test/java/io/github/atengk/cloud/dubbo/autoconfigure/AtengDubboAutoConfigurationTest.java) | 自动装配与条件守卫 | 验证禁用开关、默认配置属性绑定、Triple 协议基线、Micrometer 指标采集 Bean 注入及条件缺失守卫 (8 个用例) | 100% PASS |
-| [`AtengDubboEnvironmentPostProcessorTest`](src/test/java/io/github/atengk/cloud/dubbo/autoconfigure/AtengDubboEnvironmentPostProcessorTest.java) | 环境后置处理与停机兜底 | 验证优雅停机 15 秒默认注入、用户配置无缝接管、ISO-8601 格式解析与边界保护 (5 个用例) | 100% PASS |
-| [`AtengDubboExceptionFilterTest`](src/test/java/io/github/atengk/cloud/dubbo/filter/AtengDubboExceptionFilterTest.java) | 异常白名单放行与因果转译 | 验证 `BusinessException`、JSR-303、未受检未知私有异常转译与因果链保真 (8 个用例) | 100% PASS |
-| [`DubboContextPropagationFilterTest`](src/test/java/io/github/atengk/cloud/dubbo/filter/DubboContextPropagationFilterTest.java) | 上下文透传与 Netty 线程池清理 | 验证四维上下文双向透传、异常分支 `finally` 强制清理及线程池零污染 (5 个用例) | 100% PASS |
-| [`DubboContractAssertFilterTest`](src/test/java/io/github/atengk/cloud/dubbo/filter/DubboContractAssertFilterTest.java) | 双模契约校验与结果断言 | 验证 `Result.success` 正常剥壳、非 200 结果转译为 `BusinessException`、原生 POJO 与流式豁免 (9 个用例) | 100% PASS |
-| [`DubboSameTokenFilterTest`](src/test/java/io/github/atengk/cloud/dubbo/filter/DubboSameTokenFilterTest.java) | 零信任 Same-Token 防穿透隔离 | 验证出站凭据注入、入站校验通过、非法直连拦截、缺失凭据 401 阻断与出口清理 (8 个用例) | 100% PASS |
-| [`DubboTrafficTagFilterTest`](src/test/java/io/github/atengk/cloud/dubbo/filter/DubboTrafficTagFilterTest.java) | 流量染色与 Dubbo 标签路由 | 验证出站提取染色标记、注入标签路由、`tag-force` 开闭及执行后清理 (6 个用例) | 100% PASS |
-| [`DubboValidationFilterTest`](src/test/java/io/github/atengk/cloud/dubbo/filter/DubboValidationFilterTest.java) | JSR-303 参数防卫与快速失败 | 验证合法参数放行、违规参数拦截、结构化提取违规字段及 400 业务异常转译 (5 个用例) | 100% PASS |
-| [`DubboOverloadTest`](src/test/java/io/github/atengk/cloud/dubbo/overload/DubboOverloadTest.java) | 线程池过载保护与指标导出 | 验证拒绝策略诊断输出、全局计数器累计、429 业务异常转译与 Micrometer 指标绑定 (6 个用例) | 100% PASS |
-| [`DubboSerializeSecurityTest`](src/test/java/io/github/atengk/cloud/dubbo/security/DubboSerializeSecurityTest.java) | 反序列化安全包白名单扩展 | 验证自定义包路径属性绑定、自动注入 `SerializeSecurityManager` 及安全白名单注册 (3 个用例) | 100% PASS |
-| [`DubboExceptionUtilsTest`](src/test/java/io/github/atengk/cloud/dubbo/support/DubboExceptionUtilsTest.java) | 异常工具与流式判定 | 验证过载异常研判、`ConstraintViolationException` 链路深度提取与流式调用判定 (5 个用例) | 100% PASS |
-| [`DubboNativeMockFallbackTest`](src/test/java/io/github/atengk/cloud/dubbo/support/DubboNativeMockFallbackTest.java) | 客户端原生 Mock 降级白盒契约 | 验证调用超时 (TIMEOUT_EXCEPTION)、系统级未受检崩溃异常平滑降级、健康直通与业务异常原样透传 (4 个用例) | 100% PASS |
-| [`DubboSeataPropagationTest`](src/test/java/io/github/atengk/cloud/dubbo/support/DubboSeataPropagationTest.java) | Seata XID 跨 RPC 对称穿透 | 验证全局事务 XID 出站提取、入站绑定、局部持有判断与 `finally` 对称安全释放 (6 个用例) | 100% PASS |
-| [`DubboTrafficPropagationTest`](src/test/java/io/github/atengk/cloud/dubbo/support/DubboTrafficPropagationTest.java) | TrafficContext 泳道元数据联动 | 验证泳道名与匹配规则透传、缺失时 MDC 平滑降级、纯泳道还原与选择性 MDC 清理 (7 个用例) | 100% PASS |
-
-> [!NOTE]
-> 本 Starter 全套 119 个单元测试均遵循“100% 离线自洽铁律”，在脱离外部物理 Nacos / 注册中心的环境下基于直连与内存桩秒级执行，保障 CI/CD 构建流水线坚固稳定。
