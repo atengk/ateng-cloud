@@ -78,4 +78,22 @@ public class StorageService {
             return getStock(commodityCode) >= count;
         });
     }
+
+    /**
+     * 编程式 SeataGlobalLockTemplate 校验并扣减商品库存
+     *
+     * @param commodityCode 商品编码
+     * @param count         扣减数量
+     * @return 扣减成功返回 true
+     * @throws Throwable 执行异常
+     */
+    public boolean updateStockProgrammatic(String commodityCode, int count) throws Throwable {
+        return globalLockTemplate.execute(() -> {
+            log.info("编程式 GlobalLock 模板校验并扣减商品库存: [{}] 扣减 [{}]", commodityCode, count);
+            int current = getStock(commodityCode);
+            BusinessAssert.isTrue(current >= count, "库存不足: %s", commodityCode);
+            jdbcTemplate.update("UPDATE storage_tbl SET count = count - ? WHERE commodity_code = ?", count, commodityCode);
+            return true;
+        });
+    }
 }
