@@ -81,6 +81,46 @@ spring:
           uri: forward:/sample/cloud/gateway/route/refresh
           predicates:
             - Path=/api/route/refresh
+        - id: resilience-query-inventory
+          uri: forward:/sample/cloud/gateway/resilience/query-inventory
+          predicates:
+            - Path=/api/resilience/query-inventory
+          filters:
+            - AtengRetry=1
+        - id: resilience-create-order
+          uri: forward:/sample/cloud/gateway/resilience/create-order
+          predicates:
+            - Path=/api/resilience/create-order
+          filters:
+            - AtengRetry=1
+        - id: resilience-seckill-spike
+          uri: forward:/sample/cloud/gateway/resilience/seckill-spike
+          predicates:
+            - Path=/api/resilience/seckill-spike
+        - id: resilience-node-restart
+          uri: forward:/sample/cloud/gateway/resilience/simulate-node-restart
+          predicates:
+            - Path=/api/resilience/simulate-node-restart
+        - id: resilience-order-events
+          uri: forward:/sample/cloud/gateway/resilience/order-events
+          predicates:
+            - Path=/api/resilience/order-events
+        - id: resilience-business-error
+          uri: forward:/sample/cloud/gateway/resilience/business-error
+          predicates:
+            - Path=/api/resilience/business-error
+        - id: resilience-server-error
+          uri: forward:/sample/cloud/gateway/resilience/server-error
+          predicates:
+            - Path=/api/resilience/server-error
+        - id: resilience-satoken-not-login
+          uri: forward:/sample/cloud/gateway/resilience/satoken/not-login
+          predicates:
+            - Path=/api/resilience/satoken/not-login
+        - id: resilience-satoken-not-permission
+          uri: forward:/sample/cloud/gateway/resilience/satoken/not-permission
+          predicates:
+            - Path=/api/resilience/satoken/not-permission
         - id: mock-hello
           uri: forward:/mock/hello
           predicates:
@@ -142,6 +182,8 @@ ateng:
           - "/api/open/**"
           - "/api/security/**"
           - "/sample/cloud/gateway/security/**"
+          - "/api/resilience/**"
+          - "/sample/cloud/gateway/resilience/**"
           - "/mock/open-data"
           - "/api/mock/hello"
           - "/api/mock/echo-headers"

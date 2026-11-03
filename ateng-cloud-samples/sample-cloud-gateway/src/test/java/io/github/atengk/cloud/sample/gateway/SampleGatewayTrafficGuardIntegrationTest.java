@@ -1,7 +1,7 @@
 package io.github.atengk.cloud.sample.gateway;
 
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
-import io.github.atengk.cloud.sample.gateway.controller.MockTestController;
+import io.github.atengk.cloud.sample.gateway.controller.GatewayResilienceController;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.test.web.reactive.server.WebTestClient;
+
 import java.util.List;
 
 import static org.hamcrest.Matchers.containsString;
@@ -26,10 +27,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * <p>全面覆盖以下生产高并发流量防波堤语义：
  * <ul>
  *     <li>Netty 2MB 载荷硬防爆：请求报文超限直接拦截并返回标准 HTTP 413 Result；</li>
- *     <li>原生流式零缓冲转发：SSE (text/event-stream) 随到随推，保持打字机低延迟体验；</li>
- *     <li>分布式限流标准 429 契约转译：附加 Retry-After 标头与标准 Result 结构；</li>
- *     <li>写请求零重试防雪崩铁律：POST 写操作底层建连失败绝对禁止重试 (执行次数=1)；</li>
- *     <li>纯读请求建连失败弹性重试：GET 读操作发生建连异常弹性重试 1 次并成功恢复 (执行次数=2)。</li>
+ *     <li>原生流式零缓冲转发：订单物流状态 SSE (text/event-stream) 随到随推，保持低延迟体验；</li>
+ *     <li>分布式限流标准 429 契约转译：秒杀突发流量触发限流时附加 Retry-After 标头与标准 Result 结构；</li>
+ *     <li>写请求零重试防雪崩铁律：POST 订单创建操作底层建连失败绝对禁止重试 (执行次数=1)；</li>
+ *     <li>纯读请求建连失败弹性重试：GET 库存查询操作发生建连异常弹性重试 1 次并成功恢复 (执行次数=2)。</li>
  * </ul>
  * </p>
  *
@@ -44,11 +45,11 @@ public class SampleGatewayTrafficGuardIntegrationTest {
     private WebTestClient webTestClient;
 
     @Autowired
-    private MockTestController mockTestController;
+    private GatewayResilienceController gatewayResilienceController;
 
     @BeforeEach
     void setUp() {
-        mockTestController.resetRetryCounters();
+        gatewayResilienceController.resetRetryCounters();
     }
 
     @Test
@@ -58,7 +59,7 @@ public class SampleGatewayTrafficGuardIntegrationTest {
         byte[] oversizedPayload = new byte[2500000];
 
         webTestClient.post()
-                .uri("/api/mock/upload-echo")
+                .uri("/api/security/payload-guard")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .bodyValue(oversizedPayload)
                 .exchange()
@@ -71,10 +72,10 @@ public class SampleGatewayTrafficGuardIntegrationTest {
     }
 
     @Test
-    @DisplayName("测试 SSE 流式协议原生零缓冲透传 (text/event-stream 逐条推送)")
+    @DisplayName("测试订单实时物流 SSE 流式协议原生零缓冲透传 (text/event-stream 逐条推送)")
     void testSseStreamingPassthrough() {
         var eventFlux = webTestClient.get()
-                .uri("/api/mock/sse")
+                .uri("/api/resilience/order-events")
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .exchange()
                 .expectStatus().isOk()
@@ -91,10 +92,10 @@ public class SampleGatewayTrafficGuardIntegrationTest {
     }
 
     @Test
-    @DisplayName("测试限流触发 HTTP 429 状态标准化转译与 Retry-After 标头附加")
+    @DisplayName("测试秒杀流量限流触发 HTTP 429 状态标准化转译与 Retry-After 标头附加")
     void testRateLimitResponseTranslation() {
         webTestClient.get()
-                .uri("/api/mock/simulate-rate-limit")
+                .uri("/api/resilience/seckill-spike")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.TOO_MANY_REQUESTS)
                 .expectHeader().valueEquals(HttpHeaders.RETRY_AFTER, "1")
@@ -106,31 +107,33 @@ public class SampleGatewayTrafficGuardIntegrationTest {
     }
 
     @Test
-    @DisplayName("测试防雪崩重试铁律：POST 写请求建连失败绝对零重试 (执行次数=1)")
+    @DisplayName("测试防雪崩重试铁律：POST 订单创建写请求建连失败绝对零重试 (执行次数=1)")
     void testWriteMethodZeroRetryOnFailure() {
         webTestClient.post()
-                .uri("/api/mock/retry-counter")
+                .uri("/api/resilience/create-order")
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.SERVICE_UNAVAILABLE)
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(503);
 
         // 强断言：非幂等写操作绝对禁止重试，执行次数严密锁定为 1
-        assertEquals(1, mockTestController.getPostRetryCount(), "非幂等写请求绝对禁止重试");
+        assertEquals(1, gatewayResilienceController.getPostRetryCount(), "非幂等写请求绝对禁止重试");
     }
 
     @Test
-    @DisplayName("测试防雪崩重试机制：GET 读请求建连失败弹性重试 1 次恢复成功 (执行次数=2)")
+    @DisplayName("测试防雪崩重试机制：GET 库存查询读请求建连失败弹性重试 1 次恢复成功 (执行次数=2)")
     void testReadMethodElasticRetrySuccess() {
         webTestClient.get()
-                .uri("/api/mock/retry-counter")
+                .uri("/api/resilience/query-inventory?skuCode=SKU-IPHONE-16")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo(2);
+                .jsonPath("$.data.skuCode").isEqualTo("SKU-IPHONE-16")
+                .jsonPath("$.data.attemptCount").isEqualTo(2)
+                .jsonPath("$.data.status").isEqualTo("SUCCESS_AFTER_RETRY");
 
         // 强断言：读操作建连异常后重试 1 次成功恢复，总执行次数为 2
-        assertEquals(2, mockTestController.getGetRetryCount(), "读请求建连失败应弹性重试 1 次");
+        assertEquals(2, gatewayResilienceController.getGetRetryCount(), "读请求建连失败应弹性重试 1 次");
     }
 }

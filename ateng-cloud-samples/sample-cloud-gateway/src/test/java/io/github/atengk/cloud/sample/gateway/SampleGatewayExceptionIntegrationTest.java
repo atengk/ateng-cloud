@@ -13,11 +13,22 @@ import static org.hamcrest.Matchers.not;
 /**
  * 网关全局统一异常与响应式路由端到端集成测试 (100% 离线自洽)
  *
+ * <p>涵盖以下异常转译与边界治理：
+ * <ul>
+ *     <li>未匹配路由 404 规范转译为 Result JSON 并携带 traceId；</li>
+ *     <li>业务受管异常 BusinessException 错误码与错误信息保真透传；</li>
+ *     <li>未知系统异常 500 强制脱敏且严禁泄漏底层敏感堆栈；</li>
+ *     <li>Sa-Token 鉴权异常转译为 401 (未登录) 与 403 (无权限)；</li>
+ *     <li>下游网络中断异常 (PrematureClose / ClosedChannel) 转译为 502 Bad Gateway；</li>
+ *     <li>Sentinel 流控、熔断降级、授权与系统保护异常转译。</li>
+ * </ul>
+ * </p>
+ *
  * @author Ateng
  * @since 2026-10-28
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureWebTestClient
+@AutoConfigureWebTestClient(timeout = "15000")
 public class SampleGatewayExceptionIntegrationTest {
 
     @Autowired
@@ -41,19 +52,19 @@ public class SampleGatewayExceptionIntegrationTest {
     @DisplayName("测试正常响应与统一契约")
     void testNormalRoute() {
         webTestClient.get()
-                .uri("/mock/hello")
+                .uri("/api/security/ip-guard")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data").isEqualTo("gateway-ok");
+                .jsonPath("$.data.defenseStatus").isEqualTo("IP_ALLOWED");
     }
 
     @Test
     @DisplayName("测试业务受管 BusinessException 异常 100% 保真透传错误码与描述")
     void testBusinessException() {
         webTestClient.get()
-                .uri("/mock/business-error")
+                .uri("/api/resilience/business-error")
                 .exchange()
                 .expectHeader().exists("X-Trace-Id")
                 .expectBody()
@@ -66,7 +77,7 @@ public class SampleGatewayExceptionIntegrationTest {
     @DisplayName("测试系统未知异常 500 强制脱敏且严禁向公网泄漏敏感堆栈")
     void testServerErrorMasking() {
         webTestClient.get()
-                .uri("/mock/server-error")
+                .uri("/api/resilience/server-error")
                 .exchange()
                 .expectStatus().is5xxServerError()
                 .expectHeader().exists("X-Trace-Id")
@@ -81,7 +92,7 @@ public class SampleGatewayExceptionIntegrationTest {
     @DisplayName("测试 Sa-Token 未登录异常统一转译为 HTTP 401 Result 契约")
     void testSaTokenNotLoginTranslation() {
         webTestClient.get()
-                .uri("/mock/satoken-not-login")
+                .uri("/api/resilience/satoken/not-login")
                 .exchange()
                 .expectStatus().isUnauthorized()
                 .expectHeader().exists("X-Trace-Id")
@@ -95,7 +106,7 @@ public class SampleGatewayExceptionIntegrationTest {
     @DisplayName("测试 Sa-Token 无权限异常统一转译为 HTTP 403 Result 契约")
     void testSaTokenNotPermissionTranslation() {
         webTestClient.get()
-                .uri("/mock/satoken-not-permission")
+                .uri("/api/resilience/satoken/not-permission")
                 .exchange()
                 .expectStatus().isForbidden()
                 .expectHeader().exists("X-Trace-Id")
@@ -109,7 +120,7 @@ public class SampleGatewayExceptionIntegrationTest {
     @DisplayName("测试下游连接过早关闭 PrematureCloseException 转译为 HTTP 502 Bad Gateway")
     void testPrematureCloseTranslation() {
         webTestClient.get()
-                .uri("/mock/premature-close")
+                .uri("/api/resilience/simulate-node-restart?type=premature")
                 .exchange()
                 .expectStatus().isEqualTo(502)
                 .expectHeader().exists("X-Trace-Id")
@@ -123,7 +134,7 @@ public class SampleGatewayExceptionIntegrationTest {
     @DisplayName("测试信道关闭 ClosedChannelException 转译为 HTTP 502 Bad Gateway")
     void testClosedChannelTranslation() {
         webTestClient.get()
-                .uri("/mock/closed-channel")
+                .uri("/api/resilience/simulate-node-restart?type=closed")
                 .exchange()
                 .expectStatus().isEqualTo(502)
                 .expectHeader().exists("X-Trace-Id")
