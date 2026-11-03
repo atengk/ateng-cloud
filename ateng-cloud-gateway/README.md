@@ -1,8 +1,8 @@
 # ateng-cloud-gateway
 
-面向高可用微服务架构的 Spring Cloud 纯响应式 API 网关基础设施 Starter，基于 Spring WebFlux 与 Netty 事件循环全无锁响应式构建（绝对物理隔离 Servlet 阻塞栈）。
+面向企业级高可用微服务架构的 Spring Cloud 纯响应式 API 网关基础设施 Starter，单向依赖消费 `ateng-boot-bom`，基于 Spring WebFlux 与 Netty 事件循环全无锁响应式构建（绝对物理隔离 Servlet 阻塞栈）。
 
-开箱集成 Netty 2MB 载荷硬防爆、Sa-Token 零信任集中鉴权与 Same-Token 内部受信凭据签发、Nacos 动态路由无感原子热更与快照容错、金丝雀灰度无损降级回退、分布式多维限流与 429 统一转译、OWASP 等保三级合规安全响应头强化与 CORS 标头去重、微服务契约文档四模守卫、轻量响应式访问日志审计及开放接口防篡改签名。
+开箱集成 Netty 2MB 载荷硬防爆、Sa-Token 零信任集中鉴权与 Same-Token 内部同源受信凭证签发、Nacos 动态路由双轨无感原子热更与快照容错、金丝雀灰度无损降级回退、分布式多维限流与 429 统一转译、OWASP 等保三级合规安全响应头强化与 CORS 标头去重、微服务契约文档四模守卫、轻量响应式访问日志审计及开放接口防篡改签名。
 
 ---
 
@@ -48,21 +48,21 @@
 
 | 类 / 接口 | 方法签名 | 返回类型 | 功能说明与生产语义 | 默认/保底行为 |
 | :--- | :--- | :--- | :--- | :--- |
-| `IpFilterProvider` | `getBlacklist()` | `List<String>` | 获取当前生效的 IP 黑名单规则列表（支持 CIDR） | 默认实现读取配置属性 `ip-blacklist` |
-| `IpFilterProvider` | `getWhitelist()` | `List<String>` | 获取当前生效的 IP 白名单规则列表（支持 CIDR） | 默认实现读取配置属性 `ip-whitelist` |
+| `IpFilterProvider` | `getBlacklist()` | ``List<String>`` | 获取当前生效的 IP 黑名单规则列表（支持 CIDR） | 默认实现读取配置属性 `ip-blacklist` |
+| `IpFilterProvider` | `getWhitelist()` | ``List<String>`` | 获取当前生效的 IP 白名单规则列表（支持 CIDR） | 默认实现读取配置属性 `ip-whitelist` |
 | `SignSecretProvider` | `getSecret(appId)` | `String` | 根据应用唯一标识 AppId 获取签名密钥明文 | 默认基于 `InMemorySignSecretProvider` 字典 |
 | `GatewayNonceValidator` | `validateAndStore(nonce, ttl)` | `boolean` | 校验并记录 Nonce 唯一性，防御重放攻击 | 默认基于 `InMemoryGatewayNonceValidator` 滑动窗口 |
 | `TrafficTagResolver` | `resolveTag(exchange)` | `String` | 根据进站上下文决议全链路灰度染色标签 | 默认实现 `DefaultTrafficTagResolver`（Header > Query） |
-| `IpKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于客户端真实公网 IP 进行限流解析（`@Primary` 默认解析器） | 保底返回 `"127.0.0.1"` |
-| `UserKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于 Sa-Token 登录用户 ID 进行限流解析 | 未登录平滑降级为 `"anonymous:" + IP` |
-| `ApiKeyResolver` | `resolve(exchange)` | `Mono<String>` | 基于请求接口路径与客户端 IP 双维度进行限流解析 | 返回 `"path:clientIp"` 复合键 |
+| `IpKeyResolver` | `resolve(exchange)` | ``Mono<String>`` | 基于客户端真实公网 IP 进行限流解析（`@Primary` 默认解析器） | 保底返回 `"127.0.0.1"` |
+| `UserKeyResolver` | `resolve(exchange)` | ``Mono<String>`` | 基于 Sa-Token 登录用户 ID 进行限流解析 | 未登录平滑降级为 `"anonymous:" + IP` |
+| `ApiKeyResolver` | `resolve(exchange)` | ``Mono<String>`` | 基于请求接口路径与客户端 IP 双维度进行限流解析 | 返回 `"path:clientIp"` 复合键 |
 | `ClientIpResolver` | `resolveClientIp(req, hops)` | `String` | 从右向左安全倒推解析真实公网客户端 IP | 兜底返回物理 TCP 对端 IP 或 `"127.0.0.1"` |
 | `IpMatcher` | `match(pattern, ip)` | `boolean` | 校验指定 IP 是否匹配单个 IP 或 CIDR 网段 | 格式异常时安全拦截返回 `false` |
 | `GatewayRouteValidator` | `validateRouteDefinitions(routes)` | `void` | 统一对路由列表执行深度语法语义防卫校验（ID唯一、URI有效、谓词过滤器非空） | 校验失败抛出 `IllegalArgumentException` |
 | `GatewayRouteRefreshListener` | `refreshRoutesFromEnvironment(keys)` | `boolean` | 响应环境变量变更事件增量热绑 `spring.cloud.gateway.routes`，触发路由刷新与快照守卫 | 无需刷新返回 `true`，校验失败回退返回 `false` |
-| `NacosRouteDefinitionRepository` | `getRouteDefinitions()` | `Flux<RouteDefinition>` | 响应式流式读取当前生效的全量路由定义 | 离线返回空 Flux，不阻塞容器启动 |
-| `NacosRouteDefinitionRepository` | `save(route)` | `Mono<Void>` | 内存动态追加或覆盖指定路由定义并发布刷新事件 | 操作完成后原子广播刷新 |
-| `NacosRouteDefinitionRepository` | `delete(routeId)` | `Mono<Void>` | 内存动态移除指定路由定义并发布刷新事件 | 找不到时静默完成 |
+| `NacosRouteDefinitionRepository` | `getRouteDefinitions()` | ``Flux<RouteDefinition>`` | 响应式流式读取当前生效的全量路由定义 | 离线返回空 Flux，不阻塞容器启动 |
+| `NacosRouteDefinitionRepository` | `save(route)` | ``Mono<Void>`` | 内存动态追加或覆盖指定路由定义并发布刷新事件 | 操作完成后原子广播刷新 |
+| `NacosRouteDefinitionRepository` | `delete(routeId)` | ``Mono<Void>`` | 内存动态移除指定路由定义并发布刷新事件 | 找不到时静默完成 |
 | `GatewayPanoramaEndpoint` | `report()` | `GatewayPanoramaReport` | 读取微秒级内存原子快照，聚合输出网关四维全景健康与动态路由诊断状态 | 零外部网络 IO，快照异常平滑标记 DEGRADED |
 | `GatewayQuerySanitizer` | `sanitize(rawQuery, customMaskKeys)` | `String` | 安全解析并脱敏 Query 参数，超过 256 字符追加 `...(truncated)`，遇到畸形编码安全降级返回 `[malformed-query]` | 零异常穿透，保底返回 `-` |
 
@@ -83,11 +83,11 @@
 | `ateng.cloud.gateway.security.client-ip-enabled` | `boolean` | `true` | 是否开启客户端真实公网 IP 解析 |
 | `ateng.cloud.gateway.security.trusted-proxy-count` | `int` | `1` | 前置反向代理层数（1 表示网关前仅有一层 Nginx/SLB） |
 | `ateng.cloud.gateway.security.ip-filter-enabled` | `boolean` | `true` | 是否开启 IP 黑白名单防卫过滤器 |
-| `ateng.cloud.gateway.security.ip-blacklist` | `List<String>` | `[]` | 封禁的客户端 IP 或 CIDR 子网列表 |
-| `ateng.cloud.gateway.security.ip-whitelist` | `List<String>` | `[]` | 允许通行的客户端 IP 或 CIDR 子网列表（非空时仅白名单通行） |
+| `ateng.cloud.gateway.security.ip-blacklist` | ``List<String>`` | `[]` | 封禁的客户端 IP 或 CIDR 子网列表 |
+| `ateng.cloud.gateway.security.ip-whitelist` | ``List<String>`` | `[]` | 允许通行的客户端 IP 或 CIDR 子网列表（非空时仅白名单通行） |
 | `ateng.cloud.gateway.security.sa-token-enabled` | `boolean` | `true` | 是否激活 Sa-Token 网关层集中鉴权 |
 | `ateng.cloud.gateway.security.same-token-enabled` | `boolean` | `true` | 是否向下游微服务自动签署注入内部同源受信凭证（`Same-Token`） |
-| `ateng.cloud.gateway.security.exclude-paths` | `List<String>` | `[]` | 鉴权白名单开放路径列表（支持 AntPath，如 `/api/auth/login`） |
+| `ateng.cloud.gateway.security.exclude-paths` | ``List<String>`` | `[]` | 鉴权白名单开放路径列表（支持 AntPath，如 `/api/auth/login`） |
 | `ateng.cloud.gateway.dynamic-route.enabled` | `boolean` | `true` | 是否开启基于 Nacos 配置中心的动态路由监听与热更新 |
 | `ateng.cloud.gateway.dynamic-route.data-id` | `String` | `gateway-routes.json` | 动态路由定义在 Nacos 中的 Data ID |
 | `ateng.cloud.gateway.dynamic-route.group` | `String` | `DEFAULT_GROUP` | 动态路由在 Nacos 中的配置分组 Group |
@@ -112,202 +112,184 @@
 | `ateng.cloud.gateway.rate-limiter.enabled` | `boolean` | `true` | 是否开启 Redis 分布式限流多维解析器与 429 统一转译 |
 | `ateng.cloud.gateway.access-log.enabled` | `boolean` | `false` | 是否开启轻量响应式访问日志审计 |
 | `ateng.cloud.gateway.access-log.slow-threshold` | `Duration` | `3s` | 慢请求告警阈值（超过该阈值输出 WARN 级别慢请求日志） |
-| `ateng.cloud.gateway.access-log.exclude-paths` | `List<String>` | `[/actuator/**, /favicon.ico]` | 排除访问日志记录的路径列表 |
+| `ateng.cloud.gateway.access-log.exclude-paths` | ``List<String>`` | `[/actuator/**, /favicon.ico]` | 排除访问日志记录的路径列表 |
 | `ateng.cloud.gateway.access-log.include-query` | `boolean` | `false` | 是否在轻量响应式访问日志中记录 Query 参数（默认 false） |
-| `ateng.cloud.gateway.access-log.mask-keys` | `List<String>` | `[]` | 自定义敏感 Query 参数名脱敏列表（不区分大小写，值替换为 `***`） |
+| `ateng.cloud.gateway.access-log.mask-keys` | ``List<String>`` | `[]` | 自定义敏感 Query 参数名脱敏列表（不区分大小写，值替换为 `***`） |
 | `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否开启开放接口 API 数字签名防篡改与 Nonce 防重放 |
 | `ateng.cloud.gateway.sign.body-enabled` | `boolean` | `false` | 是否开启开放接口请求体 (Request Body) SHA-256 摘要加签防篡改 |
 | `ateng.cloud.gateway.sign.max-body-size` | `DataSize` | `2MB` | 允许加签的最大请求体容量（超过直接 413 载荷防爆熔断） |
 | `ateng.cloud.gateway.sign.timestamp-threshold` | `Duration` | `5m` | 签名时间戳允许的最大时钟偏差窗口 |
-| `ateng.cloud.gateway.sign.include-paths` | `List<String>` | `[]` | 需进行签名校验的目标路径列表（支持 AntPath，为空对全量生效） |
-| `ateng.cloud.gateway.sign.exclude-paths` | `List<String>` | `[]` | 签名校验排除放行路径列表（支持 AntPath） |
+| `ateng.cloud.gateway.sign.include-paths` | ``List<String>`` | `[]` | 需进行签名校验的目标路径列表（支持 AntPath，为空对全量生效） |
+| `ateng.cloud.gateway.sign.exclude-paths` | ``List<String>`` | `[]` | 签名校验排除放行路径列表（支持 AntPath） |
 | `ateng.cloud.gateway.tenant.enabled` | `boolean` | `true` | 是否开启入站多租户标头解析与防跨越隔离 |
 | `ateng.cloud.gateway.tenant.header-name` | `String` | `X-Tenant-Id` | 入站请求租户标识标头名称 |
 
 ---
 
-## 维度一：最小起步体验
+## 第 1 章：接入认证与零信任网关防穿透
 
-### 1. 引入依赖
-在网关微服务工程的 `pom.xml` 中引入 `ateng-cloud-gateway`（依赖版本由父 POM 或 `ateng-cloud-bom` 统一纳管，子工程无需填写版本号）：
+网关作为微服务全集群唯一的公网暴露面，负责公网客户端集中鉴权；校验通过后向下游请求自动注入内部受信凭据 `Same-Token` 与用户上下文；内部微服务强制校验同源凭据，凡绕过网关直连内网端口的请求直接 Fail-Fast 401 阻断。
 
-```xml
-<dependencies>
-    <!-- ateng-cloud 响应式微服务网关起步依赖 (纯 WebFlux 栈，严禁引入 ateng-boot-web) -->
-    <dependency>
-        <groupId>io.github.atengk</groupId>
-        <artifactId>ateng-cloud-gateway</artifactId>
-    </dependency>
-
-    <!-- Nacos 服务注册发现与动态路由配置支持 (可选) -->
-    <dependency>
-        <groupId>io.github.atengk</groupId>
-        <artifactId>ateng-cloud-nacos</artifactId>
-    </dependency>
-
-    <!-- Spring Cloud 负载均衡器 -->
-    <dependency>
-        <groupId>org.springframework.cloud</groupId>
-        <artifactId>spring-cloud-starter-loadbalancer</artifactId>
-    </dependency>
-</dependencies>
-```
-
-### 2. 最小 YAML 配置 (100% 逆向提取自 sample-cloud-gateway)
-在 `src/main/resources/application.yml` 中声明网关路由与基础安全参数：
+### 1.1 本特性专属 YAML 配置
 
 ```yaml
-server:
-  port: 8080
-
-spring:
-  application:
-    name: sample-cloud-gateway
-  cloud:
-    gateway:
-      routes:
-        - id: user-service-route
-          uri: lb://user-service
-          predicates:
-            - Path=/api/user/**
-          filters:
-            - StripPrefix=1
-        - id: order-service-route
-          uri: lb://order-service
-          predicates:
-            - Path=/api/order/**
-          filters:
-            - StripPrefix=1
-            - AtengRetry=1
-
 ateng:
   cloud:
     gateway:
-      enabled: true
-      max-in-memory-size: 2MB
       security:
         enabled: true
         sa-token-enabled: true
         same-token-enabled: true
         exclude-paths:
           - "/api/auth/login"
-          - "/api/public/**"
-          - "/docs/**"
-          - "/actuator/**"
-      traffic:
-        enabled: true
-        fallback-to-default: true
-      security-headers:
-        enabled: true
+          - "/api/auth/inspect-context"
+          - "/api/auth/logout"
+sa-token:
+  token-name: satoken
+  timeout: 86400
+  same-token:
+    project-key: ateng-cloud-test-secret-key-123456
 ```
 
-### 3. 主启动类
-标准 Spring Boot 3 响应式启动类，开箱即用：
+### 1.2 真实微服务业务 Java 代码范式
 
 ```java
-package io.github.atengk.cloud.sample.gateway;
+@RestController
+@RequestMapping("/sample/cloud/gateway/auth")
+public class GatewayAuthController {
 
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+    @PostMapping("/login")
+    public Mono<Result<AuthTokenVO>> login(
+            @RequestParam(value = "username", defaultValue = "ateng") String username,
+            @RequestParam(value = "userId", defaultValue = "10001") String userId,
+            @RequestParam(value = "tenantId", defaultValue = "tenant-001") String tenantId) {
+        StpUtil.login(userId);
+        StpUtil.getSession().set("tenantId", tenantId);
+        String tokenValue = StpUtil.getTokenValue();
+        return Mono.just(Result.success(new AuthTokenVO(tokenValue, userId, tenantId, 86400L)));
+    }
 
-@SpringBootApplication
-public class SampleGatewayApplication {
+    @GetMapping("/user-info")
+    public Mono<Result<UserInfoVO>> getUserInfo() {
+        String loginId = (String) StpUtil.getLoginId();
+        String tenantId = (String) StpUtil.getSession().get("tenantId");
+        return Mono.just(Result.success(new UserInfoVO(loginId, "Ateng User", tenantId, List.of("ROLE_ADMIN"))));
+    }
 
-    public static void main(String[] args) {
-        SpringApplication.run(SampleGatewayApplication.class, args);
+    @GetMapping("/inspect-context")
+    public Mono<Result<GatewaySecurityContextVO>> inspectContext(ServerHttpRequest request) {
+        String userId = request.getHeaders().getFirst(GatewayConstants.X_USER_ID);
+        String tenantId = request.getHeaders().getFirst(GatewayConstants.X_TENANT_ID);
+        String sameToken = request.getHeaders().getFirst(GatewayConstants.SAME_TOKEN);
+        return Mono.just(Result.success(new GatewaySecurityContextVO(userId, tenantId, sameToken, true)));
     }
 }
 ```
+
+### 1.3 核心机制与微服务容灾边界说明
+
+- **零信任内网防穿透铁律**：`SaTokenGatewayFilter` 在公网流量校验成功后向下游自动注入内部凭证 `Same-Token`；所有下游微服务强制开启 `sa-token.same-token.check=true`，凡绕过网关直连内网端口的非法流量，直接 Fail-Fast 401 阻断。
+- **公网入站伪造标头物理剥离**：`GatewayHeaderSanitizeFilter` 在最前置网络流水线将公网客户端私自伪造的 `X-User-Id`、`X-Tenant-Id`、`Same-Token` 彻底剥离，杜绝标头走私欺诈。
 
 ---
 
-## 维度二：生产扩展接管
+## 第 2 章：现代动态路由热重载与双轨共存
 
-框架遵循防御性装配原则，所有对外暴露的核心组件均标配 `@ConditionalOnMissingBean` 与清晰 SPI 扩展点，业务系统可按需零侵入接管。
+遵循 Spring Boot 3 规范与 Nacos 现代配置加载，彻底废弃过时的 `bootstrap.yml`。提供 Track A 独立 Nacos 路由数据源与 Track B 微服务主配置热绑双轨体系，辅以深度语法语义防卫与快照容错守卫。
 
-### 1. 动态接管 IP 黑白名单提供者 (`IpFilterProvider`)
-默认从配置文件读取 `ip-blacklist`。生产环境可通过实现 `IpFilterProvider` 接入 Redis 或安全风控中心：
-
-```java
-package io.github.atengk.cloud.sample.gateway.config;
-
-import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-import java.util.List;
-
-@Configuration(proxyBeanMethods = false)
-public class CustomIpFilterConfiguration {
-
-    @Bean
-    public IpFilterProvider customIpFilterProvider() {
-        return new IpFilterProvider() {
-            @Override
-            public List<String> getBlacklist() {
-                // 生产环境可从 Redis 动态读取最新被封禁的恶意 IP / CIDR 网段
-                return List.of("192.168.100.1", "10.99.0.0/16");
-            }
-
-            @Override
-            public List<String> getWhitelist() {
-                // 生产环境可配置特定内网网段直通白名单
-                return List.of("10.0.0.0/8");
-            }
-        };
-    }
-}
-```
-
-### 2. 动态接管开放平台签名密钥提供者 (`SignSecretProvider`)
-开启 `ateng.cloud.gateway.sign.enabled=true` 时，框架通过 `SignSecretProvider` SPI 获取 AppId 对应的 Secret：
-
-```java
-package io.github.atengk.cloud.sample.gateway.config;
-
-import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-@Configuration(proxyBeanMethods = false)
-public class CustomSignSecretConfiguration {
-
-    @Bean
-    public SignSecretProvider customSignSecretProvider() {
-        return appId -> {
-            // 生产环境根据 AppId 从数据库或密钥管理系统 KMS 动态拉取对应 Secret
-            if ("open-partner-01".equals(appId)) {
-                return "prod-secret-key-abcdef123456";
-            }
-            return null; // 返回 null 则网关自动 Fail-Fast 401 阻断
-        };
-    }
-}
-```
-
-### 3. 多维分布式限流键解析器自定义
-框架提供 `ipKeyResolver`（`@Primary` 客户端真实 IP）、`userKeyResolver`（Sa-Token 用户 ID）与 `apiKeyResolver`（Path + IP 复合键）。在路由过滤器中声明指定 Bean 即可切换维度：
+### 2.1 本特性专属 YAML 配置
 
 ```yaml
 spring:
   cloud:
     gateway:
       routes:
-        - id: sensitive-pay-route
-          uri: lb://payment-service
+        - id: order-dispatch
+          uri: forward:/sample/cloud/gateway/route/order-dispatch
           predicates:
-            - Path=/api/pay/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                key-resolver: "#{@apiKeyResolver}"
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
+            - Path=/api/order/dispatch
+        - id: route-definitions
+          uri: forward:/sample/cloud/gateway/route/definitions
+          predicates:
+            - Path=/api/route/definitions
+
+ateng:
+  cloud:
+    gateway:
+      dynamic-route:
+        enabled: true
+        data-id: gateway-routes.json
+        group: DEFAULT_GROUP
+        timeout: 3s
 ```
 
-### 4. 自定义流量染色决议器 (`TrafficTagResolver` SPI)
+### 2.2 真实微服务业务 Java 代码范式
 
-当需要结合登录用户身份、租户 ID 或自定义业务规则对入站请求动态打标，或强制过滤未授权外部伪造染色标头时，可通过注册自定义 `TrafficTagResolver` Bean 优雅接管：
+```java
+@RestController
+@RequestMapping("/sample/cloud/gateway/route")
+public class GatewayRouteTrafficController {
+
+    private final RouteDefinitionLocator routeDefinitionLocator;
+    private final ApplicationEventPublisher eventPublisher;
+
+    public GatewayRouteTrafficController(RouteDefinitionLocator routeDefinitionLocator,
+                                         ApplicationEventPublisher eventPublisher) {
+        this.routeDefinitionLocator = routeDefinitionLocator;
+        this.eventPublisher = eventPublisher;
+    }
+
+    @GetMapping("/definitions")
+    public Mono<Result<List<RouteDefinitionVO>>> getRouteDefinitions() {
+        return routeDefinitionLocator.getRouteDefinitions()
+                .map(rd -> new RouteDefinitionVO(
+                        rd.getId(),
+                        rd.getUri() != null ? rd.getUri().toString() : "",
+                        rd.getOrder(),
+                        rd.getPredicates() != null ? rd.getPredicates().stream().map(Object::toString).toList() : List.of()
+                ))
+                .collectList()
+                .map(Result::success);
+    }
+
+    @PostMapping("/refresh")
+    public Mono<Result<RouteRefreshResultVO>> refreshRoutes() {
+        eventPublisher.publishEvent(new RefreshRoutesEvent(this));
+        return routeDefinitionLocator.getRouteDefinitions().count()
+                .map(count -> Result.success(new RouteRefreshResultVO("SUCCESS", "HEALTHY", count)));
+    }
+}
+```
+
+### 2.3 核心机制与微服务容灾边界说明
+
+- **双轨快照守卫容错与多源共存**：`GatewayRouteValidator` 统一实施语法语义深度校验（ID 唯一、URI 协议头有效、谓词非空）。当 Nacos 推送畸形破损配置时，立即拦截并自动保留上一份有效快照（Last-Known Good Snapshot），保障现有生效路由稳定服务，更新过程零丢包。
+- **免重启原子增量热更**：`GatewayRouteRefreshListener` 动态监听主配置环境变量变更与 Nacos 配置安全热更事件，增量重绑 `spring.cloud.gateway.routes` 并广播 `RefreshRoutesEvent`，彻底终结修改配置必须重启网关的历史痛点。
+
+---
+
+## 第 3 章：流量染色与金丝雀灰度分流治理
+
+支持跨进程四维上下文与灰度染色标记透明透传，实现分层加权智能路由；在灰度节点全部下线时提供平滑无损降级回退机制，杜绝 503 生产报警。
+
+### 3.1 本特性专属 YAML 配置
+
+```yaml
+ateng:
+  cloud:
+    gateway:
+      traffic:
+        enabled: true
+        fallback-to-default: true
+        cache-ttl: 3s
+spring:
+  cloud:
+    loadbalancer:
+      cache:
+        ttl: 3s
+```
+
+### 3.2 真实微服务业务 Java 代码范式
 
 ```java
 @Configuration(proxyBeanMethods = false)
@@ -319,380 +301,220 @@ public class CustomTrafficTagResolverConfiguration {
             if (exchange == null || exchange.getRequest() == null) {
                 return null;
             }
-            // 1. 业务自定义规则：根据用户等级或租户执行动态染色
+            // 业务自定义规则：根据用户 VIP 等级决议染色泳道
             String userTier = exchange.getRequest().getHeaders().getFirst("X-User-Tier");
             if ("VIP".equalsIgnoreCase(userTier)) {
                 return "vip-lane";
             }
-            // 2. 非 VIP 请求返回 null，网关将自动物理剥离其可能私自伪造的 X-Traffic-Tag 标头
+            // 非 VIP 请求返回 null，网关将自动物理剥离伪造的 X-Traffic-Tag 标头
             return null;
         };
     }
 }
 ```
 
----
+### 3.3 核心机制与微服务容灾边界说明
 
-## 维度三：核心生产边界与非功能语义
-
-### 1. Netty 2MB 载荷硬防爆与 S3 预签名直传架构 (Payload Bomb Defense)
-- **底层防御机制**：通过 `CodecCustomizer` 在 Netty 事件循环层将请求体最大缓存限制为 `2MB`（可通过 `ateng.cloud.gateway.max-in-memory-size` 调整）。当攻击者尝试上传超大恶意载荷时，Netty 抛出 `DataBufferLimitException`；
-- **异常收敛转译**：`GatewayGlobalExceptionHandler` 捕获该异常，立即拦截并转译为 `HTTP 413 Payload Too Large`，返回标准 JSON 结构：
-  ```json
-  {
-    "code": 413,
-    "msg": "请求报文超出最大允许限制 (2MB)",
-    "traceId": "74aab7f8d86c446390c08c0203ea9d9e"
-  }
-  ```
-- **大文件旁路直传架构**：大文件、视频、数据报表绝对禁止流经网关或微服务内存中转。业务应依托 `ateng-boot-storage` 获取 S3 预签名直传 URL（Presigned URL），客户端直连对象存储上传，彻底规避网关内存溢出假死。
-
-### 2. 写请求绝对禁止重试不变量 (Anti-Snowballing Retry Invariant)
-- **非幂等写操作零重试**：`AtengRetryGatewayFilterFactory` 强制限制对于 `POST`、`PUT`、`PATCH`、`DELETE` 等写操作，底层发生任何异常时重试次数严密锁定为 `retries = 0`，坚决杜绝下游微服务重复落库与并发死锁；
-- **纯读请求弹性容错**：仅针对 `GET`、`HEAD` 等幂等读操作，在发生网络建连未建立超时（`ConnectTimeoutException`、`ConnectException`）时允许弹性重试 1 次；一旦发生读超时（`SocketTimeoutException`，表明数据已发送且下游正在执行），同样严格禁止重试，防御级联雪崩。
-
-### 3. 零信任内网防穿透与 Same-Token 阻断 (Same-Token Fail-Fast)
-- **南北向流量集中鉴权**：网关作为系统唯一公网暴露入口，对外执行 Sa-Token 鉴权，校验通过后向下游请求头注入内部专用受信凭据 `Same-Token`；
-- **内部服务零信任校验**：下游微服务强制开启 `sa-token.same-token.check=true`。凡绕过网关直连内部微服务私网端口的非法流量，因未携带网关签发的同源签名凭证，直接 Fail-Fast 401 阻断。
-
-### 4. 动态路由双轨无感原子热更与快照容错 (Dual-Track Snapshot Guard)
-- **双轨配置无感热更体系**：
-  - **Track A（独立路由数据源）**：通过 `NacosRouteDefinitionRepository` 监听独立文件（默认 `gateway-routes.json`），支持独立管理、反向持久化及发布 `RefreshRoutesEvent`；
-  - **Track B（微服务主配置热绑）**：通过 `GatewayRouteRefreshListener` 动态监听 `${spring.application.name}.yaml` 主配置中的 `spring.cloud.gateway.routes` 环境变量变更与 Nacos `SafeConfigRefreshEvent`，增量重绑后自动驱动路由表原子刷新，彻底消除修改主配置路由后必须重启网关的心智负担；
-- **双轨快照守卫容错与多源共存**：统一由 `GatewayRouteValidator` 实施前置深度语法与语义校验（ID 唯一、URI 协议头合规、谓词与过滤器非空）。当任一轨道配置破损或语法非法时，立即拦截并坚决保留上一份有效路由快照（Last-Known Good Snapshot），静态路由、独立路由与主配置路由多源协同共存，更新过程零丢包。
-
-### 5. 金丝雀灰度染色与无损降级回退 (Canary Gray & Fallback)
-- **权威染色解析与伪造清洗**：`GatewayTrafficTagFilter` 依托 `TrafficTagResolver` SPI 决议权威染色标签，挂载至上下文（`ATTR_TRAFFIC_TAG`）并向下游微服务透明传递；若未决议出标签，自动物理剥离外部伪造的 `X-Traffic-Tag`，杜绝未授权链路穿透；
-- **平滑容灾降级**：`GrayServiceInstanceListSupplier` 精准匹配实例 `metadata.tag`。当灰度实例全部下线或未配置对应标签时，在 `fallback-to-default=true` 下自动降级调度至基线默认实例，杜绝 503 报警。
-
-### 6. 分布式限流 429 统一转译与 Retry-After
-- **标准化响应体**：`GatewayRateLimitResponseFilter` 拦截下游或过滤器产生的 HTTP 429 状态，格式化输出企业标准 `Result.fail(429, "当前访问过于频繁，请稍后重试")`，并附带 `Retry-After: 1` 响应头，引导客户端指数退避。
-
-### 7. 复合智能负载均衡责任链与 3 秒缓存时效收敛 (Composite LoadBalancer & 3s TTL)
-- **复合责任链拓扑装配顺序**：
-  网关层通过 `GrayLoadBalancerClientConfiguration` 构建高可用自洽责任链：
-  `DiscoveryClient` ➔ `Caching` (3s) ➔ `GrayServiceInstanceListSupplier` ➔ `ZonePreferenceServiceInstanceListSupplier` ➔ `NacosWarmupLoadBalancer`；
-- **业务隔离级优先于拓扑亲和级**：
-  调度引擎严格执行分层治理：先按 `X-Traffic-Tag` 锁定目标版本池（灰度隔离），再在版本池内部优先筛选同机房健康可用节点（机房亲和）；当灰度节点全宕且 `fallback-to-default=true` 时，平滑降级至基线默认实例（杜绝 503 报警）；普通未染色流量坚决隔离不落入金丝雀节点；
-- **3 秒实例缓存 TTL 极速感知**：
-  通过 `AtengGatewayEnvironmentPostProcessor` 默认向 Environment 注入 `spring.cloud.loadbalancer.cache.ttl: 3s`，规避 Spring Cloud 默认 35s 缓存导致的滚动发布下线流量黑洞与节点感知滞后。
-
-### 8. 下游连接中断 502 转译与 Sentinel 响应式流控对齐 (PrematureClose & Sentinel Alignment)
-- **网络中断 502 语义收敛**：当下游微服务连接在传输中途异常挂起或过早关闭（如 Netty `PrematureCloseException`、`ClosedChannelException`）时，网关统一转译为 HTTP 502 Bad Gateway 规范 Result JSON，附带链路 TraceId，杜绝底层网络管道异常直接泄露或误判为 500；
-- **Sentinel 响应式异常自适应对齐**：通过反射探测阿里 Sentinel 核心异常（`FlowException`、`ParamFlowException`、`SystemBlockException` 转译为 HTTP 429 并附加 `Retry-After: 1` 响应头；`DegradeException` 熔断降级转译为 HTTP 503），在未强引入 Sentinel 时保持轻量零依赖，运行时引入即可自动生效。
-
-### 9. 开放接口 Request Body 摘要加签与堆外内存确定性释放 (Deterministic Body Caching)
-- **安全防篡改规范**：开启 `body-enabled=true` 时，针对 POST/PUT/PATCH 请求体异步计算 SHA-256 摘要，参与规范签名串计算（`&bodyHash=<sha256>`）；空 Body 或无 Body 时平滑兼容规范放行；
-- **堆外内存零泄漏不变量**：通过 `ServerHttpRequestDecorator` 与 `DataBufferUtils.retain` 安全缓存并重新发布字节流供下游消费；使用 Reactor `doFinally` 挂载 `DataBufferUtils.release` 确定性释放机制，在发生网络中断或异常拦截时确保堆外内存物理释放，彻底杜绝 Direct Memory OOM。
-
-### 10. 全景健康诊断端点与非阻塞无锁原子快照 (Gateway Panorama Diagnostics)
-- **只读运维端点**：提供 `/actuator/atengGateway` 与中划线别名 `/actuator/ateng-gateway`，双向兼容 Actuator 规范；
-- **微秒级无锁读取**：直接读取双轨路由、灰度负载、边缘安全、接口验签四大维度内存原子快照，耗时 <100 微秒，零外部网络 IO；快照异常时平滑降级标记 `DEGRADED`；
-- **安全零泄密**：IP 黑白名单与敏感标头仅输出规则数量统计（如 `ipBlacklistCount: 2`），坚决不泄漏内网 IP 与私钥明文。
-
-### 11. 访问审计敏感 Query 脱敏、256 字符硬截断与旁路隔离 (Audit Log Query Sanitizer)
-- **12 类高频敏感词匹配**：内置 `password`、`token`、`secret` 等 12 类敏感词库（大小写不敏感），匹配值统一替换为 `***`，支持自定义 `mask-keys` 扩展；
-- **防爆截断**：清洗后字符串硬限制最大 256 字符，超出追加 `...(truncated)`，防御恶意入参撑爆日志磁盘；
-- **绝对旁路隔离**：遇到非法 `%` 转义或畸形字符平滑降级输出 `[malformed-query]`，绝不中断业务请求链路。
+- **机房亲和性加权分流与无损降级**：网关构建复合责任链 (`DiscoveryClient` ➔ `Caching` (3s) ➔ `Gray` ➔ `ZonePreference` ➔ `NacosWarmupLoadBalancer`)。调度引擎先按 `X-Traffic-Tag` 锁定目标版本池，再在池内优先筛选同机房健康可用节点；灰度实例全宕且 `fallback-to-default=true` 时，平滑降级调度至基线实例，杜绝 503 宕机报错。
+- **3 秒实例缓存 TTL 极速感知**：默认注入 `cache.ttl: 3s`，解决微服务滚动发布时下线节点感知迟滞引发的流量黑洞。
 
 ---
 
-## 维度四：物理排版与代码全真验证
+## 第 4 章：边缘安全防卫与开放平台接口加签
 
-以下示例代码与测试用例 100% 逆向提取自 `sample-cloud-gateway` 中已验证通过的端到端集成测试源码：
+针对公网暴露面提供等保三级安全合规响应头出站强化、载荷防爆硬防御、目录穿越 Fail-Fast 400 阻断、IP 黑名单 403 阻断及开放平台 HMAC-SHA256 签名校验与防重放。
 
-### 1. 载荷硬防爆集成测试 (断言 HTTP 413)
-```java
-@Test
-@DisplayName("测试 Netty 2MB 载荷硬限制：超大报文 (>2MB) 直接熔断拦截为 HTTP 413 Result")
-void testPayloadBombBlockedWith413() {
-    // 构造 2.5MB 超限载荷 (超过网关 2MB 硬限制)
-    byte[] oversizedPayload = new byte[2500000];
+### 4.1 本特性专属 YAML 配置
 
-    webTestClient.post()
-            .uri("/api/mock/upload-echo")
-            .contentType(MediaType.APPLICATION_OCTET_STREAM)
-            .bodyValue(oversizedPayload)
-            .exchange()
-            .expectStatus().isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE)
-            .expectHeader().exists(GatewayConstants.X_TRACE_ID)
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(413)
-            .jsonPath("$.msg").value(containsString("2MB"))
-            .jsonPath("$.traceId").isNotEmpty();
-}
+```yaml
+ateng:
+  cloud:
+    gateway:
+      max-in-memory-size: 2MB
+      sign:
+        enabled: true
+        body-enabled: true
+        timestamp-threshold: 5m
+        include-paths:
+          - "/api/open/**"
+      security:
+        enabled: true
+        trusted-proxy-count: 1
+        exclude-paths:
+          - "/api/open/**"
+          - "/api/security/**"
+        ip-blacklist:
+          - "192.168.100.1"
+          - "10.99.0.0/16"
+      security-headers:
+        enabled: true
 ```
 
-### 2. OWASP 等保安全响应头强化测试
+### 4.2 真实微服务业务 Java 代码范式
+
 ```java
-@Test
-@DisplayName("测试 OWASP 等保三级合规安全响应头出站自动强化")
-void testSecurityHeadersInjected() {
-    webTestClient.get()
-            .uri("/api/mock/hello")
-            .exchange()
-            .expectStatus().isOk()
-            .expectHeader().valueEquals("X-Content-Type-Options", "nosniff")
-            .expectHeader().valueEquals("X-Frame-Options", "SAMEORIGIN")
-            .expectHeader().valueEquals("X-XSS-Protection", "1; mode=block")
-            .expectHeader().valueEquals("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-            .expectHeader().valueEquals("Referrer-Policy", "strict-origin-when-cross-origin")
-            .expectHeader().exists(GatewayConstants.X_TRACE_ID);
-}
-```
+@RestController
+@RequestMapping("/sample/cloud/gateway/security")
+public class GatewaySecurityGuardController {
 
-### 3. 全链路灰度染色与降级测试
-```java
-@Test
-@DisplayName("测试 X-Traffic-Tag 标头染色透明透传至下游微服务")
-void testTrafficTagHeaderPropagation() {
-    webTestClient.get()
-            .uri("/api/mock/echo-headers")
-            .header(GatewayConstants.X_TRAFFIC_TAG, "canary-v2")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data['x-traffic-tag']").isEqualTo("canary-v2");
-}
-```
+    @PostMapping("/open/merchant/sync-order")
+    public Mono<Result<OpenApiOrderSyncVO>> syncMerchantOrder(
+            @RequestBody(required = false) Mono<OpenApiOrderSyncDTO> bodyMono) {
+        return bodyMono.map(dto -> Result.success(new OpenApiOrderSyncVO(
+                "SYNC-" + dto.getOrderId(),
+                dto.getOrderId(),
+                "SYNCED",
+                System.currentTimeMillis(),
+                true
+        ))).defaultIfEmpty(Result.success(new OpenApiOrderSyncVO(
+                "SYNC-EMPTY", "EMPTY", "EMPTY_BODY", System.currentTimeMillis(), true)));
+    }
 
-### 4. 写请求绝对零重试防雪崩测试
-```java
-@Test
-@DisplayName("测试防雪崩重试铁律：POST 写请求建连失败绝对零重试 (执行次数=1)")
-void testWriteMethodZeroRetryOnFailure() {
-    webTestClient.post()
-            .uri("/api/mock/retry-counter")
-            .exchange()
-            .expectStatus().isEqualTo(HttpStatus.SERVICE_UNAVAILABLE)
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(503);
-
-    // 强断言：非幂等写操作绝对禁止重试，执行次数严密锁定为 1
-    assertEquals(1, mockTestController.getPostRetryCount(), "非幂等写请求绝对禁止重试");
-}
-```
-
-### 5. 主配置动态路由热更新与快照守卫测试
-```java
-@Test
-@DisplayName("测试主配置动态路由：环境变量增量热绑 (404 -> 200)、畸变路由快照守卫容错与双轨多源共存")
-void testMainConfigRouteHotReloadAndSnapshotGuard() {
-    // 1. 模拟外部配置刷新向 Spring Environment 注入主配置路由定义
-    TestPropertyValues.of(
-            "spring.cloud.gateway.routes[0].id=mock-test-route",
-            "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
-            "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/mock/**",
-            "spring.cloud.gateway.routes[1].id=main-hot-route",
-            "spring.cloud.gateway.routes[1].uri=forward:/mock/hello",
-            "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/main-hot/**"
-    ).applyTo(environment);
-
-    // 广播 EnvironmentChangeEvent 事件
-    applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(
-            Set.of("spring.cloud.gateway.routes[1].id", "spring.cloud.gateway.routes[1].uri")));
-
-    // 2. 强断言：主配置动态路由原子生效 (404 -> 200)
-    webTestClient.get()
-            .uri("/dynamic/main-hot/test")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data").isEqualTo("gateway-ok");
-
-    // 3. 模拟推送非法路由，强断言快照守卫拒绝脏配置，现有路由依然正常提供服务
-    TestPropertyValues.of(
-            "spring.cloud.gateway.routes[0].id=mock-test-route",
-            "spring.cloud.gateway.routes[0].uri=forward:/mock/hello",
-            "spring.cloud.gateway.routes[0].predicates[0]=Path=/api/mock/**",
-            "spring.cloud.gateway.routes[1].id=corrupted-route",
-            "spring.cloud.gateway.routes[1].uri=/no-scheme-uri",
-            "spring.cloud.gateway.routes[1].predicates[0]=Path=/dynamic/main-hot/**"
-    ).applyTo(environment);
-
-    applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(
-            Set.of("spring.cloud.gateway.routes[1].uri")));
-
-    webTestClient.get()
-            .uri("/dynamic/main-hot/test")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data").isEqualTo("gateway-ok");
-}
-```
-
-### 6. 复合智能负载均衡 HTTP 边界端到端集成测试 (金丝雀染色、同机房亲和、灰度全下线降级与预热)
-```java
-@Test
-@DisplayName("端到端断言：携带灰度标签的外部 HTTP 请求精准命中同机房灰度实例")
-void testHttpBoundaryGrayTagMatchesSameZoneCanaryInstance() {
-    webTestClient.get()
-            .uri("/mock/lb/gray-precision/instance-info")
-            .header(GatewayConstants.X_TRAFFIC_TAG, "v2")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data.instanceId").isEqualTo("srv-gray-az1");
-}
-
-@Test
-@DisplayName("端到端断言：灰度节点全宕时，平滑降级调度至基线默认实例 (HTTP 200，杜绝 503 报警)")
-void testHttpBoundaryGrayAllDownFallsBackToSameZoneBaseline() {
-    webTestClient.get()
-            .uri("/mock/lb/gray-fallback/instance-info")
-            .header(GatewayConstants.X_TRAFFIC_TAG, "v2")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data.instanceId").isEqualTo("srv-base-az1");
-}
-
-@Test
-@DisplayName("端到端断言：普通未染色流量绝对隔离不落入金丝雀节点")
-void testHttpBoundaryUncoloredRequestNeverTouchesCanary() {
-    for (int i = 0; i < 10; i++) {
-        webTestClient.get()
-                .uri("/mock/lb/baseline-isolation/instance-info")
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.code").isEqualTo(200)
-                .jsonPath("$.data.instanceId").isEqualTo("srv-base-az1");
+    @PostMapping("/payload-guard")
+    public Mono<Result<PayloadResultVO>> payloadGuard(@RequestBody(required = false) Mono<byte[]> bodyMono) {
+        return bodyMono.map(bytes -> Result.success(new PayloadResultVO(bytes.length, 2 * 1024 * 1024L, true)))
+                .defaultIfEmpty(Result.success(new PayloadResultVO(0, 2 * 1024 * 1024L, true)));
     }
 }
 ```
 
-### 7. 下游连接中断与 Sentinel 响应式异常自适应转译测试
 ```java
-@Test
-@DisplayName("测试下游连接过早关闭 PrematureCloseException 转译为 HTTP 502 Bad Gateway")
-void testPrematureCloseTranslation() {
-    webTestClient.get()
-            .uri("/mock/premature-close")
-            .exchange()
-            .expectStatus().isEqualTo(502)
-            .expectHeader().exists("X-Trace-Id")
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(502)
-            .jsonPath("$.msg").value(containsString("Bad Gateway"))
-            .jsonPath("$.traceId").isNotEmpty();
-}
-
-@Test
-@DisplayName("测试信道关闭 ClosedChannelException 转译为 HTTP 502 Bad Gateway")
-void testClosedChannelTranslation() {
-    webTestClient.get()
-            .uri("/mock/closed-channel")
-            .exchange()
-            .expectStatus().isEqualTo(502)
-            .expectHeader().exists("X-Trace-Id")
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(502)
-            .jsonPath("$.msg").value(containsString("Bad Gateway"))
-            .jsonPath("$.traceId").isNotEmpty();
-}
-
-@Test
-@DisplayName("测试 Sentinel FlowException 自适应转译为 HTTP 429 且附加 Retry-After 标头")
-void testSentinelFlowExceptionTranslation() {
-    webTestClient.get()
-            .uri("/mock/sentinel/flow")
-            .exchange()
-            .expectStatus().isEqualTo(429)
-            .expectHeader().exists("X-Trace-Id")
-            .expectHeader().valueEquals("Retry-After", "1")
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(429)
-            .jsonPath("$.msg").value(containsString("流量控制"))
-            .jsonPath("$.traceId").isNotEmpty();
-}
-
-@Test
-@DisplayName("测试 Sentinel DegradeException 自适应转译为 HTTP 503 Service Unavailable")
-void testSentinelDegradeExceptionTranslation() {
-    webTestClient.get()
-            .uri("/mock/sentinel/degrade")
-            .exchange()
-            .expectStatus().isEqualTo(503)
-            .expectHeader().exists("X-Trace-Id")
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(503)
-            .jsonPath("$.msg").value(containsString("熔断降级"))
-            .jsonPath("$.traceId").isNotEmpty();
+// 生产环境通过 SPI 注册密钥管理
+@Bean
+public SignSecretProvider sampleSignSecretProvider() {
+    InMemorySignSecretProvider provider = new InMemorySignSecretProvider();
+    provider.registerSecret("sample-app", "sample-secret-123456");
+    return provider;
 }
 ```
 
-### 8. 开放接口 Request Body SHA-256 摘要加签与防篡改测试
+### 4.3 核心机制与微服务容灾边界说明
+
+- **2MB 载荷硬防爆与 S3 预签名直传**：Netty 堆外直接内存请求体硬限制 2MB。大文件、视频绝对禁止流经网关内存，100% 依托 `ateng-boot-storage` 获取 S3 Presigned URL 旁路直传。超限报文直接拦截并返回 `HTTP 413 Payload Too Large`。
+- **HMAC-SHA256 签名与堆外内存确定性释放**：基于 `ServerHttpRequestDecorator` 安全缓存 Body 并计算 SHA-256 摘要（参与签名串比对）；挂载 Reactor `doFinally` 确定性触发 `DataBufferUtils.release`，杜绝堆外内存泄漏。
+
+---
+
+## 第 5 章：微服务弹性容灾与防雪崩重试
+
+恪守“写请求绝对禁止重试不变量”，防范网络抖动下的下游重复落库与重试风暴；同时对读请求提供弹性容错，对下游网络中断提供 HTTP 502 语义化统一转译。
+
+### 5.1 本特性专属 YAML 配置
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: resilience-query-inventory
+          uri: forward:/sample/cloud/gateway/resilience/query-inventory
+          predicates:
+            - Path=/api/resilience/query-inventory
+          filters:
+            - AtengRetry=1
+        - id: resilience-create-order
+          uri: forward:/sample/cloud/gateway/resilience/create-order
+          predicates:
+            - Path=/api/resilience/create-order
+          filters:
+            - AtengRetry=1
+```
+
+### 5.2 真实微服务业务 Java 代码范式
+
 ```java
-@Test
-@DisplayName("测试开放接口 POST 携带 Body 且签名包含 bodyHash 成功通过校验")
-void testSignGuardValidBodyPostPasses() throws Exception {
-    String appId = "sample-app";
-    String secret = "sample-secret-123456";
-    String timestamp = String.valueOf(System.currentTimeMillis());
-    String nonce = "nonce-post-" + System.nanoTime();
-    String jsonBody = "{\"message\":\"hello-ateng-cloud\"}";
+@RestController
+@RequestMapping("/sample/cloud/gateway/resilience")
+public class GatewayResilienceController {
 
-    String bodyHash = calculateSha256(jsonBody.getBytes(StandardCharsets.UTF_8));
-    String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
-    String signature = calculateHmacSha256(canonical, secret);
+    private final AtomicInteger getRetryCounter = new AtomicInteger(0);
+    private final AtomicInteger postRetryCounter = new AtomicInteger(0);
 
-    webTestClient.post()
-            .uri("/api/open/data")
-            .header(GatewayConstants.X_APP_ID, appId)
-            .header(GatewayConstants.X_TIMESTAMP, timestamp)
-            .header(GatewayConstants.X_NONCE, nonce)
-            .header(GatewayConstants.X_SIGNATURE, signature)
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(jsonBody)
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data.message").isEqualTo("hello-ateng-cloud");
-}
+    @GetMapping("/query-inventory")
+    public Mono<Result<InventoryStockVO>> queryInventory(
+            @RequestParam(value = "skuCode", defaultValue = "SKU-IPHONE-16") String skuCode) throws Exception {
+        int count = getRetryCounter.incrementAndGet();
+        if (count == 1) {
+            throw new ConnectException("模拟底层网络建连超时");
+        }
+        return Mono.just(Result.success(new InventoryStockVO(skuCode, 99, count, "SUCCESS_AFTER_RETRY")));
+    }
 
-@Test
-@DisplayName("测试开放接口 POST 请求体被篡改时被 401 阻断")
-void testSignGuardTamperedBodyPostBlocked() throws Exception {
-    String appId = "sample-app";
-    String secret = "sample-secret-123456";
-    String timestamp = String.valueOf(System.currentTimeMillis());
-    String nonce = "nonce-tamper-" + System.nanoTime();
-    String originalBody = "{\"message\":\"hello-ateng-cloud\"}";
+    @PostMapping("/create-order")
+    public Mono<Result<RetryStatVO>> createOrder() throws Exception {
+        postRetryCounter.incrementAndGet();
+        throw new ConnectException("模拟非幂等写操作底层建连失败，严格禁止重试");
+    }
 
-    String bodyHash = calculateSha256(originalBody.getBytes(StandardCharsets.UTF_8));
-    String canonical = "appId=" + appId + "&bodyHash=" + bodyHash + "&nonce=" + nonce + "&timestamp=" + timestamp;
-    String signature = calculateHmacSha256(canonical, secret);
-
-    // 发送被篡改的 Body
-    String tamperedBody = "{\"message\":\"tampered-malicious-body\"}";
-    webTestClient.post()
-            .uri("/api/open/data")
-            .header(GatewayConstants.X_APP_ID, appId)
-            .header(GatewayConstants.X_TIMESTAMP, timestamp)
-            .header(GatewayConstants.X_NONCE, nonce)
-            .header(GatewayConstants.X_SIGNATURE, signature)
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(tamperedBody)
-            .exchange()
-            .expectStatus().isUnauthorized()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(401)
-            .jsonPath("$.msg").value(containsString("API 签名校验失败"));
+    @GetMapping("/simulate-node-restart")
+    public Mono<Result<Void>> simulateNodeRestart(
+            @RequestParam(value = "type", defaultValue = "premature") String type) {
+        if ("closed".equalsIgnoreCase(type)) {
+            return Mono.error(new java.nio.channels.ClosedChannelException());
+        }
+        return Mono.error(reactor.netty.http.client.PrematureCloseException.TEST_EXCEPTION);
+    }
 }
 ```
 
-### 9. 网关全景健康与动态路由运维诊断端点 (Actuator atengGateway / ateng-gateway)
+### 5.3 核心机制与微服务容灾边界说明
 
-#### 配置开启与路径白名单
-在 `application.yml` 中暴露端点，并加入网关边缘安全白名单：
+- **写请求绝对禁止重试铁律**：`AtengRetryGatewayFilterFactory` 强制锁定非幂等写请求（POST/PUT）重试次数为 0，底层失败执行次数必须为 1，阻断级联雪崩；仅针对 GET 读请求建连超时允许弹性重试 1 次（执行次数=2）。
+- **滚动重启 502 Bad Gateway 统一转译**：当下游微服务滚动发布中途发生 Netty `PrematureCloseException` 或 `ClosedChannelException` 时，网关统一转译为 HTTP 502 规范 JSON 并绑定 TraceId，严禁泄漏底层网络堆栈。
+- **限流 429 契约标准化**：拦截高并发限流触发的 HTTP 429，格式化输出统一 `Result.fail(429, "当前访问过于频繁，请稍后重试")`，并附带 `Retry-After: 1` 响应头引导退避。
+
+---
+
+## 第 6 章：原生响应式流式直通与接口文档守卫
+
+提供基于 Server-Sent Events (SSE) 的实时低延迟打字机流式体验，以及针对微服务 OpenAPI / Swagger 文档的多模式安全防护。
+
+### 6.1 本特性专属 YAML 配置
+
+```yaml
+ateng:
+  cloud:
+    gateway:
+      openapi:
+        enabled: true
+        path: /docs
+        target-path: /swagger-ui.html
+        guard-mode: PUBLIC
+```
+
+### 6.2 真实微服务业务 Java 代码范式
+
+```java
+@RestController
+@RequestMapping("/sample/cloud/gateway/resilience")
+public class GatewayResilienceController {
+
+    @GetMapping(value = "/order-events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> orderEvents() {
+        return Flux.range(0, 3)
+                .delayElements(Duration.ofMillis(20))
+                .map(seq -> ServerSentEvent.<String>builder()
+                        .id(String.valueOf(seq))
+                        .event("order-track")
+                        .data("chunk-" + seq)
+                        .build());
+    }
+}
+```
+
+### 6.3 核心机制与微服务容灾边界说明
+
+- **SSE 原生流式零缓冲直通**：利用响应式 Reactor 事件流，`text/event-stream` 随到随推，避免中间代理缓冲造成流式输出卡顿。
+- **OpenAPI 四模守卫**：支持 `DISABLED`（生产 404 熔断屏蔽）、`BASIC`（HTTP 弹窗认证挑战）、`SA_TOKEN`（校验管理员角色/权限）与 `PUBLIC`（开发测试环境免密直连）四模策略。
+
+---
+
+## 第 7 章：响应式可观测性、安全审计与全景诊断
+
+全链路分布式追踪底座零冗余收敛，基于 W3C 标准 TraceId 与响应式无锁访问日志审计，提供微秒级只读内存全景诊断端点。
+
+### 7.1 本特性专属 YAML 配置
+
 ```yaml
 management:
   endpoints:
@@ -703,16 +525,21 @@ management:
 ateng:
   cloud:
     gateway:
-      security:
-        exclude-paths:
-          - /actuator/**
+      access-log:
+        enabled: true
+        slow-threshold: 3s
+        include-query: true
+        mask-keys:
+          - customSecret
+          - cvv
 ```
 
-#### 端点访问与强断言测试
+### 7.2 真实微服务业务 Java 代码范式与诊断样例
+
 ```java
 @ParameterizedTest
 @ValueSource(strings = {"/actuator/atengGateway", "/actuator/ateng-gateway"})
-@DisplayName("测试网关全景诊断端点双命名别名路由 (/actuator/atengGateway 与 /actuator/ateng-gateway) 均平滑返回 HTTP 200 与脱敏结构化报告")
+@DisplayName("测试网关全景诊断端点双命名别名路由均平滑返回 HTTP 200 与脱敏结构化报告")
 void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri) {
     webTestClient.get()
             .uri(endpointUri)
@@ -726,78 +553,92 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri
             .jsonPath("$.grayLoadBalancer.enabled").isEqualTo(true)
             .jsonPath("$.edgeSecurity.enabled").isEqualTo(true)
             .jsonPath("$.edgeSecurity.ipBlacklistCount").isEqualTo(2)
-            // 强断言：绝不泄漏具体内网 IP 与私钥
-            .jsonPath("$.edgeSecurity.ipBlacklist").doesNotExist()
-            .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
-            .jsonPath("$.signGuard.enabled").isEqualTo(true)
-            .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
+            .jsonPath("$.signGuard.enabled").isEqualTo(true);
 }
 ```
 
-#### 诊断响应 JSON 样例
+诊断报告响应结构（截选）：
 ```json
 {
   "status": "UP",
   "gatewayId": "sample-cloud-gateway",
-  "timestamp": 1793412690000,
   "dynamicRoute": {
     "enabled": true,
-    "dualTrackEnabled": true,
-    "totalRouteCount": 2,
-    "nacosRoute": {
-      "enabled": true,
-      "dataId": "gateway-routes.json",
-      "group": "DEFAULT_GROUP",
-      "routeCount": 0,
-      "snapshotHealthy": true,
-      "lastRefreshTime": null,
-      "lastRefreshSuccess": null,
-      "lastRefreshError": null
-    },
+    "totalRouteCount": 15,
     "mainConfigRoute": {
-      "routeCount": 2,
-      "defaultFilterCount": 0,
       "snapshotHealthy": true,
-      "lastRefreshTime": 1793412689500,
-      "lastRefreshSuccess": true,
-      "lastRefreshError": null
+      "lastRefreshSuccess": true
     }
   },
   "grayLoadBalancer": {
     "enabled": true,
     "fallbackToDefault": true,
-    "cacheTtl": "3s",
-    "zone": null
+    "cacheTtl": "3s"
   },
   "edgeSecurity": {
     "enabled": true,
-    "saTokenEnabled": true,
-    "pathValidationEnabled": true,
-    "headerSanitizeEnabled": true,
-    "clientIpEnabled": true,
-    "ipFilterEnabled": true,
     "ipBlacklistCount": 2,
-    "ipWhitelistCount": 0,
-    "sanitizeHeadersCount": 5
+    "ipWhitelistCount": 0
   },
   "signGuard": {
     "enabled": true,
-    "bodyEnabled": true,
-    "timestampThreshold": "5m",
-    "includePathsCount": 1,
-    "excludePathsCount": 0
+    "bodyEnabled": true
   }
 }
 ```
 
-### 10. 响应式访问日志审计与敏感 Query 脱敏
+### 7.3 核心机制与微服务容灾边界说明
 
-#### 配置开启与自定义脱敏
-在 `application.yml` 中开启访问日志与 Query 审计：
+- **访问审计参数脱敏与防爆截断**：内置 12 类敏感参数名脱敏，超长 Query 超过 256 字符追加 `...(truncated)`，遇到非法字符平滑降级输出 `[malformed-query]`，绝不中断正常业务链路。
+- **微秒级只读内存原子快照**：`/actuator/atengGateway` 耗时 <100 微秒，零外部网络 IO；规则仅输出数量统计，严禁泄漏具体 IP 与私钥明文。
+
+---
+
+## 第 8 章：生产全量配置属性速查附录
+
+在微服务配置中心（Nacos）或本地 `application.yml` 中配置如下完整参数：
+
 ```yaml
+server:
+  port: 9000
+
+spring:
+  application:
+    name: sample-cloud-gateway
+  main:
+    web-application-type: reactive
+  cloud:
+    gateway:
+      routes:
+        - id: auth-login
+          uri: forward:/sample/cloud/gateway/auth/login
+          predicates:
+            - Path=/api/auth/login
+        - id: order-dispatch
+          uri: forward:/sample/cloud/gateway/route/order-dispatch
+          predicates:
+            - Path=/api/order/dispatch
+        - id: open-sync-order
+          uri: forward:/sample/cloud/gateway/security/open/merchant/sync-order
+          predicates:
+            - Path=/api/open/merchant/sync-order
+        - id: resilience-query-inventory
+          uri: forward:/sample/cloud/gateway/resilience/query-inventory
+          predicates:
+            - Path=/api/resilience/query-inventory
+          filters:
+            - AtengRetry=1
+    loadbalancer:
+      cache:
+        ttl: 3s
+
 ateng:
   cloud:
     gateway:
+      enabled: true
+      max-in-memory-size: 2MB
+      connect-timeout: 3s
+      response-timeout: 10s
       access-log:
         enabled: true
         slow-threshold: 3s
@@ -805,44 +646,56 @@ ateng:
         mask-keys:
           - customSecret
           - cvv
-```
+      sign:
+        enabled: true
+        body-enabled: true
+        timestamp-threshold: 5m
+        include-paths:
+          - "/api/open/**"
+      security:
+        enabled: true
+        trusted-proxy-count: 1
+        exclude-paths:
+          - "/api/open/**"
+          - "/api/security/**"
+          - "/sample/cloud/gateway/security/**"
+          - "/api/resilience/**"
+          - "/sample/cloud/gateway/resilience/**"
+          - "/api/auth/login"
+          - "/sample/cloud/gateway/auth/login"
+          - "/api/auth/inspect-context"
+          - "/sample/cloud/gateway/auth/inspect-context"
+          - "/api/auth/logout"
+          - "/sample/cloud/gateway/auth/logout"
+          - "/api/order/**"
+          - "/sample/cloud/gateway/route/**"
+          - "/api/route/**"
+          - "/api/lb/**"
+          - "/actuator/**"
+        ip-blacklist:
+          - "192.168.100.1"
+          - "10.99.0.0/16"
+      traffic:
+        enabled: true
+        fallback-to-default: true
+        cache-ttl: 3s
+      security-headers:
+        enabled: true
+      openapi:
+        enabled: true
+        path: /docs
+        target-path: /swagger-ui.html
+        guard-mode: PUBLIC
 
-#### 审计日志输出格式与脱敏样例
-- **正常请求包含敏感 Query**：
-  ```text
-  [ACCESS] method=GET, path=/api/mock/hello, status=200, duration=8ms, ip=127.0.0.1, userId=-, traceId=e3d5a8..., query=keyword=ateng&password=***&token=***&customSecret=***
-  ```
-- **超长 Query 截断防爆（>256 字符）**：
-  ```text
-  [ACCESS] method=GET, path=/api/mock/hello, status=200, duration=5ms, ip=127.0.0.1, userId=-, traceId=a1b2c3..., query=desc=xxxxxxxxxxxxxxxxxxxxxxxx...(truncated)
-  ```
-- **畸形非法字符旁路隔离**：
-  ```text
-  [ACCESS] method=GET, path=/api/mock/hello, status=200, duration=3ms, ip=127.0.0.1, userId=-, traceId=f9e8d7..., query=[malformed-query]
-  ```
+sa-token:
+  token-name: satoken
+  timeout: 86400
+  same-token:
+    project-key: ateng-cloud-test-secret-key-123456
 
-#### 端到端集成验证
-```java
-@Test
-@DisplayName("测试网关访问日志携带敏感 Query 参数与超长 Query 请求平滑通过且脱敏审计")
-void testAccessLogQueryMaskingAndBypassInSampleGateway() {
-    // 1. 发送携带内置敏感参数 (password, token) 与自定义敏感参数 (customSecret) 的请求
-    webTestClient.get()
-            .uri("/api/mock/hello?keyword=ateng&password=plain123&token=tok456&customSecret=sec789")
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data").isEqualTo("gateway-ok");
-
-    // 2. 发送超长 Query 请求（>256 字符），验证防爆截断与请求正常处理
-    String longQuery = "desc=" + "x".repeat(300);
-    webTestClient.get()
-            .uri("/api/mock/hello?" + longQuery)
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody()
-            .jsonPath("$.code").isEqualTo(200)
-            .jsonPath("$.data").isEqualTo("gateway-ok");
-}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,atengGateway
 ```
