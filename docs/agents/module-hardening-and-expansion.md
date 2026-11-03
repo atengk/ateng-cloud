@@ -67,10 +67,33 @@ flowchart TD
 - 严格遵循 7 大微服务铁律与九道成熟度防线。
 
 ### 阶段三：对抗单测与 1:1 Sample 实测 (Hermetic Tests & Sample-First)
-- 在模块内部编写白盒与对抗单测；
-- 在对应的 `sample-cloud-<scenario>` 中编写端到端真实场景用例；
-- 执行多线程精准测试命令验证端到端全绿通过。
+- 在模块内部编写白盒与对抗单测，100% 离线自洽；
+- 在对应的 `sample-cloud-<scenario>` 中编写端到端真实场景用例：
+  - 普通微服务统一引入 `ateng-boot-web` 并按领域拆分暴露多个规范的 `@RestController`（网关除外，严格维持 Spring WebFlux 纯响应式）；
+  - 代码全面演化为具有现实微服务业务意义的高频生产模型（用户中心、订单中心、库存服务、秒杀限流、金丝雀灰度等），杜绝测试桩代码；
+  - Sample 自身 `README.md` 极度精简为四段式“启动与接口体验卡”（详见 [documentation-specification.md](./documentation-specification.md)）；
+- 执行多线程精准测试命令验证端到端全绿通过：
+  ```bash
+  mvn test -pl ateng-cloud-[MODULE_NAME],ateng-cloud-samples/sample-cloud-[MODULE_NAME] -am -T 1C -nsu -B
+  ```
 
 ### 阶段四：五维生产文档与 100% 全景矩阵闭环 (5D Docs & Panorama Matrix)
-- 从跑通的 Sample 源码与实测输出中 1:1 逆向提取示例；
-- 在子模块 `README.md` 中按“五维生产就绪交付模型”补齐全景矩阵与核心边界说明。
+- 遵循 [documentation-specification.md](./documentation-specification.md) 全面更新子模块 `README.md`；
+- **全景矩阵 100% 收录**：以标准 Markdown 表格收录该模块所有门面类、公共方法、核心注解、配置项与扩展点 SPI；
+- **三要素就近闭环**：每个特性章节必须在当前屏幕内同时提供专属 YAML 配置、真实微服务实战代码与容灾边界机制；
+- **能力大章收敛**：同类功能按微服务业务领域收敛为一级大章，下设二级小节，禁止跨批次零碎散落；
+- 从跑通的 Sample 源码与实测输出中 1:1 逆向提取示例，文末 YAML 配置仅作为全量速查附录。
+
+---
+
+## 4. 交付准出校验单 (Exit Criteria)
+
+执行本 SOP 结束前，必须逐项自检并满足以下条件：
+- [ ] 阶段一《微服务全场景矩阵》与设计树经开发者明确确认；
+- [ ] 批准的缺失场景功能与核心 API 重构完成，7 大微服务铁律与九道成熟度防线无红线触碰；
+- [ ] 普通微服务 Sample 引入 `ateng-boot-web` 并按领域拆分暴露多 Controller 接口（网关严格维持 WebFlux 纯响应式）；
+- [ ] Sample `README.md` 遵循四段式极简体验卡模板，Starter `README.md` 遵循三要素就近闭环与能力大章收敛；
+- [ ] 场景与示例代码以真实微服务拓扑命名与建模，杜绝 `RPC_SUCCESS` 等单测试桩生搬；
+- [ ] 定向精准多线程测试（单测 + 场景 Sample）全部 PASS（BUILD SUCCESS）；
+- [ ] 子模块 `README.md` 包含 100% 覆盖度的全景速查矩阵，示例代码完全真实可运行；
+- [ ] 领域词汇表 `CONTEXT.md` 与全局 `CONTEXT-MAP.md` 同步更新完毕。

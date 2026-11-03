@@ -45,9 +45,12 @@
 为保障多模块演化时的极速本地测试准出与环境无关性，样例工程遵循以下准则：
 
 - **1:1 独立场景沙箱**：每个微服务 Starter 严格对应一个专属的 `sample-cloud-<scenario>`（如 `sample-cloud-nacos`、`sample-cloud-feign`、`sample-cloud-gateway` 等），彻底杜绝跨 Starter 混合的胖样例；
-- **响应式 vs 阻塞式分层分明**：
-  - **网关场景**（`sample-cloud-gateway`）：纯响应式 Netty 运行时，配套 `WebTestClient` 端到端集成测试；
-  - **业务服务场景**（`sample-cloud-feign`、`sample-cloud-dubbo` 等）：标准 Servlet 运行时，配套 `MockMvc` / `@SpringBootTest` 跑通真实 RPC 与上下文传递流程；
+- **全面 Web 体验化与多 Controller 暴露**：
+  - 普通微服务场景（`sample-cloud-nacos`、`sample-cloud-feign`、`sample-cloud-dubbo` 等）统一引入 `ateng-boot-web` 作为 Web 容器底座，具备应用启动即可通过 HTTP/cURL 交互体验的能力；
+  - 能通过 HTTP 调用的功能必须全面通过规范的 `@RestController` 接口向外暴露，并按功能领域拆分为多个独立 Controller（如 `FeignOrderConsumerController`、`FeignFallbackController` 等），严禁编写单一臃肿 Controller；
+  - **网关场景特例**（`sample-cloud-gateway`）：严格保持 Spring WebFlux 纯响应式 Netty 运行时，**严禁引入 `ateng-boot-web`（Servlet 阻塞栈）**，配套 `WebTestClient` 端到端集成测试；
+  - 路由统配 `/sample/cloud/<module>/<feature>/<action>` 语义化命名空间，出参统配强类型 `Result<T>`；
+  - 样例工程自身的 `README.md` 极度精简为四段式“启动与接口体验卡”，严禁堆砌长篇原理架构（详见 [documentation-specification.md](./documentation-specification.md)）；
 - **100% 纯内存/离线自洽**：单测配置中显式声明 `spring.cloud.nacos.discovery.enabled: false` 与 `spring.cloud.nacos.config.enabled: false`，默认依托纯内存 Mock 运行端到端测试，保障 `mvn test` 无网络环境秒级通过；
 - **自包含与零共享**：各场景工程完全独立自洽，严禁在样例工程之间建立依赖；
 - **非分发属性声明**：样例工程自身标配声明 `<maven.deploy.skip>true</maven.deploy.skip>`，杜绝将测试工程封包发布至 Maven Central。

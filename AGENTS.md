@@ -139,16 +139,29 @@
   4. **环境缺失豁免规范 (Environment Exemption Rule)**：本地确无条件提供对应中间件时，在工单与 Audit Checklist 登记 `[豁免：无可用环境]`，以离线自洽测试准出。
 
 - **五维生产就绪交付模型 (The 5D Production-Ready Invariant)**：
-  子模块 `README.md` 面向真实生产接入者，严禁仅停留在简单 Demo 的自嗨罗列；任何新增或修改的功能特性，必须正交覆盖以下五个维度，缺一即阻断准出：
+  子模块 `README.md` 面向真实生产接入者，是该模块唯一权威的**“全功能契约真理源”**，严禁仅停留在简单 Demo 的自嗨罗列；任何新增或修改的功能特性，必须正交覆盖以下五个维度并遵循 [docs/agents/documentation-specification.md](./docs/agents/documentation-specification.md)，缺一即阻断准出：
   1. **维度零：特性与公共 API 全景速查矩阵**：核心显要位置 100% 收录全景表格（收录所有门面类、公共方法、核心注解、配置属性 `@ConfigurationProperties` 与扩展 SPI）；
   2. **维度一：最小起步体验**：直击痛点的一句话概括、Nacos 最小导入配置与开箱即用的极简调用代码；
   3. **维度二：生产扩展接管**：清晰说明如何通过 SPI、`@ConditionalOnMissingBean` 或拦截器接管框架默认行为；
   4. **维度三：核心生产边界与非功能语义**：显式声明高并发、网络抖动、读写超时、熔断降级与异常转译的底层边界机制；
   5. **维度四：物理排版与代码全真验证**：示例代码必跑通并锚定单测、YAML 配置逐字对齐属性类、Markdown 代码块严格闭合无破损。
 
+- **文档内聚闭环与章节大纲收敛铁律 (Co-located Config & Capability Aggregation Invariant)**：
+  - **“配置-代码-原理”就近闭环三要素**：各特性章节必须在当前屏幕内同时提供：①本特性专属 YAML 配置片段（带中文注释与生产合理默认值）、②面向实战的业务 Java 示例、③核心机制与微服务容灾边界说明；坚决杜绝“正文只讲 Java 代码怎么调，配置扔在几百行后文末”的脱节现象；文末 YAML 配置仅作为全量速查附录，严禁作为唯一配置暴露点；
+  - **“能力领域大章”收敛架构**：同类功能强制按微服务业务能力聚合为一级大章（如“声明式远程调用与弹性熔断”），下设二级小节；坚决严禁因分批开发而在文档末尾随意追加零散割裂的小章节；
+  - **“真实微服务业务语义场景驱动”铁律**：坚决严禁将单元测试桩代码（如 `key1`、`RPC_SUCCESS` 等假代码）无脑复制到文档中；所有文档与 Sample 示例必须演化为真实高频微服务生产拓扑模型（用户中心、订单中心、库存服务、秒杀流量防护、全链路金丝雀灰度等），单测负责验证底层边界，文档负责输出生产级代码范式；
+  - 详细编写指南与标准大纲模板详见专职标准 [docs/agents/documentation-specification.md](./docs/agents/documentation-specification.md)。
+
 - **“Sample-First 研发闭环与 100% 场景实测铁律” (Sample-Before-Docs & 100% Feature Coverage Invariant)**：
-  - **功能 100% 场景对齐刚性铁律**：模块实现的每一个对外公开功能（包括所有公开门面类及 Public 方法、声明式核心注解 `@*` 及其关键属性、配置属性类 `@ConfigurationProperties` 的配置项、扩展点 SPI），**必须 100% 在归属的 `sample-cloud-<scenario>` 中提供真实、自洽、端到端可运行的演示用例**；
-  - **Sample-First 流程不变量（绝对前置工序）**：在编写或更新子模块 `README.md` 前，**必须先完成对应 Sample 场景用例的编写与实测验证并确保测试全绿**。严禁在尚未写出可运行 Sample 时凭空手敲文档！
+  - **全模块 Web 体验化与多 Controller 拆分**：
+    - 普通微服务场景样例工程（`sample-cloud-nacos`、`sample-cloud-feign`、`sample-cloud-dubbo`、`sample-cloud-sentinel`、`sample-cloud-traffic-gray`、`sample-cloud-seata`）统一引入 `io.github.atengk:ateng-boot-web` 作为 Web 接入底座，具备启动即可交互能力；
+    - **【网关纯洁性特例】**：网关样例工程（`sample-cloud-gateway`）**严格禁止引入 `ateng-boot-web`（Servlet 阻塞栈）**，必须保持 Spring WebFlux 纯响应式架构；
+    - 能通过 HTTP 调用的功能必须**全量暴露为 `@RestController` 接口**，并按功能领域拆分为多个独立的 Controller（如 `FeignOrderConsumerController`、`FeignFallbackController`），严禁编写单一臃肿胖 Controller；
+    - 统一采用 `/sample/cloud/<module>/<feature>/<action>` 语义化路由，出参统配强类型 `Result<T>`；
+  - **Sample README 极简体验卡模板**：
+    - 样例工程自身的 `README.md` 统一定位为**“启动与接口体验卡”**，严格遵循 [docs/agents/documentation-specification.md](./docs/agents/documentation-specification.md) 规定的四段式骨架（端口与启动命令、环境与双模切换：默认离线自洽 vs local 直连 Nacos、核心 Controller 接口与一键体验 cURL、全真自动化回归命令）；
+    - 严禁在 Sample README 中重复堆砌 Starter 的全景矩阵与架构原理长文，保持轻量易用；
+  - **Sample-First 流程不变量（绝对前置工序）**：在编写或更新子模块 `README.md` 前，**必须先完成对应 Sample 场景用例与 Controller 接口的编写与实测验证并确保测试全绿**。严禁在尚未写出可运行 Sample 时凭空手敲文档！
   - **代码源头全真逆向提取**：`README.md` 中展示的 Java 示例代码、YAML 配置片段及执行结果，**必须 100% 直接从已跑通的 Sample 源码、配置及实测日志/响应中 1:1 逆向提取**。若某特性未在 Sample 中跑通，一律严禁写入文档！
   - **配置源头锚定**：YAML/Properties 配置片段必须 100% 与当前模块的 `@ConfigurationProperties` 字段逐字对齐；
   - **文档排版防裂守卫 (Markdown Integrity Guard)**：
@@ -207,12 +220,16 @@
   1. **认领**：查阅工单并指派当前开发者（`gh issue edit <n> --add-assignee "@me"`）；
   2. **TDD 与 Sample-First 逆向闭环实现**：
      - **2.1 核心驱动与白盒单测**：测试驱动编码，全面遵循第 3 节“工业级代码成熟度九道防线”与 7 大微服务铁律，在模块内部编写完善的白盒与对抗性单元测试；
-     - **2.2 Sample 端到端实测补全（Hard Gate）**：在归属的 `sample-cloud-<scenario>` 中编写真实端到端场景用例，100% 覆盖新增/修改的公开 API、核心注解、配置项与扩展 SPI，执行定向测试确保端到端全绿；
-     - **2.3 全真逆向提取生成 `README.md`**：从已跑通的 Sample 源码、配置与实测输出中 1:1 逆向提取示例与结果，在所属子模块 `README.md` 中按“五维生产就绪交付模型”补齐全景矩阵、开箱代码、扩展定制接入、核心生产边界与实测输出契约；
+     - **2.2 Sample 端到端实测与多 Controller 补全（Hard Gate）**：在归属的 `sample-cloud-<scenario>` 中编写真实端到端场景用例，普通微服务统一引入 `ateng-boot-web` 暴露多 Controller 接口（网关严格维持纯响应式 WebFlux），100% 覆盖新增/修改的公开 API、核心注解、配置项与扩展 SPI，编写极简体验卡 README，执行定向测试确保端到端全绿；
+     - **2.3 全真逆向提取生成 `README.md`**：从已跑通的 Sample 源码、配置与实测输出中 1:1 逆向提取示例与结果，在所属子模块 `README.md` 中按“五维生产就绪交付模型”与“三要素就近闭环”补齐全景矩阵、专属 YAML 配置、实战业务代码、扩展定制接入、核心微服务容灾边界与实测输出契约；
   3. **准出、自检与双轴审查**：
      - 执行第 4 节阶梯二准出测试（纯文档改动免测）；
      - **《交付前成熟度与文档双向对齐清单 (Audit Checklist)》强制自检卡点**：
        - [ ] **Sample 100% 场景对齐**：模块新增/修改的所有公共 API 方法、核心注解、配置项与 SPI，是否已 100% 在归属的 `sample-cloud-<scenario>` 中提供端到端真实可运行用例？
+       - [ ] **Sample 多 Controller 暴露**：能做成 HTTP 接口的功能是否已合理拆分为多个独立 Controller（网关除外），统一返回 `Result<T>` 并支持应用启动后直接发起 HTTP/cURL 体验？
+       - [ ] **Sample README 极简体验卡**：是否遵循四段式结构提供端口、环境说明（离线自洽 vs 直连 Nacos）、cURL 快速体验命令与回归命令，杜绝冗余原理与全景表格？
+       - [ ] **文档就近内聚与大章聚合**：各特性章节是否做到专属 YAML 片段、实战微服务业务代码、机制边界三要素就近闭环？是否按微服务能力大章收敛编排，彻底告别章节零碎散落与配置跨数百行脱节？
+       - [ ] **真实微服务业务语义驱动**：文档与 Sample 代码是否已演进为用户中心、订单中心、库存服务、秒杀限流、金丝雀灰度等真实业务语义模型，坚决杜绝 `RPC_SUCCESS` 等单测试桩硬搬？
        - [ ] **Sample-First 逆向闭环**：README.md 中的所有 Java 示例代码、YAML 配置与输出结果，是否 100% 提取自上述已验证跑通的 Sample 工程？
        - [ ] **全景速查矩阵**：模块新增/修改的所有公共 API 方法、配置项、核心注解与 SPI 是否 100% 入表？
        - [ ] **代码-文档真理一致性**：文档中展示的代码与 YAML 是否直接截取自已跑通的单测/Sample？方法名与参数签名是否完全对齐？
@@ -221,11 +238,12 @@
        - [ ] **单测环境隔离**：是否使用 `@TempDir`、在 `@AfterEach` 中清理上下文、100% 离线自洽（关闭外部 Nacos/Sentinel 物理网络依赖）？
        - [ ] **双模自适应与物理隔离 (Dual-Mode)**：是否在 `.gitignore` 中物理忽略 `**/application-local*.yml`、提供全大写语义占位符模板 `application-local.example.yml`、配置 `optional:` 弹性探测并在测试类中以 `@Profile("!local")` 自洽隔离？若本地连接真实环境，是否在激活 `local` 时跑通全真交互并在 `@AfterEach` 确定性清理？（确无环境需登记 `[豁免：无可用环境]`）
        - [ ] **传输契约隔离**：Controller 传输边界是否 100% 杜绝持久层实体（Entity）泄露？
-     - **审查红牌阻断 (Red Card Gate)**：调用 `/code-review` 开展双轴审查；若审查发现模块公开功能在 Sample 中缺位、文档示例未经 Sample 真实跑通、文档漏写公开功能，或触碰成熟度红线，一律出具红牌阻断，强制返修直至双绿；
+     - **审查红牌阻断 (Red Card Gate)**：调用 `/code-review` 开展双轴审查；若审查发现模块公开功能在 Sample 中缺位、未提供 Controller 交互接口（网关除外）、网关响应式污染（引入 Servlet 依赖）、Sample README 冗余膨胀、文档章节缺少专属 YAML 配置或章节碎片散落、示例代码生搬单测试桩，或触碰成熟度红线，一律出具红牌阻断，强制返修直至双绿；
   4. **受控提交**：按第 5 节执行受控提交并推送（代码与文档同工单同提交原子交付）；
   5. **闭环**：守护 CI 监控至全绿，通过文件回写验收清单与提交哈希（`gh issue comment <n> -F <file>`），关闭工单（`gh issue close <n>`）。
 - **工单操作与 CLI 避坑 (Issue Tracker & CLI)**：遵循 [docs/agents/issue-tracker.md](./docs/agents/issue-tracker.md)（含特殊字符引号包裹、`-F` 文件回写防截断及 Wayfinding 映射）。
 - **分诊标签规范 (Triage Labels)**：遵循 [docs/agents/triage-labels.md](./docs/agents/triage-labels.md)（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。
+- **微服务工业级文档与样例工程标准 (Documentation & Sample Spec)**：编写或维护任何子模块 `README.md` 与 Sample 体验工程时，严格遵循 [docs/agents/documentation-specification.md](./docs/agents/documentation-specification.md)（三要素就近闭环、能力大章收敛、真实微服务业务驱动、多 Controller 体验与四段式极简体验卡）。
 - **微服务模块孵化标准 (Modular Extensibility)**：遵循 [docs/agents/modular-extensibility.md](./docs/agents/modular-extensibility.md)（“工业级六件套”全场景对标与端到端纯内存自验门禁）。
 - **微服务模块加固与演进标准 (Module Hardening)**：遵循 [docs/agents/module-hardening-and-expansion.md](./docs/agents/module-hardening-and-expansion.md)（四阶段流水线门禁与企业级全场景矩阵）。
 - **领域词汇与架构决策 (Domain Docs)**：探索代码库、设计新领域实体或查阅架构决策时，阅读全局映射 [CONTEXT-MAP.md](./CONTEXT-MAP.md) 及各模块独立的 `CONTEXT.md`，架构选型遵循 [docs/adr/](./docs/adr/)，统一依托 `/domain-modeling` 技能受管推演。
