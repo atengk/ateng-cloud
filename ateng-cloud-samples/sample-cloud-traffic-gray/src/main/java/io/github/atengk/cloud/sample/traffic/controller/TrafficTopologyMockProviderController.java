@@ -90,7 +90,10 @@ public class TrafficTopologyMockProviderController {
                 currentTag,
                 effectiveOrderNo
         );
-        vo.prependVisitedNode("InventoryService[inst=" + instanceId + ", tag=" + instanceTag + "]");
+        String nodeDesc = (instanceId != null && !instanceId.isBlank())
+                ? "inst=" + instanceId + ", tag=" + instanceTag
+                : "feign-direct";
+        vo.prependVisitedNode("InventoryService[" + nodeDesc + "]");
         return Result.success(vo);
     }
 

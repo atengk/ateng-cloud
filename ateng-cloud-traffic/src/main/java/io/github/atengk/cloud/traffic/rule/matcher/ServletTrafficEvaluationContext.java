@@ -62,12 +62,34 @@ public class ServletTrafficEvaluationContext implements TrafficEvaluationContext
 
     @Override
     public String getUserId() {
-        return UserContextHolder.getUserId();
+        String uid = UserContextHolder.getUserId();
+        if (uid != null && !uid.isBlank()) {
+            return uid;
+        }
+        if (request != null) {
+            String headerUid = request.getHeader("X-User-Id");
+            if (headerUid != null && !headerUid.isBlank()) {
+                return headerUid.trim();
+            }
+            return request.getParameter("userId");
+        }
+        return null;
     }
 
     @Override
     public String getTenantId() {
-        return TenantContextHolder.getTenantId();
+        String tid = TenantContextHolder.getTenantId();
+        if (tid != null && !tid.isBlank()) {
+            return tid;
+        }
+        if (request != null) {
+            String headerTid = request.getHeader("X-Tenant-Id");
+            if (headerTid != null && !headerTid.isBlank()) {
+                return headerTid.trim();
+            }
+            return request.getParameter("tenantId");
+        }
+        return null;
     }
 
     @Override

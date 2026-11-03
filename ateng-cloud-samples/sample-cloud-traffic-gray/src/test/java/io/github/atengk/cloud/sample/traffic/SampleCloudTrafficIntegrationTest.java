@@ -257,6 +257,155 @@ class SampleCloudTrafficIntegrationTest {
     }
 
     @Test
+    @DisplayName("电商履约切片: 声明式 Feign 跨微服务灰度调度与透传 (Feign Outbound Propagation)")
+    void testOrderDispatchFeignRouting() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/feign-dispatch?orderNo=ORD-20261103-FEIGN",
+                HttpMethod.GET,
+                entity,
+                ORDER_VO_TYPE_REF
+        );
+
+        OrderFulfillmentVO vo = extractOrderFulfillment(response);
+        assertThat(vo.getTrafficTag()).isEqualTo("v2");
+        assertThat(vo.getOrderNo()).isEqualTo("ORD-20261103-FEIGN");
+
+        // 核心断言：
+        // 1. Feign 客户端向 inventory-service 发起请求，TrafficFeignRequestInterceptor 注入 X-Traffic-Tag: v2
+        // 2. Inventory Service 无 v2 节点，回退基线并执行业务处理
+        // 3. Logistics Service 泳道回升成功，重新命中 v2 灰度节点 (inst-logistics-gray)
+        assertThat(vo.getVisitedNodes()).contains(
+                "FeignGateway[tag=v2]",
+                "InventoryService[feign-direct]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+    }
+
+    @Test
+    @DisplayName("电商履约切片: 基于 MurmurHash3 的一致性哈希单用户会话粘性切流")
+    void testOrderDispatchCanaryHashAndSessionStickiness() {
+        if (nacosRuleListener == null) {
+            return;
+        }
+
+        TrafficRule stickyRule = TrafficRule.builder()
+                .id("rule-order-sticky-50")
+                .targetTag("v2")
+                .percentage(50)
+                .hashKeySource(TrafficFieldSource.QUERY)
+                .hashKeyName("userId")
+                .build();
+        nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(stickyRule)));
+
+        String userId = "user_sticky_9999";
+        String firstObservedTag = null;
+        for (int i = 0; i < 5; i++) {
+            ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(
+                    "http://localhost:" + port + "/sample/cloud/traffic/order/canary-hash?userId=" + userId + "&orderNo=ORD-STICKY-001",
+                    HttpMethod.GET,
+                    null,
+                    ORDER_VO_TYPE_REF
+            );
+            OrderFulfillmentVO vo = extractOrderFulfillment(response);
+            if (firstObservedTag == null) {
+                firstObservedTag = vo.getTrafficTag() != null ? vo.getTrafficTag() : "baseline";
+            } else {
+                String currentTag = vo.getTrafficTag() != null ? vo.getTrafficTag() : "baseline";
+                assertThat(currentTag).isEqualTo(firstObservedTag);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("电商履约切片: 多金丝雀互斥分桶放量切流 (percentageRange)")
+    void testOrderDispatchMultiCanaryPercentageRangeMutualExclusion() {
+        if (nacosRuleListener == null) {
+            return;
+        }
+
+        // 为拓扑补充 v3 节点
+        discoveryClient.setInstances("order-service", List.of(
+                new DefaultServiceInstance("inst-order-base", "order-service", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-order-gray", "order-service", "127.0.0.1", port, false, Map.of("tag", "v2")),
+                new DefaultServiceInstance("inst-order-v3", "order-service", "127.0.0.1", port, false, Map.of("tag", "v3"))
+        ));
+        discoveryClient.setInstances("logistics-service", List.of(
+                new DefaultServiceInstance("inst-logistics-base", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "default")),
+                new DefaultServiceInstance("inst-logistics-gray", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "v2")),
+                new DefaultServiceInstance("inst-logistics-v3", "logistics-service", "127.0.0.1", port, false, Map.of("tag", "v3"))
+        ));
+
+        TrafficRule ruleV2 = TrafficRule.builder()
+                .id("rule-order-v2-range")
+                .priority(1)
+                .targetTag("v2")
+                .percentageRange(0, 50)
+                .hashKeySource(TrafficFieldSource.QUERY)
+                .hashKeyName("userId")
+                .build();
+
+        TrafficRule ruleV3 = TrafficRule.builder()
+                .id("rule-order-v3-range")
+                .priority(2)
+                .targetTag("v3")
+                .percentageRange(50, 100)
+                .hashKeySource(TrafficFieldSource.QUERY)
+                .hashKeyName("userId")
+                .build();
+
+        nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(ruleV2, ruleV3)));
+
+        StickyHashPartitioner partitioner = new StickyHashPartitioner();
+        String userV2 = null;
+        String userV3 = null;
+        for (int i = 0; i < 500; i++) {
+            String uid = "user_range_test_" + i;
+            if (userV2 == null && partitioner.isHitRange(uid, 0, 50)) {
+                userV2 = uid;
+            } else if (userV3 == null && partitioner.isHitRange(uid, 50, 100)) {
+                userV3 = uid;
+            }
+            if (userV2 != null && userV3 != null) {
+                break;
+            }
+        }
+        assertThat(userV2).isNotNull();
+        assertThat(userV3).isNotNull();
+
+        // 验证 userV2 命中 v2 泳道
+        ResponseEntity<Result<OrderFulfillmentVO>> respV2 = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/multi-canary?userId=" + userV2,
+                HttpMethod.GET,
+                null,
+                ORDER_VO_TYPE_REF
+        );
+        OrderFulfillmentVO voV2 = extractOrderFulfillment(respV2);
+        assertThat(voV2.getTrafficTag()).isEqualTo("v2");
+        assertThat(voV2.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+
+        // 验证 userV3 命中 v3 泳道
+        ResponseEntity<Result<OrderFulfillmentVO>> respV3 = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/multi-canary?userId=" + userV3,
+                HttpMethod.GET,
+                null,
+                ORDER_VO_TYPE_REF
+        );
+        OrderFulfillmentVO voV3 = extractOrderFulfillment(respV3);
+        assertThat(voV3.getTrafficTag()).isEqualTo("v3");
+        assertThat(voV3.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-v3, tag=v3]",
+                "LogisticsService[inst=inst-logistics-v3, tag=v3]"
+        );
+    }
+
+    @Test
     @DisplayName("场景 1: 未染色普通请求全链路调度至基线实例")
     void testBaselineRouting() {
         ResponseEntity<Result<TrafficTraceReport>> response = restTemplate.exchange(
