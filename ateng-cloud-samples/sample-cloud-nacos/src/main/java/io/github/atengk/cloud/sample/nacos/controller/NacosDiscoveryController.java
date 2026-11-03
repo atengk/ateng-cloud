@@ -2,6 +2,7 @@ package io.github.atengk.cloud.sample.nacos.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.nacos.event.NacosConnectionEvent;
+import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.sample.nacos.config.DemoInstanceSubscriptionService;
 import io.github.atengk.cloud.sample.nacos.event.DemoConnectionEventListener;
@@ -22,25 +23,41 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * NacosTemplate 运维与服务发现功能演示接口
+ * Nacos 服务注册发现、元数据治理与运维管理控制器
+ *
+ * <p>显式遵循强类型 {@link Result} 契约，整合多维元数据快照感知、集群健康节点拓扑查询、
+ * 同机房就近亲和筛选、双阶段优雅下线排空与上线恢复、gRPC 长连接事件透出及实例拓扑编程式订阅。</p>
  *
  * @author Ateng
- * @since 2026-10-27
+ * @since 2026-11-03
  */
 @RestController
-@RequestMapping("/api/nacos/ops")
-public class NacosOpsDemoController {
+@RequestMapping("/sample/cloud/nacos/discovery")
+public class NacosDiscoveryController {
 
     private final NacosTemplate nacosTemplate;
+    private final NacosMetadataProvider metadataProvider;
     private final ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider;
     private final ObjectProvider<DemoInstanceSubscriptionService> instanceSubscriptionServiceProvider;
 
-    public NacosOpsDemoController(NacosTemplate nacosTemplate,
-                                  ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider,
-                                  ObjectProvider<DemoInstanceSubscriptionService> instanceSubscriptionServiceProvider) {
+    public NacosDiscoveryController(NacosTemplate nacosTemplate,
+                                    NacosMetadataProvider metadataProvider,
+                                    ObjectProvider<DemoConnectionEventListener> connectionEventListenerProvider,
+                                    ObjectProvider<DemoInstanceSubscriptionService> instanceSubscriptionServiceProvider) {
         this.nacosTemplate = nacosTemplate;
+        this.metadataProvider = metadataProvider;
         this.connectionEventListenerProvider = connectionEventListenerProvider;
         this.instanceSubscriptionServiceProvider = instanceSubscriptionServiceProvider;
+    }
+
+    /**
+     * 获取当前服务节点注入的所有元数据键值快照
+     *
+     * @return 包含版本、环境、启动时间戳、预热时长及业务自定义标签的元数据映射表
+     */
+    @GetMapping("/metadata")
+    public Result<Map<String, String>> getMetadata() {
+        return Result.success(metadataProvider.getMetadata());
     }
 
     /**
@@ -109,7 +126,7 @@ public class NacosOpsDemoController {
     }
 
     /**
-     * 动态注册当前实例元数据
+     * 动态注册当前实例元数据并向 Nacos 实时同步
      */
     @PostMapping("/metadata")
     public Result<Void> registerMetadata(@RequestParam String key, @RequestParam String value) {
@@ -118,7 +135,7 @@ public class NacosOpsDemoController {
     }
 
     /**
-     * 动态移除当前实例元数据
+     * 动态移除当前实例元数据并向 Nacos 实时同步
      */
     @DeleteMapping("/metadata")
     public Result<Void> removeMetadata(@RequestParam String key) {
@@ -127,7 +144,7 @@ public class NacosOpsDemoController {
     }
 
     /**
-     * 主动将当前服务挂牌上线
+     * 主动将当前服务挂牌上线（就绪探针切换为 UP）
      */
     @PostMapping("/online")
     public Result<Void> markOnline() {
@@ -136,7 +153,7 @@ public class NacosOpsDemoController {
     }
 
     /**
-     * 主动触发当前服务优雅下线排空
+     * 主动触发当前服务优雅下线与在途排空（就绪探针切换为 OUT_OF_SERVICE）
      */
     @PostMapping("/offline")
     public Result<Void> markOffline() {
@@ -145,7 +162,7 @@ public class NacosOpsDemoController {
     }
 
     /**
-     * 获取最近一次 Nacos 长连接事件状态
+     * 获取最近一次 Nacos 长连接事件状态透出
      */
     @GetMapping("/connection-event")
     public Result<ConnectionEventVO> getConnectionEvent() {

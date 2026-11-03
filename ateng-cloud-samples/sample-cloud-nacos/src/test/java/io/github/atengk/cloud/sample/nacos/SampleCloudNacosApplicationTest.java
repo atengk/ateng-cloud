@@ -159,7 +159,7 @@ class SampleCloudNacosApplicationTest {
     @Test
     @DisplayName("测试元数据感知接口端到端正常返回规范化元数据与 SPI 定制标签")
     void testGetMetadataEndpoint() throws Exception {
-        mockMvc.perform(get("/api/nacos/metadata")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/metadata")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
@@ -229,39 +229,39 @@ class SampleCloudNacosApplicationTest {
     @DisplayName("测试 NacosTemplate 运维接口查询与平滑自适应契约")
     void testNacosTemplateOpsEndpoints() throws Exception {
         // 1. 测试健康实例列表查询（双模自适应：离线空集合，在线实例列表）
-        mockMvc.perform(get("/api/nacos/ops/instances?serviceName=sample-cloud-nacos")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/instances?serviceName=sample-cloud-nacos")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data").isArray());
 
         // 2. 测试机房亲和筛选（双模自适应：离线空集合，在线机房列表）
-        mockMvc.perform(get("/api/nacos/ops/same-zone?serviceName=sample-cloud-nacos")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/same-zone?serviceName=sample-cloud-nacos")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data").isArray());
 
         // 3. 测试获取自身实例（双模自适应：离线为 null，在线返回自身节点）
-        mockMvc.perform(get("/api/nacos/ops/me")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/me")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
 
         // 4. 测试保护阈值探测
-        mockMvc.perform(get("/api/nacos/ops/protection?serviceName=sample-cloud-nacos")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/protection?serviceName=sample-cloud-nacos")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data", is(false)));
 
         // 5. 测试动态元数据注册与移除
-        mockMvc.perform(post("/api/nacos/ops/metadata?key=canary-group&value=canary-a")
+        mockMvc.perform(post("/sample/cloud/nacos/discovery/metadata?key=canary-group&value=canary-a")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
 
-        mockMvc.perform(delete("/api/nacos/ops/metadata?key=canary-group")
+        mockMvc.perform(delete("/sample/cloud/nacos/discovery/metadata?key=canary-group")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
@@ -276,7 +276,7 @@ class SampleCloudNacosApplicationTest {
                 opPort = myInst.get().getPort();
             }
         }
-        mockMvc.perform(post("/api/nacos/ops/instance/status")
+        mockMvc.perform(post("/sample/cloud/nacos/discovery/instance/status")
                         .param("serviceName", "sample-cloud-nacos")
                         .param("ip", opIp)
                         .param("port", String.valueOf(opPort))
@@ -285,7 +285,7 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
 
-        mockMvc.perform(post("/api/nacos/ops/instance/weight")
+        mockMvc.perform(post("/sample/cloud/nacos/discovery/instance/weight")
                         .param("serviceName", "sample-cloud-nacos")
                         .param("ip", opIp)
                         .param("port", String.valueOf(opPort))
@@ -295,12 +295,12 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.code", is(200)));
 
         // 7. 测试动态上下线接口
-        mockMvc.perform(post("/api/nacos/ops/offline")
+        mockMvc.perform(post("/sample/cloud/nacos/discovery/offline")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
 
-        mockMvc.perform(post("/api/nacos/ops/online")
+        mockMvc.perform(post("/sample/cloud/nacos/discovery/online")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)));
@@ -410,7 +410,7 @@ class SampleCloudNacosApplicationTest {
                 "sample-cloud-nacos"
         ));
 
-        mockMvc.perform(get("/api/nacos/ops/connection-event")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/connection-event")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
@@ -519,7 +519,7 @@ class SampleCloudNacosApplicationTest {
     @Test
     @DisplayName("实例编程式订阅端到端：首帧快照即时派发、MDC 链路感知与离线自洽保底")
     void testInstanceSubscriptionEndToEnd() throws Exception {
-        mockMvc.perform(get("/api/nacos/ops/instance-subscription")
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/instance-subscription")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(200)))
