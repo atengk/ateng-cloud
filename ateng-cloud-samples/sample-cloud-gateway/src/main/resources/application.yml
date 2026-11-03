@@ -41,6 +41,22 @@ spring:
           uri: forward:/sample/cloud/gateway/auth/logout
           predicates:
             - Path=/api/auth/logout
+        - id: order-dispatch
+          uri: forward:/sample/cloud/gateway/route/order-dispatch
+          predicates:
+            - Path=/api/order/dispatch
+        - id: order-fallback
+          uri: forward:/sample/cloud/gateway/route/canary-fallback
+          predicates:
+            - Path=/api/order/fallback
+        - id: route-definitions
+          uri: forward:/sample/cloud/gateway/route/definitions
+          predicates:
+            - Path=/api/route/definitions
+        - id: route-refresh
+          uri: forward:/sample/cloud/gateway/route/refresh
+          predicates:
+            - Path=/api/route/refresh
         - id: mock-hello
           uri: forward:/mock/hello
           predicates:
@@ -110,6 +126,9 @@ ateng:
           - "/sample/cloud/gateway/auth/inspect-context"
           - "/api/auth/logout"
           - "/sample/cloud/gateway/auth/logout"
+          - "/api/order/**"
+          - "/sample/cloud/gateway/route/**"
+          - "/api/route/**"
           - "/mock/hello"
           - "/mock/business-error"
           - "/mock/server-error"

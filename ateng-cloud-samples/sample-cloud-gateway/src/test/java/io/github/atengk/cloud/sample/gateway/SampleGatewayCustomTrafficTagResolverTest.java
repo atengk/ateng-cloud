@@ -43,6 +43,16 @@ public class SampleGatewayCustomTrafficTagResolverTest {
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
                 .jsonPath("$.data['x-traffic-tag']").isEqualTo("vip-lane");
+
+        webTestClient.get()
+                .uri("/api/order/dispatch")
+                .header("X-User-Tier", "VIP")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.trafficTag").isEqualTo("vip-lane")
+                .jsonPath("$.data.status").isEqualTo("DISPATCHED_TO_CANARY");
     }
 
     @Test

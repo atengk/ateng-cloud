@@ -64,6 +64,7 @@ public class SampleGatewayDynamicRouteIntegrationTest {
         }
         if (environment != null && environment.getPropertySources().contains("test")) {
             environment.getPropertySources().remove("test");
+            applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(Set.of("spring.cloud.gateway.routes")));
         }
     }
 
@@ -218,6 +219,85 @@ public class SampleGatewayDynamicRouteIntegrationTest {
 
         // 强断言：快照守卫拒绝脏配置，现有生效路由依然稳定服务 (依然返回 200)
         assertDynamicMainHotReturnsOk();
+    }
+
+    @Test
+    @DisplayName("测试路由定义全量查询端点与动态热更刷新事件发布")
+    void testQueryRouteDefinitionsAndRefreshEvent() {
+        // 1. 查询当前网关生效的全量路由定义列表
+        webTestClient.get()
+                .uri("/api/route/definitions")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().exists(GatewayConstants.X_TRACE_ID)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data").isArray()
+                .jsonPath("$.data[?(@.routeId == 'order-dispatch')]").isNotEmpty()
+                .jsonPath("$.data[?(@.routeId == 'auth-login')]").isNotEmpty();
+
+        // 2. 触发动态路由刷新事件端点
+        webTestClient.post()
+                .uri("/api/route/refresh")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().exists(GatewayConstants.X_TRACE_ID)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.status").isEqualTo("SUCCESS")
+                .jsonPath("$.data.snapshotStatus").isEqualTo("HEALTHY")
+                .jsonPath("$.data.activeRouteCount").isNumber();
+    }
+
+    @Test
+    @DisplayName("测试电商订单路由分发与金丝雀灰度染色标签多维决议")
+    void testOrderDispatchWithCanaryTagResolution() {
+        // 1. 携带 HTTP 请求头 X-Traffic-Tag 触发金丝雀灰度分发
+        webTestClient.get()
+                .uri("/api/order/dispatch?orderId=ORD-CANARY-1001")
+                .header(GatewayConstants.X_TRAFFIC_TAG, "canary-v2")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().exists(GatewayConstants.X_TRACE_ID)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.orderId").isEqualTo("ORD-CANARY-1001")
+                .jsonPath("$.data.serviceId").isEqualTo("order-service")
+                .jsonPath("$.data.trafficTag").isEqualTo("canary-v2")
+                .jsonPath("$.data.status").isEqualTo("DISPATCHED_TO_CANARY")
+                .jsonPath("$.data.fallbackToBaseline").isEqualTo(false);
+
+        // 2. 兜底通过 URL 查询参数 traffic_tag 触发金丝雀灰度分发
+        webTestClient.get()
+                .uri("/api/order/dispatch?orderId=ORD-CANARY-1002&traffic_tag=canary-v2")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.trafficTag").isEqualTo("canary-v2")
+                .jsonPath("$.data.status").isEqualTo("DISPATCHED_TO_CANARY");
+
+        // 3. 未携带任何标签时默认分发至基线实例
+        webTestClient.get()
+                .uri("/api/order/dispatch?orderId=ORD-BASE-2001")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.orderId").isEqualTo("ORD-BASE-2001")
+                .jsonPath("$.data.trafficTag").isEqualTo("baseline")
+                .jsonPath("$.data.status").isEqualTo("DISPATCHED_TO_BASELINE");
+
+        // 4. 模拟灰度节点全下线时平滑回退至基线实例
+        webTestClient.get()
+                .uri("/api/order/fallback?orderId=ORD-FALLBACK-3001")
+                .header(GatewayConstants.X_TRAFFIC_TAG, "canary-v2")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.status").isEqualTo("FALLBACK_TO_BASELINE")
+                .jsonPath("$.data.fallbackToBaseline").isEqualTo(true);
     }
 
     private void assertDynamicMainHotReturnsOk() {
