@@ -1,66 +1,36 @@
 # 微服务模块孵化与扩展通用标准 (Modular Extensibility SOP)
 
-本指南规范 `ateng-cloud` 孵化新微服务 Starter 模块与扩展生态的标准流程（0 到 1 阶段），确保所有微服务通用构件具备统一的工程质量、架构一致性与纯净度。
+本指南规范 `ateng-cloud` 从 0 到 1 孵化全新微服务 Starter 模块（`ateng-cloud-<module>`）及其配套样例工程（`ateng-cloud-samples/sample-cloud-<module>`）的标准流程。
 
-*(注：新模块孵化完成后，后续的存量加固、深度重构与全场景功能补齐，请遵循 [微服务模块加固与全场景演进规范](./module-hardening-and-expansion.md)。)*
+*(注：既有存量模块从 1 到 N 的深度体检、能力补齐与加固重构，请遵循 [微服务模块加固与全场景演进规范](./module-hardening-and-expansion.md)。)*
 
 ---
 
 ## 1. 工业级六件套闭环门禁 (The 6-Piece Gate)
 
-无论扩展何种新微服务 Starter（如 Feign、Dubbo、Gateway、Sentinel、Traffic、Seata 等），一律遵循“工业级六件套”闭环门禁：
+孵化任何新微服务 Starter，必须一次性完整交付以下“工业级六件套”：
 
 1. **行业全场景前置对标 (Scenario Benchmarking Gate)**：
-   - 孵化新模块前，必须对标微服务主流开源标杆（Spring Cloud Alibaba、Apache Dubbo 3.3、Spring Cloud 官方实现等），梳理出排名前 80%~90% 的企业级典型微服务高并发生产场景；
-   - 明确新模块首期需要支撑的核心场景矩阵与扩展点 SPI，杜绝孵化出只有一两个玩具方法的“半残” Starter。
-2. **BOM 统管版本 (BOM-First Invariant)**：
-   - 在根 `pom.xml` 与 `ateng-cloud-bom/pom.xml` 的 `<dependencyManagement>` 集中纳管新模块及其外部依赖版本；
-   - 子模块声明依赖严禁配置裸 `<version>` 标签，上游 `ateng-boot` 依赖统一通过导入已发布的 `ateng-boot-bom` 正式版解耦集成。
-3. **专属自包含文档 (Sample-First 逆向提取)**：
-   - 子模块根目录标配专属 `README.md`，文档中的所有 Java 代码与 YAML 示例必须 100% 逆向提取自对应 Sample 中已跑通的真实端到端场景；
-   - 严格遵循“五维生产就绪交付模型”，核心显要位置 100% 收录全景速查矩阵（收录所有门面、公开方法、注解与配置项）。
-4. **全自动自验用例与 1:1 场景工程 (100% Feature Coverage)**：
-   - 在 `ateng-cloud-samples/sample-cloud-<scenario>` 配套专属 1:1 对应的场景工程，新模块的所有公开 API、核心注解与配置项必须 100% 在 Sample 中具备端到端可运行用例。
-5. **底座原语优先复用 (Core-First Reuse Gate)**：
-   - 新增微服务中间件涉及上下文持有者、JSON 序列化、分批切片、退避重试或敏感脱敏等需求时，强制 100% 优先复用 `ateng-boot-core` 与 `ateng-boot-observability` 已就绪的基础设施与标准件；
-   - 坚决杜绝在子模块内私造工具类或引入第三方重复全量依赖。
-6. **微服务专属架构红线对齐 (Microservice Invariants Gate)**：
-   - 严格遵循网关响应式与 Servlet 物理隔离、全链路四维上下文穿透、Feign 读超时禁重试、Same-Token 零信任拦截、Nacos 现代加载及 100% 离线自洽单测铁律。
+   - 对标微服务主流开源标杆（Spring Cloud 官方、Spring Cloud Alibaba、Apache Dubbo 3.3 等），梳理排名前 80%~90% 的企业级分布式高并发生产场景与 SPI 扩展点，杜绝孵化“半残”玩具模块。
+2. **BOM 统管与模块拓扑注册 (BOM-First & Topology Gate)**：
+   - 在根 `pom.xml` 与 `ateng-cloud-bom/pom.xml` 的 `<dependencyManagement>` 集中纳管新模块及其第三方依赖版本（子模块 `pom.xml` 严禁硬编码 `<version>`）；
+   - 将新 Starter 加入 `ateng-cloud-all/pom.xml`（响应式网关类模块除外），将新 Sample 加入 `ateng-cloud-samples/pom.xml` 并标配 `<maven.deploy.skip>true</maven.deploy.skip>`。
+3. **底座原语复用与微服务架构对齐 (Core-First & Invariants Gate)**：
+   - 100% 优先复用上游 `ateng-boot-core` 与 `ateng-boot-observability` 原语（`UserContextHolder`、`TenantContextHolder`、`JsonUtil`、`RetryUtil`、`IdUtil` 等）；
+   - 严格对齐 [`AGENTS.md`](../../AGENTS.md) 确立的 **7 大微服务架构铁律**、**九道成熟度防线** 与 **防御性自动装配四铁律**（`AutoConfiguration.imports`、条件守卫、`@ConditionalOnMissingBean`、显式装配时序）。
+4. **1:1 双模自洽样例工程 (Dual-Mode Sample Gate)**：
+   - 在 `ateng-cloud-samples/sample-cloud-<module>` 建立 1:1 独立验证沙箱，严格遵循 [`documentation-specification.md`](./documentation-specification.md) 第 3 章规范（多 Controller 领域暴露、网关 WebFlux 纯净特例、`@Profile("!local")` 离线自洽桩 + `application-local.example.yml` 双模联调）。
+5. **Sample-First 五维文档与体验卡 (5D Documentation Gate)**：
+   - 先跑通 Sample 端到端测试，再按 [`documentation-specification.md`](./documentation-specification.md) 逆向提取生成 Starter 五维 `README.md`（100% 全景速查矩阵、三要素就近闭环、能力大章收敛）与 Sample 四段式体验卡 `README.md`。
+6. **领域词汇表与 ADR 架构记录 (Domain & ADR Gate)**：
+   - 按 [`domain.md`](./domain.md) 新建 `ateng-cloud-<module>/CONTEXT.md` 领域词汇表，新增 `docs/adr/NNNN-*.md` 架构决策记录，并同步注册至 [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md) 与 [`docs/adr/README.md`](../adr/README.md)。
 
 ---
 
-## 2. 架构契约与自动装配规范
+## 2. 阶梯二准出验证命令
 
-1. **九道成熟度防线**：新模块编码必须全面对齐全局 [`AGENTS.md`](../../AGENTS.md) 确立的九道成熟度防线与 7 大微服务专属铁律。
-2. **防御性自动装配**：
-   - 装配类统配 `@AutoConfiguration`，统一且只能注册于 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`；
-   - 对外暴露的公共 `@Bean` 必须标配 `@ConditionalOnMissingBean`；
-   - 配置属性统配 `Duration`（时间）与 `DataSize`（容量），嵌套配置标配 `@NestedConfigurationProperty`；
-   - 存在装配时序依赖时，显式标注 `@AutoConfigureAfter` 或 `@AutoConfigureBefore`。
-
----
-
-## 3. 微服务场景化样例工程设计准则 (Sample Design Standards)
-
-为保障多模块演化时的极速本地测试准出与环境无关性，样例工程遵循以下准则：
-
-- **1:1 独立场景沙箱**：每个微服务 Starter 严格对应一个专属的 `sample-cloud-<scenario>`（如 `sample-cloud-nacos`、`sample-cloud-feign`、`sample-cloud-gateway` 等），彻底杜绝跨 Starter 混合的胖样例；
-- **全面 Web 体验化与多 Controller 暴露**：
-  - 普通微服务场景（`sample-cloud-nacos`、`sample-cloud-feign`、`sample-cloud-dubbo` 等）统一引入 `ateng-boot-web` 作为 Web 容器底座，具备应用启动即可通过 HTTP/cURL 交互体验的能力；
-  - 能通过 HTTP 调用的功能必须全面通过规范的 `@RestController` 接口向外暴露，并按功能领域拆分为多个独立 Controller（如 `FeignOrderConsumerController`、`FeignFallbackController` 等），严禁编写单一臃肿 Controller；
-  - **网关场景特例**（`sample-cloud-gateway`）：严格保持 Spring WebFlux 纯响应式 Netty 运行时，**严禁引入 `ateng-boot-web`（Servlet 阻塞栈）**，配套 `WebTestClient` 端到端集成测试；
-  - 路由统配 `/sample/cloud/<module>/<feature>/<action>` 语义化命名空间，出参统配强类型 `Result<T>`；
-  - 样例工程自身的 `README.md` 极度精简为四段式“启动与接口体验卡”，严禁堆砌长篇原理架构（详见 [documentation-specification.md](./documentation-specification.md)）；
-- **100% 纯内存/离线自洽**：单测配置中显式声明 `spring.cloud.nacos.discovery.enabled: false` 与 `spring.cloud.nacos.config.enabled: false`，默认依托纯内存 Mock 运行端到端测试，保障 `mvn test` 无网络环境秒级通过；
-- **自包含与零共享**：各场景工程完全独立自洽，严禁在样例工程之间建立依赖；
-- **非分发属性声明**：样例工程自身标配声明 `<maven.deploy.skip>true</maven.deploy.skip>`，杜绝将测试工程封包发布至 Maven Central。
-
----
-
-## 4. 极速本地构建验证
-
-新模块开发完成后，必须执行多线程精准加速命令执行端到端自验，保障 100% PASS：
+新模块孵化完成后，必须执行阶梯二构建验证（含全家桶冒烟测试 `sample-cloud-smoke-test`）并通过 [`documentation-specification.md`](./documentation-specification.md) 中的 **13 项交付前强制自检清单**：
 
 ```bash
-mvn test -pl <new-module>,ateng-cloud-samples/sample-cloud-<scenario> -am -T 1C -nsu -B
+mvn test -pl ateng-cloud-<module>,ateng-cloud-samples/sample-cloud-<module>,ateng-cloud-samples/sample-cloud-smoke-test -am -T 1C -nsu -B
 ```
