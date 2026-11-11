@@ -42,6 +42,11 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
 
     private static final Logger log = LoggerFactory.getLogger(NacosWarmupLoadBalancer.class);
 
+    /**
+     * Nacos 实例元数据静态基准权重键名
+     */
+    public static final String METADATA_KEY_WEIGHT = "nacos.weight";
+
     private final String serviceId;
     private final ObjectProvider<ServiceInstanceListSupplier> serviceInstanceListSupplierProvider;
     private final AtengNacosProperties properties;
@@ -123,16 +128,17 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
 
         int[] weights = new int[instances.size()];
         boolean allEqual = true;
-        int totalWeight = 0;
+        long totalWeight = 0L;
 
         for (int i = 0; i < instances.size(); i++) {
             ServiceInstance inst = instances.get(i);
             double effectiveWeight = calculateEffectiveWeight(inst, now, floorRatio);
-            int scaled = (int) Math.min(1_000_000L, Math.round(effectiveWeight * 100.0));
-            if (effectiveWeight <= 0.0 || scaled < 0) {
+            int scaled;
+            if (!Double.isFinite(effectiveWeight) || effectiveWeight <= 0.0) {
                 scaled = 0;
-            } else if (scaled < 1) {
-                scaled = 1;
+            } else {
+                long rounded = Math.round(effectiveWeight * 100.0);
+                scaled = rounded < 1L ? 1 : (int) Math.min(1_000_000L, rounded);
             }
             weights[i] = scaled;
             totalWeight += scaled;
@@ -142,12 +148,12 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
         }
 
         // 若所有有效权重均相同且大于 0（例如均已预热完毕），直接走极速均匀轮询
-        if (allEqual && totalWeight > 0) {
+        if (allEqual && totalWeight > 0L) {
             return selectRoundRobin(instances);
         }
 
         // 若所有节点权重均为 0（全部被运维隔离/摘流），兜底走均匀轮询避免请求无响应
-        if (totalWeight <= 0) {
+        if (totalWeight <= 0L) {
             return selectRoundRobin(instances);
         }
 
@@ -180,7 +186,8 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
         if (selectedKey != null) {
             AtomicInteger selectedCur = currentWeights.get(selectedKey);
             if (selectedCur != null) {
-                selectedCur.addAndGet(-totalWeight);
+                int deduction = (int) Math.min(Integer.MAX_VALUE, totalWeight);
+                selectedCur.addAndGet(-deduction);
             }
         }
 
@@ -202,7 +209,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
     }
 
     /**
-     * 计算实例的实时动态有效权重（0.0 ~ 1.0）
+     * 计算实例的实时动态有效权重（非负数值，支持静态基准权重与 SPI 自适应调谐）
      */
     public double calculateEffectiveWeight(ServiceInstance instance, long now, double floorRatio) {
         if (instance == null) {
@@ -216,13 +223,14 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
 
         // 检查基础权重
         double baseWeight = 1.0;
-        String baseWeightStr = meta.get("nacos.weight");
+        String baseWeightStr = meta.get(METADATA_KEY_WEIGHT);
         if (StringUtils.hasText(baseWeightStr)) {
             try {
-                baseWeight = Double.parseDouble(baseWeightStr);
-                if (baseWeight <= 0.0) {
+                double parsed = Double.parseDouble(baseWeightStr);
+                if (!Double.isFinite(parsed) || parsed <= 0.0) {
                     return 0.0;
                 }
+                baseWeight = parsed;
             } catch (NumberFormatException e) {
                 log.debug("Failed to parse nacos.weight '{}' for instance {}: {}", baseWeightStr, instance.getInstanceId(), e.getMessage());
             }
@@ -260,7 +268,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             }
         }
 
-        return Math.max(0.0, weight);
+        return Double.isFinite(weight) ? Math.max(0.0, weight) : 0.0;
     }
 
     private String buildInstanceKey(ServiceInstance inst) {

@@ -1433,6 +1433,30 @@ class NacosTemplateTest {
         assertThat(template.getActiveSubscriptionCount()).isEqualTo(0);
     }
 
+    @Test
+    @DisplayName("修改实例权重参数边界 Fail-Fast：负数与 NaN/Infinite 权重立即抛出 IllegalArgumentException")
+    void testUpdateInstanceWeightRejectsNegativeAndNonFiniteValues() {
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        assertThatThrownBy(() -> template.updateInstanceWeight("order-service", "127.0.0.1", 8080, -0.1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("weight");
+        assertThatThrownBy(() -> template.updateInstanceWeight("order-service", "DEFAULT_GROUP", "127.0.0.1", 8080, Double.NaN))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("weight");
+        assertThatThrownBy(() -> template.updateInstanceWeight("order-service", "127.0.0.1", 8080, Double.POSITIVE_INFINITY))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("weight");
+    }
+
 
     private Instance createInstance(String ip, int port, String zone, double weight, boolean healthy, boolean enabled) {
         Instance inst = new Instance();

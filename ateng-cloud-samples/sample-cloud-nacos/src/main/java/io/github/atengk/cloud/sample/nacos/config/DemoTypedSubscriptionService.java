@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.sample.nacos.config;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import io.github.atengk.cloud.nacos.config.NacosConfigParser;
 import io.github.atengk.cloud.nacos.constant.ConfigFormat;
 import io.github.atengk.cloud.nacos.context.NacosContextBarrier;
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
@@ -17,6 +18,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * 编程式动态配置泛型强类型订阅演示服务
@@ -99,26 +102,33 @@ public class DemoTypedSubscriptionService {
 
     /**
      * 模拟 Nacos 服务端动态下发单规则配置文本，全真经过 NacosConfigParser 反序列化与三元上下文隔离屏障
+     *
+     * @param rawConfigJson 单规则配置 JSON 文本
      */
     public void simulateConfigPush(String rawConfigJson) {
-        NacosContextBarrier.run(() -> {
-            TradeRuleConfig parsed = nacosTemplate.getConfigParser().parse(
-                    rawConfigJson, ConfigFormat.JSON, TradeRuleConfig.class);
-            if (parsed != null) {
-                onTradeRuleUpdated(parsed);
-            }
-        });
+        simulateTypedPush(
+                parser -> parser.parse(rawConfigJson, ConfigFormat.JSON, TradeRuleConfig.class),
+                this::onTradeRuleUpdated
+        );
     }
 
     /**
      * 模拟 Nacos 服务端动态下发多级规则列表文本，验证 TypeReference 复杂泛型反序列化与上下文隔离屏障
+     *
+     * @param rawRulesJson 多级规则列表 JSON 文本
      */
     public void simulateRulesConfigPush(String rawRulesJson) {
+        simulateTypedPush(
+                parser -> parser.parse(rawRulesJson, ConfigFormat.JSON, new TypeReference<List<TradeRuleConfig>>() {}),
+                this::onTradeRulesUpdated
+        );
+    }
+
+    private <T> void simulateTypedPush(Function<NacosConfigParser, T> parserFn, Consumer<T> consumer) {
         NacosContextBarrier.run(() -> {
-            List<TradeRuleConfig> parsed = nacosTemplate.getConfigParser().parse(
-                    rawRulesJson, ConfigFormat.JSON, new TypeReference<List<TradeRuleConfig>>() {});
+            T parsed = parserFn.apply(nacosTemplate.getConfigParser());
             if (parsed != null) {
-                onTradeRulesUpdated(parsed);
+                consumer.accept(parsed);
             }
         });
     }

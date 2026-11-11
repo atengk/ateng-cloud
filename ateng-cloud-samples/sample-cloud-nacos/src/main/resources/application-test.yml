@@ -11,7 +11,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,nacos-service
+        include: health,info,nacosService
   endpoint:
     health:
       show-details: always

@@ -1,12 +1,9 @@
 package io.github.atengk.cloud.nacos.refresh;
 
 import com.alibaba.cloud.nacos.refresh.NacosConfigRefreshEvent;
-import io.github.atengk.boot.core.context.TenantContextHolder;
-import io.github.atengk.boot.core.context.TenantContextHolder.TenantSnapshot;
-import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
-import io.github.atengk.boot.core.util.IdUtil;
 import io.github.atengk.boot.core.util.ValidatorUtil;
+import io.github.atengk.cloud.nacos.context.NacosContextBarrier;
 import io.github.atengk.cloud.nacos.event.ConfigChangeItem;
 import io.github.atengk.cloud.nacos.event.ConfigChangeType;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
@@ -18,7 +15,6 @@ import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.NoProviderFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -62,7 +58,7 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
 
     private static final Logger log = LoggerFactory.getLogger(NacosConfigRefreshEngine.class);
 
-    public static final String MDC_TRACE_ID_KEY = "traceId";
+    public static final String MDC_TRACE_ID_KEY = NacosContextBarrier.MDC_TRACE_ID_KEY;
 
     private final Environment environment;
     private final ApplicationEventPublisher eventPublisher;
@@ -218,100 +214,76 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 (properties != null && properties.getConfig() != null && StringUtils.hasText(properties.getConfig().getDefaultGroup())
                         ? properties.getConfig().getDefaultGroup() : "DEFAULT_GROUP");
 
-        long startTime = System.currentTimeMillis();
-        boolean anyError = false;
-        String errorMessage = null;
+        // 1. 依托三元上下文隔离屏障统一捕获、注入与对称恢复 (MDC traceId / UserContextHolder / TenantContextHolder)
+        return NacosContextBarrier.callWithTrace(traceId -> {
+            long startTime = System.currentTimeMillis();
+            boolean anyError = false;
+            String errorMessage = null;
 
-        // 1. 捕获并注入三元上下文快照 (置于最前置，确保重绑、JSR-303 校验与事件广播全程具备上下文与对称隔离)
-        String existingTraceId = MDC.get(MDC_TRACE_ID_KEY);
-        String existingUserId = UserContextHolder.getUserId();
-        TenantSnapshot existingTenantSnapshot = TenantContextHolder.capture();
-        String traceId = StringUtils.hasText(existingTraceId) ? existingTraceId : IdUtil.simpleUUID();
+            try {
+                // 2. 确保 @ConfigurationProperties 纯属性 POJO 增量热绑与 JSR-303 约束校验
+                rebindConfigurationProperties();
 
-        try {
-            if (!StringUtils.hasText(existingTraceId)) {
-                MDC.put(MDC_TRACE_ID_KEY, traceId);
-            }
+                // 3. 计算配置项详细变更对比 (oldValue -> newValue)
+                Map<String, ConfigChangeItem> changeDetails = computeChangeDetails(changedKeys);
 
-            // 2. 确保 @ConfigurationProperties 纯属性 POJO 增量热绑
-            rebindConfigurationProperties();
+                // 4. 构建强类型事件
+                SafeConfigRefreshEvent event = new SafeConfigRefreshEvent(
+                        this, dataId, effectiveGroup, changedKeys, changeDetails, traceId);
 
-            // 3. 计算配置项详细变更对比 (oldValue -> newValue)
-            Map<String, ConfigChangeItem> changeDetails = computeChangeDetails(changedKeys);
+                log.info("[ateng-cloud-nacos] 开始广播配置安全热更 [DataId: '{}', Group: '{}', TraceId: '{}', ChangedCount: {}]",
+                        dataId != null ? dataId : "-", effectiveGroup, traceId, changedKeys.size());
 
-            // 4. 构建强类型事件
-            SafeConfigRefreshEvent event = new SafeConfigRefreshEvent(
-                    this, dataId, effectiveGroup, changedKeys, changeDetails, traceId);
-
-            log.info("[ateng-cloud-nacos] 开始广播配置安全热更 [DataId: '{}', Group: '{}', TraceId: '{}', ChangedCount: {}]",
-                    dataId != null ? dataId : "-", effectiveGroup, traceId, changedKeys.size());
-
-            // 审计日志打印（对敏感属性严格执行星号脱敏）
-            for (ConfigChangeItem item : changeDetails.values()) {
-                log.debug("[ateng-cloud-nacos] 配置变更明细 [TraceId: '{}']: key={}, oldValue={}, newValue={}, type={}",
-                        traceId, item.getKey(), item.getMaskedOldValue(), item.getMaskedNewValue(), item.getChangeType());
-            }
-
-            // 5. 调度 NacosConfigChangeListener SPI 监听器（构筑强隔离异常捕获屏障）
-            Throwable listenerError = dispatchToListeners(event);
-            if (listenerError != null) {
-                anyError = true;
-                errorMessage = "One or more NacosConfigChangeListener failed: " + listenerError.getMessage();
-                publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, listenerError, traceId);
-            }
-
-            // 6. 发布 Spring 原生强类型事件，支持 @EventListener 响应
-            Throwable eventError = publishSafeEvent(event);
-            if (eventError != null) {
-                anyError = true;
-                if (errorMessage == null) {
-                    errorMessage = "SafeConfigRefreshEvent publication encountered errors: " + eventError.getMessage();
-                    publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, eventError, traceId);
+                // 审计日志打印（对敏感属性严格执行星号脱敏）
+                for (ConfigChangeItem item : changeDetails.values()) {
+                    log.debug("[ateng-cloud-nacos] 配置变更明细 [TraceId: '{}']: key={}, oldValue={}, newValue={}, type={}",
+                            traceId, item.getKey(), item.getMaskedOldValue(), item.getMaskedNewValue(), item.getChangeType());
                 }
-            }
 
-            log.info("[ateng-cloud-nacos] 配置安全热更新执行完成 [TraceId: '{}', ChangedKeys: {}]", traceId, changedKeys);
-            return event;
-        } catch (Throwable t) {
-            anyError = true;
-            errorMessage = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
-            log.error("[ateng-cloud-nacos] 配置安全热更新执行异常 [TraceId: '{}', DataId: '{}', Group: '{}']: {}",
-                    traceId, dataId, effectiveGroup, errorMessage, t);
-            publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, t, traceId);
-            return new SafeConfigRefreshEvent(this, dataId, effectiveGroup, changedKeys, Collections.emptyMap(), traceId);
-        } finally {
-            long durationMs = System.currentTimeMillis() - startTime;
-            this.lastRefreshRecord = new RefreshRecord(traceId, System.currentTimeMillis(), changedKeys.size(), changedKeys, !anyError, errorMessage, durationMs);
+                // 5. 调度 NacosConfigChangeListener SPI 监听器（构筑强隔离异常捕获屏障）
+                Throwable listenerError = dispatchToListeners(event);
+                if (listenerError != null) {
+                    anyError = true;
+                    errorMessage = "One or more NacosConfigChangeListener failed: " + listenerError.getMessage();
+                    publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, listenerError, traceId);
+                }
 
-            // 7. 向 Micrometer 上报监控标尺
-            if (metricsManagerProvider != null) {
-                NacosMetricsManager metrics = metricsManagerProvider.getIfAvailable();
-                if (metrics != null) {
-                    if (anyError) {
-                        metrics.recordRefreshFailure(durationMs, errorMessage);
-                    } else {
-                        metrics.recordRefreshSuccess(durationMs, changedKeys.size());
+                // 6. 发布 Spring 原生强类型事件，支持 @EventListener 响应
+                Throwable eventError = publishSafeEvent(event);
+                if (eventError != null) {
+                    anyError = true;
+                    if (errorMessage == null) {
+                        errorMessage = "SafeConfigRefreshEvent publication encountered errors: " + eventError.getMessage();
+                        publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, eventError, traceId);
+                    }
+                }
+
+                log.info("[ateng-cloud-nacos] 配置安全热更新执行完成 [TraceId: '{}', ChangedKeys: {}]", traceId, changedKeys);
+                return event;
+            } catch (Throwable t) {
+                anyError = true;
+                errorMessage = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
+                log.error("[ateng-cloud-nacos] 配置安全热更新执行异常 [TraceId: '{}', DataId: '{}', Group: '{}']: {}",
+                        traceId, dataId, effectiveGroup, errorMessage, t);
+                publishFailureEvent(dataId, effectiveGroup, changedKeys, errorMessage, t, traceId);
+                return new SafeConfigRefreshEvent(this, dataId, effectiveGroup, changedKeys, Collections.emptyMap(), traceId);
+            } finally {
+                long durationMs = System.currentTimeMillis() - startTime;
+                this.lastRefreshRecord = new RefreshRecord(traceId, System.currentTimeMillis(), changedKeys.size(), changedKeys, !anyError, errorMessage, durationMs);
+
+                // 7. 向 Micrometer 上报监控标尺
+                if (metricsManagerProvider != null) {
+                    NacosMetricsManager metrics = metricsManagerProvider.getIfAvailable();
+                    if (metrics != null) {
+                        if (anyError) {
+                            metrics.recordRefreshFailure(durationMs, errorMessage);
+                        } else {
+                            metrics.recordRefreshSuccess(durationMs, changedKeys.size());
+                        }
                     }
                 }
             }
-
-            // 8. 闭环恢复与清理三元上下文快照 (MDC traceId / UserContextHolder / TenantContextHolder)
-            if (existingTraceId != null) {
-                MDC.put(MDC_TRACE_ID_KEY, existingTraceId);
-            } else {
-                MDC.remove(MDC_TRACE_ID_KEY);
-            }
-            if (existingUserId != null) {
-                UserContextHolder.setUserId(existingUserId);
-            } else {
-                UserContextHolder.clear();
-            }
-            if (existingTenantSnapshot != null) {
-                TenantContextHolder.restore(existingTenantSnapshot);
-            } else {
-                TenantContextHolder.clear();
-            }
-        }
+        });
     }
 
     /**
@@ -324,7 +296,6 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 rebinder.rebind();
                 log.debug("[ateng-cloud-nacos] ConfigurationPropertiesRebinder 已完成所有 @ConfigurationProperties 属性增量重绑");
             } catch (Exception ex) {
-                log.error("[ateng-cloud-nacos] 执行 ConfigurationPropertiesRebinder.rebind() 时捕获异常: {}", ex.getMessage(), ex);
                 throw new IllegalStateException("ConfigurationProperties rebinding failed: " + ex.getMessage(), ex);
             }
         }

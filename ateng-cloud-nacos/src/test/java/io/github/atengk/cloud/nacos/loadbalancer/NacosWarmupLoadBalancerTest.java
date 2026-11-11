@@ -376,18 +376,29 @@ class NacosWarmupLoadBalancerTest {
         ServiceInstance instLight = createInstance("inst-light", "192.168.1.20", 8080, now, "60s", 0.5);
 
         Map<String, Integer> ratioCounts = new HashMap<>();
+        List<String> sequence = new ArrayList<>();
         for (int i = 0; i < 30; i++) {
             Response<ServiceInstance> resp = lb.processInstanceResponse(List.of(instHeavy, instLight));
             assertThat(resp.hasServer()).isTrue();
-            ratioCounts.merge(resp.getServer().getInstanceId(), 1, Integer::sum);
+            String id = resp.getServer().getInstanceId();
+            ratioCounts.merge(id, 1, Integer::sum);
+            if (sequence.size() < 6) {
+                sequence.add(id);
+            }
         }
         assertThat(ratioCounts.get("inst-heavy")).isEqualTo(20);
         assertThat(ratioCounts.get("inst-light")).isEqualTo(10);
+        assertThat(sequence).containsExactly(
+                "inst-heavy", "inst-light", "inst-heavy",
+                "inst-heavy", "inst-light", "inst-heavy"
+        );
 
-        // 2. 静态权重中包含 0.0 摘流节点时绝对跳过
+        // 2. 静态权重中包含 0.0 或 NaN/Infinite 非法权重节点时绝对跳过
         ServiceInstance instZero = createInstance("inst-zero", "192.168.1.30", 8080, now, "60s", 0.0);
+        ServiceInstance instNaN = new DefaultServiceInstance("inst-nan", "order-service", "192.168.1.31", 8080, false,
+                Map.of("nacos.weight", "NaN"));
         for (int i = 0; i < 20; i++) {
-            Response<ServiceInstance> resp = lb.processInstanceResponse(List.of(instHeavy, instZero));
+            Response<ServiceInstance> resp = lb.processInstanceResponse(List.of(instHeavy, instZero, instNaN));
             assertThat(resp.getServer().getInstanceId()).isEqualTo("inst-heavy");
         }
 

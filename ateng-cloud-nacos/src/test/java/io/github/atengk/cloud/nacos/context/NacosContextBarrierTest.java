@@ -96,4 +96,22 @@ class NacosContextBarrierTest {
         assertThat(TenantContextHolder.getTenantId()).isEqualTo("caller-tenant-2002");
         assertThat(TenantContextHolder.isIgnoreTenant()).isTrue();
     }
+
+    @Test
+    @DisplayName("callWithTrace 透传激活 traceId 并在异常与正常出口对称清理还原")
+    void testCallWithTracePassesActiveTraceId() {
+        MDC.clear();
+        String generatedTrace = NacosContextBarrier.callWithTrace(traceId -> {
+            assertThat(traceId).hasSize(32).doesNotContain("-");
+            assertThat(MDC.get(NacosContextBarrier.MDC_TRACE_ID_KEY)).isEqualTo(traceId);
+            return traceId;
+        });
+        assertThat(generatedTrace).hasSize(32);
+        assertThat(MDC.get(NacosContextBarrier.MDC_TRACE_ID_KEY)).isNull();
+
+        MDC.put(NacosContextBarrier.MDC_TRACE_ID_KEY, "existing-trace-xyz");
+        String reusedTrace = NacosContextBarrier.callWithTrace(traceId -> traceId);
+        assertThat(reusedTrace).isEqualTo("existing-trace-xyz");
+        assertThat(MDC.get(NacosContextBarrier.MDC_TRACE_ID_KEY)).isEqualTo("existing-trace-xyz");
+    }
 }

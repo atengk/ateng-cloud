@@ -16,10 +16,10 @@
 | `NacosConfigParser` | 多格式解析引擎 | 支持 `Class<T>` 与 `TypeReference<T>` 的 YAML/JSON/Properties/TEXT 解码、语法预检 `validate` 与双向 `serialize` | 失败转译 `NACOS_CONFIG_PARSE_FAILED` / `NACOS_CONFIG_VALIDATION_FAILED` |
 | `ConfigFormat` | 枚举类 | 动态配置文本格式枚举：`YAML`、`JSON`、`PROPERTIES`、`TEXT`，含 Data ID 后缀推断 | 未匹配扩展名兜底为 `TEXT` |
 | `NacosConfigConstants` | 常量规约类 | Nacos 配置导入前缀、默认分组 `DEFAULT_GROUP` 与三层配置 `DataId` 命名规约 | 开箱即用通用常量 |
-| `NacosContextBarrier` | 上下文隔离屏障 | 针对 `<MDC traceId, UserContextHolder, TenantContextHolder>` 的快照保存与 `finally` 对称恢复/清理 | 保持对 `traffic`/`seata` 模块零依赖 |
+| `NacosContextBarrier` | 上下文隔离屏障 | 提供 `run`、`call`、`callWithTrace` 静态门面，针对 `<MDC traceId, UserContextHolder, TenantContextHolder>` 保存快照并在 `finally` 对称恢复/清理 | 保持对 `traffic`/`seata` 模块零依赖 |
 | `NacosWarmupHelper` | 辅助计算类 | 集中计算节点启动预热窗口时长、已运行秒数、剩余倒计时与完成状态 `WarmupStatus` | 供 Actuator、健康检查与指标管理器复用 |
 | `NacosHealthChecker` | 启动诊断器 | 全景健康就绪诊断器，检测 `spring.config.import`、网卡绑定、回环告警、元数据快照、快照目录可写性与 K8s 排空预警 | 标配 `@ConditionalOnMissingBean`，启动即时自检 |
-| `NacosConfigHealthChecker` | 诊断兼容类 | 校验配置中心连接与属性源导入状态 | 向后兼容配置诊断门面 |
+| `NacosConfigHealthChecker` | 诊断兼容类（`@Deprecated`） | 继承 [`NacosHealthChecker`](src/main/java/io/github/atengk/cloud/nacos/health/NacosHealthChecker.java) 的历史配置诊断向后兼容门面 | `@Deprecated(since = "1.0.0")`，新代码请迁移使用 `NacosHealthChecker` |
 | `SingletonImmutabilityGuard` | 架构守卫 | `BeanFactoryPostProcessor` 容器启动扫描，严禁 `@Service`/`@Repository` 单例标注 `@RefreshScope` | 标配开启，违规直接 `IllegalStateException` 阻断启动 |
 | `NacosConfigRefreshEngine` | 安全热更引擎 | 仅增量重绑 `@ConfigurationProperties` 单例，执行 `ValidatorUtil` JSR-303 兜底校验，维护三元上下文与失败隔离 | 异常不击穿容器，失败广播 `SafeConfigRefreshFailureEvent` |
 | `SafeConfigRefreshEvent` | 应用事件类 | 携带配置变更集、新旧对比明细及 `traceId` 的强类型 Spring 事件 | 继承 `ApplicationEvent`，脱敏边界自动掩码 |
@@ -73,6 +73,7 @@
 | `resolveConfigGroup(groupName)` | `String` | 解析生效配置分组（入参 -> 模块配置 -> Spring Cloud 配置 -> `DEFAULT_GROUP`） | 保底返回 `"DEFAULT_GROUP"` |
 | `getConfigParser()` | `NacosConfigParser` | 获取内部多格式泛型解析引擎实例 | 始终返回有效单例 |
 | `isConfigAvailable()` / `isDiscoveryAvailable()` | `boolean` | 检测 Nacos 配置中心 / 服务发现客户端是否启用并就绪 | 离线返回 `false` |
+| `getConfigService()` | `ConfigService` | 获取底层受管的 Nacos `ConfigService` 客户端实例 | 离线或未装配时安全返回 `null` |
 | `ensureConfigAvailable()` / `ensureDiscoveryAvailable()` | `void` | 强校验就绪状态 | 未就绪抛出 `NACOS_CONFIG_DISABLED` / `NACOS_DISCOVERY_DISABLED` |
 | `getConfigServerStatus()` / `getNamingServerStatus()` | `String` | 获取服务端当前连通状态（`UP`、`DISCONNECTED`、`UNKNOWN`） | 客户端缺失返回 `"UNAVAILABLE"` |
 | `getAllInstances(serviceName [, groupName] [, clusters])` | `List<Instance>` | 三维坐标（服务/分组/集群）查询全部已注册实例（4 重载，空集群透明降级） | 保底返回空集合 `[]` |
@@ -110,14 +111,14 @@
 | `ateng.cloud.nacos.loadbalancer.enabled` | `boolean` | `true` | 是否激活 Nacos 客户端负载均衡增强 |
 | `ateng.cloud.nacos.loadbalancer.client-supplier-enabled` | `boolean` | `true` | 是否在客户端子上下文中激活默认服务实例提供者（网关场景可关闭让位上层链） |
 | `ateng.cloud.nacos.loadbalancer.zone-affinity` | `boolean` | `true` | 是否开启同机房可用区（Zone Affinity）优先调度 |
-| `ateng.cloud.nacos.loadbalancer.warmup` | `boolean` | `true` | 是否开启平滑启动预热（Startup Preheating）动态权重调度 |
+| `ateng.cloud.nacos.loadbalancer.warmup` | `boolean` | `true` | 是否开启平滑启动预热（Startup Preheating）加权调度 |
 | `ateng.cloud.nacos.loadbalancer.warmup-floor-weight-ratio` | `double` | `0.10` | 启动预热期间保底底噪权重比例（10%） |
-| `ateng.cloud.nacos.loadbalancer.adaptive-weight.enabled` | `boolean` | `false` | 是否激活基于系统资源指标的自适应动态加权调度 |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.enabled` | `boolean` | `false` | 是否激活基于系统资源指标的自适应加权调度 |
 | `ateng.cloud.nacos.loadbalancer.adaptive-weight.min-floor-weight-ratio` | `double` | `0.10` | 过载保底底噪权重比例（10%） |
 | `ateng.cloud.nacos.loadbalancer.adaptive-weight.medium-load-threshold` | `double` | `0.70` | 中等负载阈值（70%） |
 | `ateng.cloud.nacos.loadbalancer.adaptive-weight.high-load-threshold` | `double` | `0.85` | 高负载过载阈值（85%） |
 | `ateng.cloud.nacos.loadbalancer.adaptive-weight.damping-ratio` | `double` | `0.15` | 权重调谐阶梯阻尼防抖比例（15%） |
-| `ateng.cloud.nacos.loadbalancer.adaptive-weight.sample-interval` | `Duration` | `5s` | 动态权重调谐采样评估周期 |
+| `ateng.cloud.nacos.loadbalancer.adaptive-weight.sample-interval` | `Duration` | `5s` | 自适应加权调谐采样评估周期 |
 | `ateng.cloud.nacos.metrics.enabled` | `boolean` | `true` | 是否导出 Nacos 治理与热更 Micrometer 监控指标 |
 | `ateng.cloud.nacos.metadata.startup-time` | `boolean` | `true` | 是否自动注入 JVM 启动毫秒时间戳 |
 | `ateng.cloud.nacos.metadata.warmup-duration` | `Duration` | `60s` | 平滑启动预热窗口时长 |
@@ -166,7 +167,7 @@
 
 ## 1. 模块定位与 Maven 坐标
 
-`ateng-cloud-nacos` 专职封装 Nacos 2.x/3.x 注册中心与动态配置中心在 Spring Cloud 微服务架构下的企业级治理能力。通过单向依赖消费 `ateng-boot-bom`，为全域微服务提供统一的节点三维拓扑寻址、复杂泛型配置热更与订阅、三元上下文快照隔离、网络探测以及静态权重 + 启动预热 + 自适应降权负载均衡底座。
+`ateng-cloud-nacos` 专职封装 Nacos 2.x/3.x 注册中心与动态配置中心在 Spring Cloud 微服务架构下的企业级治理能力。通过单向依赖消费 `ateng-boot-bom`，为全域微服务提供统一的节点三维拓扑服务发现、复杂泛型配置热更与订阅、三元上下文快照隔离、网络探测以及静态权重 + 启动预热 + 自适应降权负载均衡底座。
 
 ```xml
 <dependency>
@@ -187,7 +188,7 @@
 ```mermaid
 flowchart TD
     Client["微服务调用端 (Feign / Triple RPC)"] --> LB["Spring Cloud LoadBalancer - 静态权重 + 60s 预热 + 自适应降权"]
-    LB --> NacosNaming["Nacos 注册中心 - 多网卡探测绑定 + 三维坐标寻址"]
+    LB --> NacosNaming["Nacos 注册中心 - 多网卡探测绑定 + 三维服务发现"]
 
     Sub["配置中心 (Nacos Config)"] --> Import["spring.config.import - 三层配置继承拓扑"]
     Import --> Guard["SingletonImmutabilityGuard - 严禁 @RefreshScope 单例重建"]
@@ -256,6 +257,36 @@ ateng:
         enabled: true # 是否激活 Nacos 动态配置中心治理增强
         check-on-startup: true # 启动阶段是否执行配置中心连接与导入自检诊断
         enforce-bean-immutability: true # 是否强制开启业务单例不可变性守卫（严禁 @RefreshScope 滥用）
+```
+
+#### 实战业务代码示例 (逆向提取自 Sample)
+
+```java
+// 正范式：配置属性独立收敛至 @ConfigurationProperties 纯 POJO，业务控制器/单例严禁标注 @RefreshScope
+@Component
+@ConfigurationProperties(prefix = "sample.order.config")
+public class OrderConfigProperties {
+    private Double freightRate = 10.0;
+    private Double freeFreightThreshold = 99.0;
+    private Duration orderTimeout = Duration.ofMinutes(30);
+    // Getters and Setters...
+}
+
+@RestController
+@RequestMapping("/sample/cloud/nacos/config")
+public class NacosConfigController {
+
+    private final OrderConfigProperties orderConfigProperties;
+
+    public NacosConfigController(OrderConfigProperties orderConfigProperties) {
+        this.orderConfigProperties = orderConfigProperties;
+    }
+
+    @GetMapping("/secret")
+    public Result<String> getRawSecret() {
+        return Result.success(orderConfigProperties.getPayChannelSecretKey());
+    }
+}
 ```
 
 #### 容灾与边界机制说明
@@ -488,8 +519,19 @@ public class DemoTypedSubscriptionService {
 
     @PreDestroy
     public void destroy() {
-        closeHandle(subscriptionHandle);
-        closeHandle(rulesSubscriptionHandle);
+        closeHandle(subscriptionHandle, DATA_ID_TRADE_RULE);
+        closeHandle(rulesSubscriptionHandle, DATA_ID_TRADE_RULES);
+    }
+
+    private void closeHandle(AutoCloseable handle, String dataId) {
+        if (handle != null) {
+            try {
+                handle.close();
+                log.info("[DemoTypedSubscriptionService] 已安全注销 '{}' 动态配置订阅句柄", dataId);
+            } catch (Exception ex) {
+                log.warn("Error closing subscription for '{}': {}", dataId, ex.getMessage());
+            }
+        }
     }
 
     public void onTradeRuleUpdated(TradeRuleConfig rule) {
@@ -603,7 +645,7 @@ public class SampleMetadataCustomizer implements NacosMetadataCustomizer {
 
 ### 4.2 `NacosTemplate` 三维服务发现与运维管理
 
-通过核心门面 `NacosTemplate` 支持按 `(serviceName, groupName, clusters)` 三维寻址坐标对微服务全量/健康实例、机房亲和节点、自身注册状态及动态元数据进行全生命周期对称运维。
+通过核心门面 `NacosTemplate` 支持按 `(serviceName, groupName, clusters)` 三维服务发现坐标对微服务全量/健康实例、机房亲和节点、自身注册状态及动态元数据进行全生命周期对称运维。
 
 #### 本特性专属 YAML 配置片段
 
@@ -875,21 +917,46 @@ ateng:
         startup-time: true # 注册时自动注入启动毫秒时间戳
         warmup-duration: 60s # 预热窗口时长
       loadbalancer:
-        warmup: true # 是否开启平滑启动预热动态权重调度
+        warmup: true # 是否开启平滑启动预热加权调度
         warmup-floor-weight-ratio: 0.10 # 启动预热期间保底底噪权重比例 (10%)
 ```
 
-#### 动态权重计算与 SWRR 调度数学模型
+#### 实战业务代码示例 (逆向提取自 Sample)
+
+```java
+// 1. 运维侧：通过 NacosTemplate 动态调节目标实例静态基准权重（设为 0.0 即流量隔离，负数立即 Fail-Fast 抛错）
+@PostMapping("/instance/weight")
+public Result<Void> updateInstanceWeight(@RequestParam String serviceName,
+                                         @RequestParam String ip,
+                                         @RequestParam int port,
+                                         @RequestParam double weight) {
+    nacosTemplate.updateInstanceWeight(serviceName, ip, port, weight);
+    return Result.success();
+}
+
+// 2. 调用侧：LoadBalancerClient.choose 自动触发 NacosWarmupLoadBalancer 静态权重常驻 + 预热 SWRR 选举
+@GetMapping("/choose")
+public Result<InstanceVO> chooseInstance(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
+    LoadBalancerClient loadBalancerClient = loadBalancerClientProvider.getIfAvailable();
+    if (loadBalancerClient == null) {
+        return Result.success(null);
+    }
+    ServiceInstance chosen = loadBalancerClient.choose(serviceName);
+    return Result.success(chosen != null ? InstanceVO.fromServiceInstance(chosen) : null);
+}
+```
+
+#### 有效权重计算与 SWRR 调度数学模型
 
 微服务冷启动阶段，JIT 尚未即时编译、连接池未充分预热，瞬间导满全量流量极易引起级联超时。`NacosWarmupLoadBalancer` 采用以下统一数学计算模型：
 
-1. **静态基准权重解析 (`nacos.weight`)**：设实例静态权重为 $w_{\text{base}}$（未配置默认 `1.0`），若 $w_{\text{base}} \le 0.0$ 则立即判定为摘流节点并返回 $0.0$，在后续混合调度中绝对不分配流量。
+1. **静态基准权重解析 (`nacos.weight`)**：设实例静态权重为 $w_{\text{base}}$（未配置默认 `1.0`），若 $w_{\text{base}} \le 0.0$ 或非有限数（`NaN`/`Infinity`）则立即判定为摘流节点并返回 $0.0$，在后续混合调度中绝对不分配流量。
 2. **连续线性平滑预热插值**：当 `warmup=true` 且节点运行时间 $0 \le t < T$（`uptime < warmupDuration`）时，先计算比例因子 $r(t)$，保底底噪比例 $r_{\text{floor}} = \text{warmupFloorWeightRatio}$（默认 `0.10`）：
    $$r(t) = \min\left(1.0, \max\left(r_{\text{floor}}, \; r_{\text{floor}} + (1.0 - r_{\text{floor}}) \times \frac{t}{T}\right)\right)$$
    $$w_{\text{eff}}(t) = w_{\text{base}} \times r(t)$$
-   当 $t \ge T$ 或 `warmup=false` 时，$w_{\text{eff}}(t) = w_{\text{base}}$；若配置了 `InstanceWeightCalculator` SPI，再链式叠加调谐，最终按 $w_{\text{eff}} \ge 0.0$ 取非负值。
-3. **整型量化与双模调度决策**：为确保 Nginx 平滑加权轮询（SWRR）无浮点误差并消除大整数溢出，每个实例的有效权重量化为：
-   $$w_{\text{int}} = \min\left(10^6, \; \text{round}(w_{\text{eff}} \times 100)\right)$$
+   当 $t \ge T$ 或 `warmup=false` 时，$w_{\text{eff}}(t) = w_{\text{base}}$；若配置了 `InstanceWeightCalculator` SPI，再链式叠加调谐，最终对有限值按 $w_{\text{eff}} \ge 0.0$ 取非负值（非有限值兜底 `0.0`）。
+3. **整型量化与双模调度决策**：为确保 Nginx 平滑加权轮询（SWRR）无浮点误差并消除大整数溢出，当 $w_{\text{eff}} > 0$ 时每个实例的有效权重量化为（对极小正有效权重 $0 < w_{\text{eff}} < 0.005$ 保底量化为 `1`，避免四舍五入误清零断流；当 $w_{\text{eff}} \le 0$ 时量化为 `0`）：
+   $$w_{\text{int}} = \max\left(1, \; \min\left(10^6, \; \text{round}(w_{\text{eff}} \times 100)\right)\right)$$
    - **极速等权路径**：当全部候选实例 $w_{\text{int}}$ 完全相等且总权重 $> 0$（例如关闭预热且静态权重相同时，或所有实例均已完成 60s 预热后），直接降级执行 `ThreadLocalRandom` 初始化的无锁原子均匀轮询；
    - **平滑加权轮询（SWRR）**：当存在权重差异（如 `nacos.weight` 不同或部分节点处于预热/降权期）时，执行 Nginx 平滑加权轮询（选出累计当前权重最大值后减去全量总权重），确保不同权重实例流量打散均匀平滑、绝不出现连续流量突刺。
 
@@ -910,7 +977,7 @@ ateng:
           medium-load-threshold: 0.70 # 中等负载阈值 (70%)
           high-load-threshold: 0.85 # 高负载过载阈值 (85%)
           damping-ratio: 0.15 # 调谐阶梯阻尼防抖比例 (15%)
-          sample-interval: 5s # 动态权重调谐采样评估周期
+          sample-interval: 5s # 自适应加权调谐采样评估周期
 ```
 
 #### 实战业务代码示例 (逆向提取自 Sample)
@@ -1017,6 +1084,11 @@ curl -s http://localhost:8080/actuator/nacosService
 }
 ```
 
+#### 容灾与边界机制说明
+
+- **条件装配与运维双模**：`NacosServiceEndpoint` 仅在引入 `spring-boot-starter-actuator` 且 `ateng.cloud.nacos.endpoint.enabled=true` 时注册；`@ReadOperation` 在根级与 `config.lastRefresh` 双位置同步暴露最近一次热更记录（尚未刷新时为 `null`），兼顾不同采集探针契约；
+- **幂等摘牌与安全防重**：支持通过 `POST /actuator/nacosService` 下发 `{"action":"offline"}` 或 `{"action":"online"}` 主动控制实例上下线，底层交由 `NacosLifecycleStateMachine` CAS 原子驱动，重复调用幂等安全不重复排空睡眠。
+
 ---
 
 ### 6.2 Micrometer 全维监控指标导出全景
@@ -1031,12 +1103,36 @@ ateng:
         enabled: true # 是否导出 Nacos 治理与热更 Micrometer 监控指标
 ```
 
+#### 实战业务代码示例 (逆向提取自 Sample)
+
+```java
+// 在业务巡检或测试中通过 MeterRegistry 查询受管导出标尺（提取自 SampleCloudNacosApplicationTest）
+@Autowired(required = false)
+private MeterRegistry meterRegistry;
+
+public void inspectNacosMetrics() {
+    if (meterRegistry != null) {
+        Gauge connGauge = meterRegistry.find("nacos.grpc.connection.status").gauge();
+        Gauge warmupGauge = meterRegistry.find("nacos.instance.warmup.remaining.seconds").gauge();
+        Counter refreshFailureCounter = meterRegistry.find("nacos.config.refresh.failure").counter();
+        log.info("Nacos metrics status={}, warmupRemaining={}, refreshFailures={}",
+                connGauge != null ? connGauge.value() : -1,
+                warmupGauge != null ? warmupGauge.value() : -1,
+                refreshFailureCounter != null ? refreshFailureCounter.count() : 0);
+    }
+}
+```
+
 #### 监控告警指标 Prometheus PromQL 查询示例
 
 - **Nacos gRPC 连接中断告警**：`nacos_grpc_connection_status{service="sample-cloud-nacos"} == 0`
 - **动态配置热更失败率突增**：`rate(nacos_config_refresh_failure_total[5m]) > 0`
 - **优雅下线状态排空跟踪**：`nacos_lifecycle_state{service="sample-cloud-nacos"} == 0`
 - **冷启动节点平滑预热剩余秒数**：`nacos_instance_warmup_remaining_seconds{service="sample-cloud-nacos"}`
+
+#### 容灾与边界机制说明
+
+- **缺省依赖平滑降级与低基数标签防御**：`NacosMetricsManager` 基于 `@ConditionalOnClass(MeterRegistry.class)` 与 `@ConditionalOnBean(MeterRegistry.class)` 条件装配，精简服务未引入 Actuator/Micrometer 或关闭 `metrics.enabled` 时零异常静默退化；全量指标严格收敛至单一 `service` 低基数标签，杜绝因动态键名或实例 IP 标签引发 Prometheus 时序爆炸。
 
 ---
 
@@ -1110,8 +1206,8 @@ ateng:
     nacos:
       enabled: true                          # 是否激活 ateng-cloud Nacos 治理增强
       drain-timeout: 10s                     # 实例优雅下线在途请求排空安全窗口时限
-      zone: beijing-az1                      # 默认物理机房 / 可用区标识 (如 beijing-az1)
-      cluster: default-cluster               # 默认集群标识
+      zone: ""                               # 默认物理机房 / 可用区标识（默认为空，生产可填如 beijing-az1）
+      cluster: ""                            # 默认集群标识（默认为空，生产可填如 default-cluster）
       config:
         enabled: true                        # 是否激活 Nacos 动态配置中心治理增强
         timeout: 3s                          # 客户端配置运维操作默认超时时限
@@ -1122,15 +1218,15 @@ ateng:
         enabled: true                        # 是否激活 Nacos 客户端负载均衡增强
         client-supplier-enabled: true        # 是否在客户端子上下文中激活默认服务实例提供者
         zone-affinity: true                  # 是否开启同机房可用区（Zone Affinity）优先调度
-        warmup: true                         # 是否开启平滑启动预热（Startup Preheating）动态权重调度
+        warmup: true                         # 是否开启平滑启动预热（Startup Preheating）加权调度
         warmup-floor-weight-ratio: 0.10      # 启动预热期间保底底噪权重比例 (10%)
         adaptive-weight:
-          enabled: false                     # 是否激活基于系统资源指标的自适应动态加权调度
+          enabled: false                     # 是否激活基于系统资源指标的自适应加权调度
           min-floor-weight-ratio: 0.10       # 过载保底底噪权重比例 (10%)
           medium-load-threshold: 0.70        # 中等负载阈值 (70%)
           high-load-threshold: 0.85          # 高负载过载阈值 (85%)
           damping-ratio: 0.15                # 权重调谐阶梯阻尼防抖比例 (15%)
-          sample-interval: 5s                # 动态权重调谐采样评估周期
+          sample-interval: 5s                # 自适应加权调谐采样评估周期
       metrics:
         enabled: true                        # 是否导出 Nacos 治理与热更 Micrometer 监控指标
       metadata:
@@ -1168,5 +1264,5 @@ ateng:
 ## 9. 物理排版与代码全真验证
 
 - **样例沙箱锚定**：上述代码与配置片段 100% 逆向提取自 [`sample-cloud-nacos`](../ateng-cloud-samples/sample-cloud-nacos) 真实运行工程。
-- **核心模块单元测试覆盖**：覆盖 `NacosTemplateTest`（三维坐标寻址、`Class<T>` / `TypeReference<T>` 配置与订阅重载、空集群降级、上下文隔离）、`NacosContextBarrierTest`、`NacosConfigParserTest`、`NacosConfigRefreshEngineTest`（JSR-303 校验拦截与因果链）、`NacosWarmupLoadBalancerTest`（含关闭预热与自适应开关后 `nacos.weight` 静态基准权重常驻验证）等全部 28 个测试类。
+- **核心模块单元测试覆盖**：覆盖 `NacosTemplateTest`（三维坐标服务发现、`Class<T>` / `TypeReference<T>` 配置与订阅重载、空集群降级、上下文隔离、权重非法边界 Fail-Fast）、`NacosContextBarrierTest`、`NacosConfigParserTest`、`NacosConfigRefreshEngineTest`（JSR-303 校验拦截与因果链）、`NacosWarmupLoadBalancerTest`（含关闭预热与自适应开关后 `nacos.weight` 静态基准权重常驻与 SWRR 序列验证）等全部 28 个测试类。
 - **样例工程端到端覆盖**：端到端全量验证于 [`SampleCloudNacosApplicationTest`](../ateng-cloud-samples/sample-cloud-nacos/src/test/java/io/github/atengk/cloud/sample/nacos/SampleCloudNacosApplicationTest.java)（16 个双模自适应全容器场景，覆盖配置密文解密、单条/多级 `TypeReference` 风控规则订阅与 `ValidList` 校验拦截、三维 `(serviceName, groupName, clusters)` 发现路由、OrderConfig JSR-303 校验失败联动 `SafeConfigRefreshFailureEvent`、`/actuator/nacosService` 与 `nacos.config.refresh.failure` 计数、双阶段优雅排空以及自适应加权算法）。

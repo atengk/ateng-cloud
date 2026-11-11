@@ -9,6 +9,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 
 import java.util.concurrent.Callable;
+import java.util.function.Function;
 
 /**
  * Nacos 三元上下文隔离屏障 (Context Barrier)
@@ -75,26 +76,55 @@ public final class NacosContextBarrier {
         if (action == null) {
             return null;
         }
+        return callWithTrace(customTraceId, traceId -> {
+            try {
+                return action.call();
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalStateException("NacosContextBarrier action execution failed: " + e.getMessage(), e);
+            }
+        });
+    }
 
-        // 1. 捕获当前线程的三元上下文快照
-        String existingTraceId = MDC.get(MDC_TRACE_ID_KEY);
-        String traceIdToUse = StringUtils.hasText(customTraceId)
-                ? customTraceId
-                : (StringUtils.hasText(existingTraceId) ? existingTraceId : IdUtil.simpleUUID());
+    /**
+     * 在三元上下文隔离屏障中执行任务并将当前激活的 traceId 透传给回调
+     *
+     * @param action 接收当前激活 traceId 的任务函数
+     * @param <T>    返回值类型
+     * @return 任务返回值
+     */
+    public static <T> T callWithTrace(Function<String, T> action) {
+        return callWithTrace(null, action);
+    }
 
-        if (StringUtils.hasText(customTraceId) || !StringUtils.hasText(existingTraceId)) {
-            MDC.put(MDC_TRACE_ID_KEY, traceIdToUse);
+    /**
+     * 在三元上下文隔离屏障中执行任务并将当前激活的 traceId 透传给回调（支持指定 traceId）
+     *
+     * @param customTraceId 指定的 traceId (若为空则沿用已有或自动生成)
+     * @param action        接收当前激活 traceId 的任务函数
+     * @param <T>           返回值类型
+     * @return 任务返回值
+     */
+    public static <T> T callWithTrace(@Nullable String customTraceId, Function<String, T> action) {
+        if (action == null) {
+            return null;
         }
 
+        // 1. 先完整捕获当前线程的三元上下文快照，确保任何阶段异常都能在 finally 对称恢复
+        String existingTraceId = MDC.get(MDC_TRACE_ID_KEY);
         String existingUserId = UserContextHolder.getUserId();
         TenantSnapshot tenantSnapshot = TenantContextHolder.capture();
 
+        String activeTraceId = StringUtils.hasText(customTraceId)
+                ? customTraceId
+                : (StringUtils.hasText(existingTraceId) ? existingTraceId : IdUtil.simpleUUID());
+
         try {
-            return action.call();
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("NacosContextBarrier action execution failed: " + e.getMessage(), e);
+            if (StringUtils.hasText(customTraceId) || !StringUtils.hasText(existingTraceId)) {
+                MDC.put(MDC_TRACE_ID_KEY, activeTraceId);
+            }
+            return action.apply(activeTraceId);
         } finally {
             // 2. 确定性恢复或清理上下文快照
             // 2.1 恢复或清理 MDC traceId

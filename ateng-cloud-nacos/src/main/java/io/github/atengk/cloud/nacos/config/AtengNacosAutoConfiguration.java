@@ -143,7 +143,7 @@ public class AtengNacosAutoConfiguration {
     }
 
     /**
-     * Actuator 专属运维与生命周期端点 (/actuator/nacos-service)
+     * Actuator 专属运维与生命周期端点 (/actuator/nacosService)
      */
     @Bean
     @ConditionalOnClass(Endpoint.class)

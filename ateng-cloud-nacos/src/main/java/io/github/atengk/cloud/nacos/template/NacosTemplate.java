@@ -29,7 +29,6 @@ import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.refresh.NacosConfigRefreshEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.util.Assert;
@@ -447,7 +446,7 @@ public class NacosTemplate implements DisposableBean {
      *
      * <p>特性保证：
      * 1. <b>首帧即时触发</b>：订阅成功后立即执行一次当前健康实例快照查询并回调，消除启动冷态空白；
-     * 2. <b>MDC 链路隔离</b>：每次回调自动注入 traceId，并在 finally 块中确定性清理；
+     * 2. <b>三元上下文隔离</b>：每次回调自动建立 {@code <MDC traceId, UserContextHolder, TenantContextHolder>} 快照屏障，并在 finally 块中确定性恢复或清理；
      * 3. <b>异常物理屏障</b>：业务回调中的任何异常被内部捕获隔离，绝不破坏底层事件分发线程；
      * 4. <b>受管自闭合句柄</b>：返回 {@link AutoCloseable}，调用 {@code close()} 幂等注销监听，且在容器销毁时统一释放；
      * 5. <b>离线平滑保底</b>：在 discovery.enabled=false 环境下安全首帧回调空集合并返回 No-Op 句柄，不抛出 NPE。</p>
@@ -509,7 +508,7 @@ public class NacosTemplate implements DisposableBean {
         // 1. 尝试首次立即拉取并派发当前最新有效健康实例快照
         deliverInitialInstances(serviceName, targetGroup, targetClusters, listener);
 
-        // 2. 构建具备 MDC 追踪与异常物理隔离屏障的原生 EventListener
+        // 2. 构建具备三元上下文隔离与异常物理隔离屏障的原生 EventListener
         EventListener nacosListener = event -> {
             if (event instanceof NamingEvent namingEvent) {
                 List<Instance> instances = namingEvent.getInstances();
@@ -547,7 +546,7 @@ public class NacosTemplate implements DisposableBean {
     }
 
     private void dispatchInstancesUpdate(List<Instance> instances, Consumer<List<Instance>> listener, String serviceName, String group) {
-        executeWithTrace(() -> {
+        NacosContextBarrier.run(() -> {
             try {
                 listener.accept(Collections.unmodifiableList(instances != null ? instances : Collections.emptyList()));
             } catch (Throwable t) {
@@ -819,6 +818,9 @@ public class NacosTemplate implements DisposableBean {
      * @param weight      权重值 (0.0 表示流量隔离)
      */
     public void updateInstanceWeight(String serviceName, String groupName, String ip, int port, double weight) {
+        if (!Double.isFinite(weight) || weight < 0.0) {
+            throw new IllegalArgumentException("Instance weight must be finite and >= 0.0, actual: " + weight);
+        }
         if (!isDiscoveryAvailable()) {
             log.warn("Nacos discovery is disabled. Skipping updateInstanceWeight for {}:{}", ip, port);
             return;
@@ -1828,7 +1830,7 @@ public class NacosTemplate implements DisposableBean {
                     dataId, group);
             return;
         }
-        executeWithTrace(() -> {
+        NacosContextBarrier.run(() -> {
             try {
                 T parsed = parserFn.apply(configInfo, format);
                 if (parsed != null) {
@@ -1842,10 +1844,6 @@ public class NacosTemplate implements DisposableBean {
                         dataId, group, t);
             }
         });
-    }
-
-    private void executeWithTrace(Runnable action) {
-        NacosContextBarrier.run(action);
     }
 
     /**

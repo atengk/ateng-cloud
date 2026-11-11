@@ -62,6 +62,11 @@ public class NacosDiscoveryController {
 
     /**
      * 查询指定服务的健康可用实例列表（支持按分组与集群列表三维过滤）
+     *
+     * @param serviceName 目标服务名称
+     * @param groupName   配置分组名（可选）
+     * @param clusters    集群名称列表（可选）
+     * @return 脱敏转换后的健康实例视图列表
      */
     @GetMapping("/instances")
     public Result<List<InstanceVO>> getInstances(
@@ -71,11 +76,16 @@ public class NacosDiscoveryController {
         List<InstanceVO> list = nacosTemplate.getInstances(serviceName, groupName, clusters).stream()
                 .map(InstanceVO::fromInstance)
                 .collect(Collectors.toList());
-        return Result.success(list != null ? list : Collections.emptyList());
+        return Result.success(list);
     }
 
     /**
      * 查询同机房亲和优先的健康实例列表（支持按分组与集群列表三维过滤）
+     *
+     * @param serviceName 目标服务名称
+     * @param groupName   配置分组名（可选）
+     * @param clusters    集群名称列表（可选）
+     * @return 同机房亲和优先筛选后的健康实例视图列表
      */
     @GetMapping("/same-zone")
     public Result<List<InstanceVO>> getSameZoneInstances(
@@ -85,7 +95,7 @@ public class NacosDiscoveryController {
         List<InstanceVO> list = nacosTemplate.getSameZoneInstances(serviceName, groupName, clusters).stream()
                 .map(InstanceVO::fromInstance)
                 .collect(Collectors.toList());
-        return Result.success(list != null ? list : Collections.emptyList());
+        return Result.success(list);
     }
 
     /**

@@ -184,6 +184,8 @@ public class NacosConfigController {
 
     /**
      * 读取当前复杂泛型订阅的多级交易规则列表状态
+     *
+     * @return 当前多级交易风控规则列表与订阅追踪快照
      */
     @GetMapping("/trade-rules")
     public Result<TradeRuleListVO> getTradeRules() {
@@ -197,6 +199,9 @@ public class NacosConfigController {
 
     /**
      * 模拟推送多级交易规则列表并触发 {@code TypeReference<List<TradeRuleConfig>>} 复杂泛型回调
+     *
+     * @param rules 经过元素级 JSR-303 校验的交易规则请求列表
+     * @return 刷新生效后的多级交易风控规则列表快照
      */
     @PostMapping("/trade-rules/simulate")
     public Result<TradeRuleListVO> simulateTradeRulesUpdate(@RequestBody @Valid ValidList<TradeRuleConfig> rules) {
