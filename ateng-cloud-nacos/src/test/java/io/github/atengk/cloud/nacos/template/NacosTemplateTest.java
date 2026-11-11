@@ -11,6 +11,7 @@ import com.alibaba.nacos.api.naming.NamingMaintainService;
 import com.alibaba.nacos.api.naming.NamingService;
 import com.alibaba.nacos.api.naming.pojo.Instance;
 import com.alibaba.nacos.api.naming.pojo.ListView;
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
@@ -1290,6 +1291,146 @@ class NacosTemplateTest {
         verify(namingService, times(1)).selectInstances("order-service", "CUSTOM_GROUP", true);
         verify(namingService, never()).getAllInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(Collections.emptyList()));
         verify(namingService, never()).selectInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(Collections.emptyList()), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("复杂泛型 TypeReference 对称门面：覆盖 getConfig/findConfig 4 重载、subscribeConfig 3 重载、离线兜底与隔离屏障")
+    void testTypeReferenceConfigFacadeAndSubscription() throws Exception {
+        TypeReference<List<AppTestConfig>> listTypeRef = new TypeReference<>() {};
+        TypeReference<Map<String, AppTestConfig>> mapTypeRef = new TypeReference<>() {};
+
+        // 1. 离线模式安全空转验证
+        StaticListableBeanFactory offlineFactory = new StaticListableBeanFactory();
+        NacosTemplate offlineTemplate = new NacosTemplate(
+                offlineFactory.getBeanProvider(NacosServiceManager.class),
+                offlineFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                offlineFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                offlineFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+        assertThat(offlineTemplate.getConfig("rules.json", listTypeRef)).isNull();
+        assertThat(offlineTemplate.getConfig("rules.json", "G", listTypeRef)).isNull();
+        assertThat(offlineTemplate.getConfig("rules.json", "G", Duration.ofSeconds(1), listTypeRef)).isNull();
+        assertThat(offlineTemplate.getConfig("rules.txt", "G", Duration.ofSeconds(1), ConfigFormat.JSON, listTypeRef)).isNull();
+        assertThat(offlineTemplate.findConfig("rules.json", listTypeRef)).isEmpty();
+        assertThat(offlineTemplate.findConfig("rules.json", "G", listTypeRef)).isEmpty();
+        assertThat(offlineTemplate.findConfig("rules.json", "G", Duration.ofSeconds(1), listTypeRef)).isEmpty();
+        assertThat(offlineTemplate.findConfig("rules.txt", "G", Duration.ofSeconds(1), ConfigFormat.JSON, listTypeRef)).isEmpty();
+        AutoCloseable noOpSub = offlineTemplate.subscribeConfig("rules.json", listTypeRef, cfg -> {});
+        noOpSub.close();
+
+        // 2. 在线 Mock 端到端验证
+        NacosConfigManager configManager = mock(NacosConfigManager.class);
+        ConfigService configService = mock(ConfigService.class);
+        NacosConfigProperties configProperties = new NacosConfigProperties();
+        configProperties.setGroup("DEFAULT_GROUP");
+        configProperties.setTimeout(3000);
+        when(configManager.getConfigService()).thenReturn(configService);
+        when(configManager.getNacosConfigProperties()).thenReturn(configProperties);
+        when(configService.getServerStatus()).thenReturn("UP");
+
+        String jsonList1 = "[{\"name\":\"r1\",\"port\":8001},{\"name\":\"r2\",\"port\":8002}]";
+        String yamlMap = "alpha:\n  name: alpha-app\n  port: 9001\n";
+        when(configService.getConfig(eq("rules.json"), eq("DEFAULT_GROUP"), any(Long.class))).thenReturn(jsonList1);
+        when(configService.getConfig(eq("rules.raw"), eq("BIZ_GROUP"), eq(2000L))).thenReturn(jsonList1);
+        when(configService.getConfig(eq("routes.yml"), eq("BIZ_GROUP"), any(Long.class))).thenReturn(yamlMap);
+        when(configService.getConfig(eq("missing.json"), eq("DEFAULT_GROUP"), any(Long.class))).thenReturn(null);
+
+        StaticListableBeanFactory onlineFactory = new StaticListableBeanFactory();
+        onlineFactory.addBean("configManager", configManager);
+        NacosTemplate template = new NacosTemplate(
+                onlineFactory.getBeanProvider(NacosServiceManager.class),
+                onlineFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                onlineFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                onlineFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        // 校验 getConfig / findConfig 4+4 重载准确解析具体泛型对象（非 LinkedHashMap）
+        List<AppTestConfig> list1 = template.getConfig("rules.json", listTypeRef);
+        assertThat(list1).hasSize(2);
+        assertThat(list1.get(0)).isInstanceOf(AppTestConfig.class);
+        assertThat(list1.get(1).getPort()).isEqualTo(8002);
+
+        Map<String, AppTestConfig> mapRes = template.getConfig("routes.yml", "BIZ_GROUP", mapTypeRef);
+        assertThat(mapRes).containsKey("alpha");
+        assertThat(mapRes.get("alpha")).isInstanceOf(AppTestConfig.class);
+        assertThat(mapRes.get("alpha").getPort()).isEqualTo(9001);
+
+        List<AppTestConfig> explicitFormatList = template.getConfig("rules.raw", "BIZ_GROUP", Duration.ofSeconds(2), ConfigFormat.JSON, listTypeRef);
+        assertThat(explicitFormatList).hasSize(2);
+        assertThat(template.getConfig("routes.yml", "BIZ_GROUP", Duration.ofSeconds(3), mapTypeRef)).containsKey("alpha");
+
+        assertThat(template.findConfig("rules.json", listTypeRef)).isPresent()
+                .get().satisfies(l -> assertThat(l.get(0).getName()).isEqualTo("r1"));
+        assertThat(template.findConfig("routes.yml", "BIZ_GROUP", mapTypeRef)).isPresent();
+        assertThat(template.findConfig("routes.yml", "BIZ_GROUP", Duration.ofSeconds(3), mapTypeRef)).isPresent();
+        assertThat(template.findConfig("rules.raw", "BIZ_GROUP", Duration.ofSeconds(2), ConfigFormat.JSON, listTypeRef)).isPresent();
+        assertThat(template.findConfig("missing.json", listTypeRef)).isEmpty();
+
+        // 3. 校验 subscribeConfig 3 个 TypeReference 重载、首帧快照派发、三元上下文隔离与异常处理屏障
+        AtomicReference<List<AppTestConfig>> receivedList = new AtomicReference<>();
+        AtomicReference<String> insideTraceId = new AtomicReference<>();
+
+        MDC.put("traceId", "outer-trace-abc");
+        UserContextHolder.setUserId("outer-user");
+        TenantContextHolder.setTenantId("outer-tenant");
+        TenantContextHolder.setIgnoreTenant(true);
+
+        AutoCloseable sub1 = template.subscribeConfig("rules.json", listTypeRef, list -> {
+            insideTraceId.set(MDC.get("traceId"));
+            receivedList.set(list);
+            UserContextHolder.setUserId("polluted-in-callback");
+            TenantContextHolder.setIgnoreTenant(false);
+        });
+
+        // 首次立即拉取回调已生效，且外层三元上下文完美恢复
+        assertThat(receivedList.get()).hasSize(2);
+        assertThat(receivedList.get().get(0)).isInstanceOf(AppTestConfig.class);
+        assertThat(insideTraceId.get()).isEqualTo("outer-trace-abc");
+        assertThat(UserContextHolder.getUserId()).isEqualTo("outer-user");
+        assertThat(TenantContextHolder.getTenantId()).isEqualTo("outer-tenant");
+        assertThat(TenantContextHolder.isIgnoreTenant()).isTrue();
+
+        // 捕获底层监听器模拟后台线程（无原始上下文）增量推送与回调异常隔离
+        ArgumentCaptor<Listener> listenerCaptor = ArgumentCaptor.forClass(Listener.class);
+        verify(configService).addListener(eq("rules.json"), eq("DEFAULT_GROUP"), listenerCaptor.capture());
+
+        MDC.clear();
+        UserContextHolder.clear();
+        TenantContextHolder.clear();
+
+        String jsonList2 = "[{\"name\":\"r3\",\"port\":8003}]";
+        listenerCaptor.getValue().receiveConfigInfo(jsonList2);
+        assertThat(receivedList.get()).hasSize(1);
+        assertThat(receivedList.get().get(0).getName()).isEqualTo("r3");
+        // 后台线程出口彻底清空
+        assertThat(MDC.get("traceId")).isNull();
+        assertThat(UserContextHolder.getUserId()).isNull();
+        assertThat(TenantContextHolder.getTenantId()).isNull();
+        assertThat(TenantContextHolder.isIgnoreTenant()).isFalse();
+
+        // 其余两重载注册及句柄关闭释放
+        AutoCloseable sub2 = template.subscribeConfig("routes.yml", "BIZ_GROUP", mapTypeRef, m -> {});
+        AutoCloseable sub3 = template.subscribeConfig("rules.raw", "BIZ_GROUP", ConfigFormat.JSON, listTypeRef, l -> {
+            throw new RuntimeException("Simulated list subscriber failure");
+        });
+        assertThat(template.getActiveSubscriptionCount()).isEqualTo(3);
+
+        ArgumentCaptor<Listener> rawCaptor = ArgumentCaptor.forClass(Listener.class);
+        verify(configService).addListener(eq("rules.raw"), eq("BIZ_GROUP"), rawCaptor.capture());
+        rawCaptor.getValue().receiveConfigInfo(jsonList2); // 异常被内部隔离，不逃逸
+
+        sub1.close();
+        verify(configService).removeListener(eq("rules.json"), eq("DEFAULT_GROUP"), eq(listenerCaptor.getValue()));
+        assertThat(template.getActiveSubscriptionCount()).isEqualTo(2);
+
+        template.destroy();
+        assertThat(template.getActiveSubscriptionCount()).isEqualTo(0);
     }
 
 

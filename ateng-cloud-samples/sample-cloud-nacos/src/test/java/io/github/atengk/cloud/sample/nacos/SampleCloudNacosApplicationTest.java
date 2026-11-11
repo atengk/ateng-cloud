@@ -412,6 +412,51 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(400)))
                 .andExpect(jsonPath("$.success", is(false)));
+
+        // 4. 复杂泛型 TypeReference<List<TradeRuleConfig>> 多级规则列表端到端订阅、推送与校验
+        mockMvc.perform(get("/sample/cloud/nacos/config/trade-rules")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.rules").isArray())
+                .andExpect(jsonPath("$.data.count", is(0)))
+                .andExpect(jsonPath("$.data.updateCount", is(0)));
+
+        String rulesJson = """
+                [
+                  {"ruleName": "VIP-FastPass", "maxLimit": 500000, "enabled": true},
+                  {"ruleName": "Normal-DailyLimit", "maxLimit": 20000, "enabled": false}
+                ]
+                """;
+        mockMvc.perform(post("/sample/cloud/nacos/config/trade-rules/simulate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(rulesJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.count", is(2)))
+                .andExpect(jsonPath("$.data.rules[0].ruleName", is("VIP-FastPass")))
+                .andExpect(jsonPath("$.data.rules[0].maxLimit", is(500000)))
+                .andExpect(jsonPath("$.data.rules[1].ruleName", is("Normal-DailyLimit")))
+                .andExpect(jsonPath("$.data.rules[1].enabled", is(false)))
+                .andExpect(jsonPath("$.data.updateCount", is(1)))
+                .andExpect(jsonPath("$.data.traceId", not(emptyOrNullString())));
+
+        // 二次 GET 验证多级规则列表状态生效
+        mockMvc.perform(get("/sample/cloud/nacos/config/trade-rules")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.count", is(2)))
+                .andExpect(jsonPath("$.data.rules[1].maxLimit", is(20000)));
+
+        // 5. ValidList 元素级 JSR-303 校验防卫：列表内含非法规则应被拦截返回 400
+        String invalidRulesJson = "[{\"ruleName\": \"\", \"maxLimit\": -5, \"enabled\": true}]";
+        mockMvc.perform(post("/sample/cloud/nacos/config/trade-rules/simulate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidRulesJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(400)))
+                .andExpect(jsonPath("$.success", is(false)));
     }
 
     @Test

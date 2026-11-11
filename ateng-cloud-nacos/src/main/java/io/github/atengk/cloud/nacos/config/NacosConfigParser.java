@@ -1,6 +1,8 @@
 package io.github.atengk.cloud.nacos.config;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
@@ -71,35 +73,71 @@ public class NacosConfigParser {
         if (String.class.equals(targetType)) {
             return (T) content;
         }
-
         ConfigFormat targetFormat = format != null ? format : ConfigFormat.TEXT;
+        JavaType javaType = resolveTypeFactory(targetFormat).constructType(targetType);
+        return parseByJavaType(content, targetFormat, javaType, targetType.getSimpleName());
+    }
+
+    /**
+     * 基于 {@link TypeReference} 将配置文本反序列化为复杂泛型集合、字典或嵌套对象
+     *
+     * <p>消除 Java 运行时泛型擦除限制，支持如 {@code List<RuleConfig>}、{@code Map<String, Object>}
+     * 等复杂泛型结构的准确解析。</p>
+     *
+     * @param content       配置文本内容
+     * @param format        配置格式（为 null 时保底使用 TEXT 格式）
+     * @param typeReference Jackson 强类型泛型引用
+     * @param <T>           目标类型泛型
+     * @return 反序列化后的泛型对象实例，内容为空时返回 null
+     * @throws BusinessException 当反序列化解析失败时抛出 (携带原始因果链)
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T parse(String content, ConfigFormat format, TypeReference<T> typeReference) {
+        Assert.notNull(typeReference, "typeReference must not be null");
+        if (!StringUtils.hasText(content)) {
+            return null;
+        }
+        if (String.class.equals(typeReference.getType())) {
+            return (T) content;
+        }
+        ConfigFormat targetFormat = format != null ? format : ConfigFormat.TEXT;
+        JavaType javaType = resolveTypeFactory(targetFormat).constructType(typeReference);
+        return parseByJavaType(content, targetFormat, javaType, typeReference.getType().getTypeName());
+    }
+
+    private com.fasterxml.jackson.databind.type.TypeFactory resolveTypeFactory(ConfigFormat targetFormat) {
+        return targetFormat == ConfigFormat.YAML ? yamlMapper.getTypeFactory() : jsonMapper.getTypeFactory();
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T parseByJavaType(String content, ConfigFormat targetFormat, JavaType javaType, String targetDesc) {
         try {
             switch (targetFormat) {
                 case JSON -> {
-                    return jsonMapper.readValue(content, targetType);
+                    return jsonMapper.readValue(content, javaType);
                 }
                 case YAML -> {
-                    return yamlMapper.readValue(content, targetType);
+                    return yamlMapper.readValue(content, javaType);
                 }
                 case PROPERTIES -> {
                     Properties props = new Properties();
                     props.load(new StringReader(content));
-                    if (Properties.class.equals(targetType)) {
+                    if (Properties.class.equals(javaType.getRawClass())) {
                         return (T) props;
                     }
-                    return jsonMapper.convertValue(props, targetType);
+                    return jsonMapper.convertValue(props, javaType);
                 }
                 case TEXT -> {
-                    if (Object.class.equals(targetType)) {
+                    if (Object.class.equals(javaType.getRawClass()) || String.class.equals(javaType.getRawClass())) {
                         return (T) content;
                     }
-                    return jsonMapper.convertValue(content, targetType);
+                    return jsonMapper.convertValue(content, javaType);
                 }
                 default -> throw new IllegalArgumentException("Unsupported config format: " + targetFormat);
             }
         } catch (Exception ex) {
             throw new BusinessException(NacosResultCode.NACOS_CONFIG_PARSE_FAILED,
-                    "解析 Nacos " + targetFormat + " 配置为 [" + targetType.getSimpleName() + "] 失败: " + ex.getMessage(), ex);
+                    "解析 Nacos " + targetFormat + " 配置为 [" + targetDesc + "] 失败: " + ex.getMessage(), ex);
         }
     }
 

@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.nacos.config;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
 import io.github.atengk.cloud.nacos.constant.ConfigFormat;
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -220,5 +222,79 @@ class NacosConfigParserTest {
 
         assertThat(parser.serialize(null, ConfigFormat.YAML)).isEmpty();
         assertThat(parser.serialize("raw string", ConfigFormat.YAML)).isEqualTo("raw string");
+    }
+
+    @Test
+    @DisplayName("测试 TypeReference 复杂泛型集合与嵌套字典解析（YAML / JSON / Properties / 异常链）")
+    void testParseWithTypeReference() {
+        // 1. JSON 复杂泛型 List<SampleAppConfig> 与 Map<String, List<SampleAppConfig>>（校验精确泛型元素类型，非 LinkedHashMap）
+        String jsonList = """
+                [
+                  {"appName": "gateway", "port": 8000, "active": true},
+                  {"appName": "order", "port": 8001, "active": false}
+                ]
+                """;
+        List<SampleAppConfig> jsonApps = parser.parse(jsonList, ConfigFormat.JSON, new TypeReference<>() {});
+        assertThat(jsonApps).hasSize(2);
+        assertThat(jsonApps.get(0)).isInstanceOf(SampleAppConfig.class);
+        assertThat(jsonApps.get(0).getAppName()).isEqualTo("gateway");
+        assertThat(jsonApps.get(1).getPort()).isEqualTo(8001);
+
+        String jsonNestedMap = """
+                {
+                  "primary": [{"appName": "auth", "port": 9000, "active": true}]
+                }
+                """;
+        Map<String, List<SampleAppConfig>> jsonMap = parser.parse(jsonNestedMap, ConfigFormat.JSON, new TypeReference<>() {});
+        assertThat(jsonMap).containsKey("primary");
+        assertThat(jsonMap.get("primary").get(0)).isInstanceOf(SampleAppConfig.class);
+        assertThat(jsonMap.get("primary").get(0).getAppName()).isEqualTo("auth");
+
+        // 2. YAML 复杂泛型 List<SampleAppConfig> 与 Map<String, Object>
+        String yamlList = """
+                - appName: pay-v1
+                  port: 8100
+                  active: true
+                - appName: pay-v2
+                  port: 8101
+                  active: false
+                """;
+        List<SampleAppConfig> yamlApps = parser.parse(yamlList, ConfigFormat.YAML, new TypeReference<>() {});
+        assertThat(yamlApps).hasSize(2);
+        assertThat(yamlApps.get(0)).isInstanceOf(SampleAppConfig.class);
+        assertThat(yamlApps.get(0).getAppName()).isEqualTo("pay-v1");
+        assertThat(yamlApps.get(1).isActive()).isFalse();
+
+        Map<String, Object> yamlMap = parser.parse("region: cn-north\ntimeout: 30", ConfigFormat.YAML, new TypeReference<>() {});
+        assertThat(yamlMap).containsEntry("region", "cn-north").containsEntry("timeout", 30);
+
+        // 3. Properties 格式泛型 Map<String, Integer> 与 SampleAppConfig
+        String propsMapContent = "min=10\nmax=200\n";
+        Map<String, Integer> intMap = parser.parse(propsMapContent, ConfigFormat.PROPERTIES, new TypeReference<>() {});
+        assertThat(intMap).containsEntry("min", 10).containsEntry("max", 200);
+        assertThat(intMap.get("max")).isInstanceOf(Integer.class);
+
+        // 4. 空内容与 String TypeReference 边界
+        assertThat(parser.parse("   ", ConfigFormat.JSON, new TypeReference<List<SampleAppConfig>>() {})).isNull();
+        assertThat(parser.parse("plain-text", ConfigFormat.TEXT, new TypeReference<String>() {})).isEqualTo("plain-text");
+        assertThatThrownBy(() -> parser.parse("{}", ConfigFormat.JSON, (TypeReference<Map<String, Object>>) null))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // 5. 非法格式与类型不匹配时抛出 NACOS_CONFIG_PARSE_FAILED 并保留完整 cause 链
+        assertThatThrownBy(() -> parser.parse("[{broken", ConfigFormat.JSON, new TypeReference<List<SampleAppConfig>>() {}))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(NacosResultCode.NACOS_CONFIG_PARSE_FAILED.getCode());
+                    assertThat(be.getCause()).isNotNull();
+                });
+
+        assertThatThrownBy(() -> parser.parse("key=not-a-list", ConfigFormat.PROPERTIES, new TypeReference<List<SampleAppConfig>>() {}))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(NacosResultCode.NACOS_CONFIG_PARSE_FAILED.getCode());
+                    assertThat(be.getCause()).isNotNull();
+                });
     }
 }

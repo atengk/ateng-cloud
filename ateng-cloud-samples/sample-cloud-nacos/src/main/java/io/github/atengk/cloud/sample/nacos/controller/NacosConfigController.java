@@ -2,6 +2,7 @@ package io.github.atengk.cloud.sample.nacos.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.core.util.JsonUtil;
+import io.github.atengk.boot.core.validation.ValidList;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.mask.ConfigMasker;
@@ -17,6 +18,7 @@ import io.github.atengk.cloud.sample.nacos.model.RefreshFailureStatusVO;
 import io.github.atengk.cloud.sample.nacos.model.RefreshRequestDTO;
 import io.github.atengk.cloud.sample.nacos.model.SafeConfigRefreshVO;
 import io.github.atengk.cloud.sample.nacos.model.TradeRuleConfig;
+import io.github.atengk.cloud.sample.nacos.model.TradeRuleListVO;
 import io.github.atengk.cloud.sample.nacos.model.TradeRuleVO;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +26,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.ArrayList;
 
 /**
  * Nacos 现代配置中心安全动态热更与电商订单配置演示控制器
@@ -176,5 +180,28 @@ public class NacosConfigController {
             typedSubscriptionService.onTradeRuleUpdated(rule);
         }
         return getTradeRule();
+    }
+
+    /**
+     * 读取当前复杂泛型订阅的多级交易规则列表状态
+     */
+    @GetMapping("/trade-rules")
+    public Result<TradeRuleListVO> getTradeRules() {
+        TradeRuleListVO vo = new TradeRuleListVO(
+                typedSubscriptionService.getCurrentRules(),
+                typedSubscriptionService.getLastListTraceId(),
+                typedSubscriptionService.getListNotificationCount()
+        );
+        return Result.success(vo);
+    }
+
+    /**
+     * 模拟推送多级交易规则列表并触发 {@code TypeReference<List<TradeRuleConfig>>} 复杂泛型回调
+     */
+    @PostMapping("/trade-rules/simulate")
+    public Result<TradeRuleListVO> simulateTradeRulesUpdate(@RequestBody @Valid ValidList<TradeRuleConfig> rules) {
+        String rawJson = JsonUtil.toJsonString(new ArrayList<>(rules));
+        typedSubscriptionService.simulateRulesConfigPush(rawJson);
+        return getTradeRules();
     }
 }

@@ -15,6 +15,7 @@ import com.alibaba.nacos.api.naming.pojo.Instance;
 import com.alibaba.nacos.api.naming.pojo.ListView;
 import com.alibaba.nacos.api.naming.pojo.Service;
 import com.alibaba.nacos.api.naming.pojo.ServiceInfo;
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
 import io.github.atengk.cloud.nacos.config.NacosConfigParser;
@@ -47,6 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -1231,12 +1233,74 @@ public class NacosTemplate implements DisposableBean {
      */
     public <T> T getConfig(String dataId, String groupName, Duration timeout, ConfigFormat format, Class<T> targetType) {
         Assert.notNull(targetType, "targetType must not be null");
+        return resolveAndParseConfig(dataId, groupName, timeout, format,
+                (rawContent, resolvedFormat) -> configParser.parse(rawContent, resolvedFormat, targetType));
+    }
+
+    /**
+     * 读取指定配置并依据 {@link TypeReference} 自动反序列化为复杂泛型对象（使用默认分组与超时，依据 Data ID 扩展名推断格式）
+     *
+     * @param dataId        配置集唯一标识
+     * @param typeReference 复杂泛型引用（如 {@code new TypeReference<List<RuleConfig>>() {}}）
+     * @param <T>           目标泛型
+     * @return 反序列化后的泛型对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, TypeReference<T> typeReference) {
+        return getConfig(dataId, null, null, null, typeReference);
+    }
+
+    /**
+     * 读取指定配置并依据 {@link TypeReference} 自动反序列化为复杂泛型对象（使用指定分组与默认超时）
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 反序列化后的泛型对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, String groupName, TypeReference<T> typeReference) {
+        return getConfig(dataId, groupName, null, null, typeReference);
+    }
+
+    /**
+     * 读取指定配置并依据 {@link TypeReference} 自动反序列化为复杂泛型对象（使用指定分组与超时）
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param timeout       获取超时时间（为 null 时使用默认配置超时）
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 反序列化后的泛型对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, String groupName, Duration timeout, TypeReference<T> typeReference) {
+        return getConfig(dataId, groupName, timeout, null, typeReference);
+    }
+
+    /**
+     * 读取指定配置并依据显式格式与 {@link TypeReference} 自动反序列化为复杂泛型对象
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param timeout       获取超时时间（为 null 时使用默认配置超时）
+     * @param format        显式配置格式（为 null 时依据 Data ID 扩展名推断）
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 反序列化后的泛型对象，不存在或离线时返回 null
+     */
+    public <T> T getConfig(String dataId, String groupName, Duration timeout, ConfigFormat format, TypeReference<T> typeReference) {
+        Assert.notNull(typeReference, "typeReference must not be null");
+        return resolveAndParseConfig(dataId, groupName, timeout, format,
+                (rawContent, resolvedFormat) -> configParser.parse(rawContent, resolvedFormat, typeReference));
+    }
+
+    private <T> T resolveAndParseConfig(String dataId, String groupName, Duration timeout, ConfigFormat format,
+                                        BiFunction<String, ConfigFormat, T> parserFn) {
         String rawContent = getConfig(dataId, groupName, timeout);
         if (!StringUtils.hasText(rawContent)) {
             return null;
         }
         ConfigFormat resolvedFormat = format != null ? format : ConfigFormat.fromDataId(dataId);
-        return configParser.parse(rawContent, resolvedFormat, targetType);
+        return parserFn.apply(rawContent, resolvedFormat);
     }
 
     /**
@@ -1291,6 +1355,60 @@ public class NacosTemplate implements DisposableBean {
      */
     public <T> Optional<T> findConfig(String dataId, String groupName, Duration timeout, ConfigFormat format, Class<T> targetType) {
         return Optional.ofNullable(getConfig(dataId, groupName, timeout, format, targetType));
+    }
+
+    /**
+     * 空安全查询指定配置并依据 {@link TypeReference} 反序列化为 Optional 包装对象（使用默认分组与超时）
+     *
+     * @param dataId        配置集唯一标识
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 包含泛型配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, TypeReference<T> typeReference) {
+        return Optional.ofNullable(getConfig(dataId, typeReference));
+    }
+
+    /**
+     * 空安全查询指定配置并依据 {@link TypeReference} 反序列化为 Optional 包装对象（使用指定分组与默认超时）
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 包含泛型配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, String groupName, TypeReference<T> typeReference) {
+        return Optional.ofNullable(getConfig(dataId, groupName, typeReference));
+    }
+
+    /**
+     * 空安全查询指定配置并依据 {@link TypeReference} 反序列化为 Optional 包装对象（使用指定分组与超时）
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param timeout       获取超时时间（为 null 时使用默认配置超时）
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 包含泛型配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, String groupName, Duration timeout, TypeReference<T> typeReference) {
+        return Optional.ofNullable(getConfig(dataId, groupName, timeout, typeReference));
+    }
+
+    /**
+     * 空安全查询指定配置并依据显式格式与 {@link TypeReference} 反序列化为 Optional 包装对象
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param timeout       获取超时时间（为 null 时使用默认配置超时）
+     * @param format        显式配置格式（为 null 时依据 Data ID 扩展名推断）
+     * @param typeReference 复杂泛型引用
+     * @param <T>           目标泛型
+     * @return 包含泛型配置对象的 Optional，不存在或离线时返回 Optional.empty()
+     */
+    public <T> Optional<T> findConfig(String dataId, String groupName, Duration timeout, ConfigFormat format, TypeReference<T> typeReference) {
+        return Optional.ofNullable(getConfig(dataId, groupName, timeout, format, typeReference));
     }
 
     /**
@@ -1605,7 +1723,60 @@ public class NacosTemplate implements DisposableBean {
         Assert.hasText(dataId, "dataId must not be blank");
         Assert.notNull(targetType, "targetType must not be null");
         Assert.notNull(callback, "callback must not be null");
+        return subscribeConfigInternal(dataId, groupName, format,
+                (rawContent, resolvedFormat) -> configParser.parse(rawContent, resolvedFormat, targetType), callback);
+    }
 
+    /**
+     * 编程式订阅指定 Data ID 的复杂泛型动态配置变更（使用默认分组并根据后缀推断格式）
+     *
+     * @param dataId        配置集唯一标识
+     * @param typeReference 复杂泛型引用（如 {@code new TypeReference<List<RuleConfig>>() {}}）
+     * @param callback      配置变更回调消费函数
+     * @param <T>           配置泛型
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public <T> AutoCloseable subscribeConfig(String dataId, TypeReference<T> typeReference, Consumer<T> callback) {
+        return subscribeConfig(dataId, null, null, typeReference, callback);
+    }
+
+    /**
+     * 编程式订阅指定 Data ID 与分组的复杂泛型动态配置变更（根据后缀自动推断格式）
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param typeReference 复杂泛型引用
+     * @param callback      配置变更回调消费函数
+     * @param <T>           配置泛型
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public <T> AutoCloseable subscribeConfig(String dataId, String groupName, TypeReference<T> typeReference, Consumer<T> callback) {
+        return subscribeConfig(dataId, groupName, null, typeReference, callback);
+    }
+
+    /**
+     * 编程式订阅指定 Data ID、分组与显式格式的复杂泛型动态配置变更
+     *
+     * @param dataId        配置集唯一标识
+     * @param groupName     配置分组名（为 null 时使用默认组）
+     * @param format        显式配置格式（为 null 时依据 dataId 扩展名推断）
+     * @param typeReference 复杂泛型引用
+     * @param callback      配置变更回调消费函数
+     * @param <T>           配置泛型
+     * @return 可自闭合的订阅句柄，调用 {@link AutoCloseable#close()} 即可注销监听
+     */
+    public <T> AutoCloseable subscribeConfig(String dataId, String groupName, ConfigFormat format,
+                                             TypeReference<T> typeReference, Consumer<T> callback) {
+        Assert.hasText(dataId, "dataId must not be blank");
+        Assert.notNull(typeReference, "typeReference must not be null");
+        Assert.notNull(callback, "callback must not be null");
+        return subscribeConfigInternal(dataId, groupName, format,
+                (rawContent, resolvedFormat) -> configParser.parse(rawContent, resolvedFormat, typeReference), callback);
+    }
+
+    private <T> AutoCloseable subscribeConfigInternal(String dataId, String groupName, ConfigFormat format,
+                                                      BiFunction<String, ConfigFormat, T> parserFn,
+                                                      Consumer<T> callback) {
         if (!isConfigAvailable()) {
             log.debug("Nacos config is not available. Skipping subscribeConfig for dataId '{}'", dataId);
             return () -> {};
@@ -1615,9 +1786,9 @@ public class NacosTemplate implements DisposableBean {
         String targetGroup = resolveConfigGroup(groupName);
 
         // 1. 尝试首次立即拉取并派发当前最新有效配置
-        deliverInitialConfig(dataId, targetGroup, resolvedFormat, targetType, callback);
+        deliverInitialConfig(dataId, targetGroup, resolvedFormat, parserFn, callback);
 
-        // 2. 构建具备 MDC 追踪与异常物理隔离屏障的原生监听器
+        // 2. 构建具备三元上下文隔离与异常物理隔离屏障的原生监听器
         Listener listener = new Listener() {
             @Override
             public Executor getExecutor() {
@@ -1626,7 +1797,7 @@ public class NacosTemplate implements DisposableBean {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                dispatchTypedConfigUpdate(configInfo, resolvedFormat, targetType, callback, dataId, targetGroup);
+                dispatchTypedConfigUpdate(configInfo, resolvedFormat, parserFn, callback, dataId, targetGroup);
             }
         };
 
@@ -1639,16 +1810,18 @@ public class NacosTemplate implements DisposableBean {
         return subscription;
     }
 
-    private <T> void deliverInitialConfig(String dataId, String targetGroup, ConfigFormat format, Class<T> targetType, Consumer<T> callback) {
+    private <T> void deliverInitialConfig(String dataId, String targetGroup, ConfigFormat format,
+                                          BiFunction<String, ConfigFormat, T> parserFn, Consumer<T> callback) {
         try {
             String currentContent = getConfig(dataId, targetGroup);
-            dispatchTypedConfigUpdate(currentContent, format, targetType, callback, dataId, targetGroup);
+            dispatchTypedConfigUpdate(currentContent, format, parserFn, callback, dataId, targetGroup);
         } catch (Exception ex) {
             log.warn("Failed to fetch or parse initial Nacos config for dataId '{}', group '{}'", dataId, targetGroup, ex);
         }
     }
 
-    private <T> void dispatchTypedConfigUpdate(String configInfo, ConfigFormat format, Class<T> targetType,
+    private <T> void dispatchTypedConfigUpdate(String configInfo, ConfigFormat format,
+                                               BiFunction<String, ConfigFormat, T> parserFn,
                                                Consumer<T> callback, String dataId, String group) {
         if (!StringUtils.hasText(configInfo)) {
             log.warn("Nacos config content is empty or deleted for dataId '{}', group '{}'. Skipping typed callback invocation.",
@@ -1657,7 +1830,7 @@ public class NacosTemplate implements DisposableBean {
         }
         executeWithTrace(() -> {
             try {
-                T parsed = configParser.parse(configInfo, format, targetType);
+                T parsed = parserFn.apply(configInfo, format);
                 if (parsed != null) {
                     callback.accept(parsed);
                 } else {
