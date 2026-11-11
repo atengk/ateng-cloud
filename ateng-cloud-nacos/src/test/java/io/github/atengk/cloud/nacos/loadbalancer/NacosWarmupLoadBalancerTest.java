@@ -360,6 +360,49 @@ class NacosWarmupLoadBalancerTest {
         assertThat(counts.get("hot-2")).isEqualTo(10);
     }
 
+    @Test
+    @DisplayName("静态基准权重常驻调度：关闭预热与自适应调谐时，仍按 nacos.weight 比例执行平滑加权轮询，等权自动退化均匀轮询")
+    void testStaticWeightPreservedWhenWarmupAndAdaptiveDisabled() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        properties.getLoadbalancer().setWarmup(false);
+        properties.getLoadbalancer().getAdaptiveWeight().setEnabled(false);
+
+        NacosWarmupLoadBalancer lb = new NacosWarmupLoadBalancer("order-service",
+                new SimpleObjectProvider<>(new StubSupplier(Collections.emptyList())), properties);
+
+        long now = System.currentTimeMillis();
+        // 1. 差异化静态权重 (1.0 vs 0.5 -> 2 : 1)
+        ServiceInstance instHeavy = createInstance("inst-heavy", "192.168.1.10", 8080, now, "60s", 1.0);
+        ServiceInstance instLight = createInstance("inst-light", "192.168.1.20", 8080, now, "60s", 0.5);
+
+        Map<String, Integer> ratioCounts = new HashMap<>();
+        for (int i = 0; i < 30; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(List.of(instHeavy, instLight));
+            assertThat(resp.hasServer()).isTrue();
+            ratioCounts.merge(resp.getServer().getInstanceId(), 1, Integer::sum);
+        }
+        assertThat(ratioCounts.get("inst-heavy")).isEqualTo(20);
+        assertThat(ratioCounts.get("inst-light")).isEqualTo(10);
+
+        // 2. 静态权重中包含 0.0 摘流节点时绝对跳过
+        ServiceInstance instZero = createInstance("inst-zero", "192.168.1.30", 8080, now, "60s", 0.0);
+        for (int i = 0; i < 20; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(List.of(instHeavy, instZero));
+            assertThat(resp.getServer().getInstanceId()).isEqualTo("inst-heavy");
+        }
+
+        // 3. 相同静态权重 (2.0 vs 2.0) 自动退化为均匀轮询
+        ServiceInstance instEq1 = createInstance("inst-eq-1", "192.168.1.40", 8080, now, "60s", 2.0);
+        ServiceInstance instEq2 = createInstance("inst-eq-2", "192.168.1.50", 8080, now, "60s", 2.0);
+        Map<String, Integer> eqCounts = new HashMap<>();
+        for (int i = 0; i < 20; i++) {
+            Response<ServiceInstance> resp = lb.processInstanceResponse(List.of(instEq1, instEq2));
+            eqCounts.merge(resp.getServer().getInstanceId(), 1, Integer::sum);
+        }
+        assertThat(eqCounts.get("inst-eq-1")).isEqualTo(10);
+        assertThat(eqCounts.get("inst-eq-2")).isEqualTo(10);
+    }
+
     private ServiceInstance createInstanceWithLoad(String id, String host, int port, String cpuUsage) {
         Map<String, String> metadata = new HashMap<>();
         metadata.put("cpu-usage", cpuUsage);

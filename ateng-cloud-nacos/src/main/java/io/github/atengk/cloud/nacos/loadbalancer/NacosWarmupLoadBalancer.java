@@ -21,19 +21,19 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Nacos 平滑启动预热 (Startup Preheating) 加权轮询负载均衡选择器
+ * Nacos 静态权重、启动预热与自适应负载平滑加权轮询选择器
  *
  * <p>核心治理语义：
- * 1. 消费实例元数据中的 {@code startup-time} 与 {@code warmup-duration}（默认 60s）；
- * 2. 预热期内按线性升权公式 {@code floor + (1.0 - floor) * (uptime / warmupDuration)} 动态计算权重（保底 10% 底噪）；
- * 3. 采用平滑加权轮询算法（Smooth Weighted Round-Robin）无抖动调度流量；
- * 4. 预热完成后平滑收敛为均匀轮询，零额外计算开销。</p>
+ * 1. <b>静态基准权重常驻</b>：无论是否开启预热或自适应调谐，始终解析实例元数据中的 {@code nacos.weight}；
+ * 2. <b>启动预热线性升权</b>：开启预热时按 {@code baseWeight * (floor + (1.0 - floor) * (uptime / warmupDuration))} 计算动态权重；
+ * 3. <b>自适应负载调谐</b>：按需叠加 {@link InstanceWeightCalculator} SPI，全集群过载时触发熔断回退均匀轮询；
+ * 4. <b>双模极速路径</b>：当所有候选实例有效权重完全相等且大于 0 时退化为无锁均匀轮询，否则执行 Nginx 平滑加权轮询（SWRR）。</p>
  *
  * @author Ateng
  * @since 2026-10-28
@@ -45,7 +45,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
     private final String serviceId;
     private final ObjectProvider<ServiceInstanceListSupplier> serviceInstanceListSupplierProvider;
     private final AtengNacosProperties properties;
-    private final AtomicInteger position = new AtomicInteger(new Random().nextInt(1000));
+    private final AtomicInteger position = new AtomicInteger(ThreadLocalRandom.current().nextInt(1000));
     private final ConcurrentMap<String, AtomicInteger> currentWeights = new ConcurrentHashMap<>();
 
     private final ObjectProvider<InstanceWeightCalculator> weightCalculatorProvider;
@@ -93,14 +93,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
             return selectRoundRobin(instances);
         }
 
-        boolean warmupEnabled = properties != null && properties.isLoadBalancerWarmupEnabled();
-        boolean adaptiveEnabled = properties != null && properties.isAdaptiveWeightEnabled();
-        boolean hasCustomCalculator = weightCalculatorProvider != null && weightCalculatorProvider.getIfAvailable() != null;
-
-        if (!warmupEnabled && !adaptiveEnabled && !hasCustomCalculator) {
-            return selectRoundRobin(instances);
-        }
-
+        // 统一进入有效权重解析（常驻尊重 nacos.weight 静态权重；权重全相等且 > 0 时内部自动走均匀轮询极速路径）
         return selectWarmupWeighted(instances);
     }
 
@@ -135,7 +128,7 @@ public class NacosWarmupLoadBalancer implements ReactorServiceInstanceLoadBalanc
         for (int i = 0; i < instances.size(); i++) {
             ServiceInstance inst = instances.get(i);
             double effectiveWeight = calculateEffectiveWeight(inst, now, floorRatio);
-            int scaled = (int) Math.round(effectiveWeight * 100.0);
+            int scaled = (int) Math.min(1_000_000L, Math.round(effectiveWeight * 100.0));
             if (effectiveWeight <= 0.0 || scaled < 0) {
                 scaled = 0;
             } else if (scaled < 1) {
