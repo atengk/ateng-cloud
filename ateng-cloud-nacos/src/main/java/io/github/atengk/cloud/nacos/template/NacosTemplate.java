@@ -132,7 +132,7 @@ public class NacosTemplate implements DisposableBean {
      * @return 实例列表 (空安全保证，绝不返回 null)
      */
     public List<Instance> getAllInstances(String serviceName) {
-        return getAllInstances(serviceName, null);
+        return getAllInstances(serviceName, null, null);
     }
 
     /**
@@ -143,15 +143,42 @@ public class NacosTemplate implements DisposableBean {
      * @return 实例列表 (空安全保证，绝不返回 null)
      */
     public List<Instance> getAllInstances(String serviceName, String groupName) {
+        return getAllInstances(serviceName, groupName, null);
+    }
+
+    /**
+     * 查询指定集群列表下服务的所有已注册实例（默认分组）
+     *
+     * @param serviceName 服务名
+     * @param clusters    集群列表 (为 null 或空时透明降级为查询全部集群)
+     * @return 实例列表 (空安全保证，绝不返回 null)
+     */
+    public List<Instance> getAllInstances(String serviceName, List<String> clusters) {
+        return getAllInstances(serviceName, null, clusters);
+    }
+
+    /**
+     * 查询指定分组与集群列表下服务的所有已注册实例
+     *
+     * @param serviceName 服务名
+     * @param groupName   分组名 (为 null 时使用默认组)
+     * @param clusters    集群列表 (为 null 或空时透明降级为查询全部集群)
+     * @return 实例列表 (空安全保证，绝不返回 null)
+     */
+    public List<Instance> getAllInstances(String serviceName, String groupName, List<String> clusters) {
         if (!isDiscoveryAvailable() || !StringUtils.hasText(serviceName)) {
             return Collections.emptyList();
         }
+        List<String> validClusters = normalizeClusters(clusters);
         return executeWithExceptionTranslation("getAllInstances", () -> {
             NamingService namingService = getNamingService();
             if (namingService == null) {
                 return Collections.emptyList();
             }
-            List<Instance> list = namingService.getAllInstances(serviceName, resolveGroupName(groupName));
+            String resolvedGroup = resolveGroupName(groupName);
+            List<Instance> list = validClusters.isEmpty()
+                    ? namingService.getAllInstances(serviceName, resolvedGroup)
+                    : namingService.getAllInstances(serviceName, resolvedGroup, validClusters);
             return list != null ? list : Collections.emptyList();
         });
     }
@@ -163,7 +190,7 @@ public class NacosTemplate implements DisposableBean {
      * @return 健康可用实例列表 (空安全保证，绝不返回 null)
      */
     public List<Instance> getHealthyInstances(String serviceName) {
-        return getHealthyInstances(serviceName, null);
+        return getHealthyInstances(serviceName, null, null);
     }
 
     /**
@@ -174,22 +201,43 @@ public class NacosTemplate implements DisposableBean {
      * @return 健康可用实例列表 (空安全保证，绝不返回 null)
      */
     public List<Instance> getHealthyInstances(String serviceName, String groupName) {
+        return getHealthyInstances(serviceName, groupName, null);
+    }
+
+    /**
+     * 查询指定集群列表下服务的健康可用实例（默认分组，已过滤权重 <= 0.0 与禁用节点）
+     *
+     * @param serviceName 服务名
+     * @param clusters    集群列表 (为 null 或空时透明降级为查询全部集群)
+     * @return 健康可用实例列表 (空安全保证，绝不返回 null)
+     */
+    public List<Instance> getHealthyInstances(String serviceName, List<String> clusters) {
+        return getHealthyInstances(serviceName, null, clusters);
+    }
+
+    /**
+     * 查询指定分组与集群列表下服务的健康可用实例（已过滤权重 <= 0.0 与禁用节点）
+     *
+     * @param serviceName 服务名
+     * @param groupName   分组名 (为 null 时使用默认组)
+     * @param clusters    集群列表 (为 null 或空时透明降级为查询全部集群)
+     * @return 健康可用实例列表 (空安全保证，绝不返回 null)
+     */
+    public List<Instance> getHealthyInstances(String serviceName, String groupName, List<String> clusters) {
         if (!isDiscoveryAvailable() || !StringUtils.hasText(serviceName)) {
             return Collections.emptyList();
         }
+        List<String> validClusters = normalizeClusters(clusters);
         return executeWithExceptionTranslation("getHealthyInstances", () -> {
             NamingService namingService = getNamingService();
             if (namingService == null) {
                 return Collections.emptyList();
             }
-            List<Instance> list = namingService.selectInstances(serviceName, resolveGroupName(groupName), true);
-            if (list == null || list.isEmpty()) {
-                return Collections.emptyList();
-            }
-            // 严格响应动态权重与禁用状态
-            return list.stream()
-                    .filter(i -> i != null && i.isEnabled() && i.isHealthy() && i.getWeight() > 0.0)
-                    .collect(Collectors.toList());
+            String resolvedGroup = resolveGroupName(groupName);
+            List<Instance> list = validClusters.isEmpty()
+                    ? namingService.selectInstances(serviceName, resolvedGroup, true)
+                    : namingService.selectInstances(serviceName, resolvedGroup, validClusters, true);
+            return filterHealthyInstances(list);
         });
     }
 
@@ -215,13 +263,36 @@ public class NacosTemplate implements DisposableBean {
     }
 
     /**
+     * 查询指定集群列表下服务的可用实例列表 (语义同 {@link #getHealthyInstances(String, List)})
+     *
+     * @param serviceName 服务名
+     * @param clusters    集群列表 (为 null 或空时透明降级为查询全部集群)
+     * @return 实例列表 (空安全保证，绝不返回 null)
+     */
+    public List<Instance> getInstances(String serviceName, List<String> clusters) {
+        return getHealthyInstances(serviceName, clusters);
+    }
+
+    /**
+     * 查询指定分组与集群列表下服务的可用实例列表 (语义同 {@link #getHealthyInstances(String, String, List)})
+     *
+     * @param serviceName 服务名
+     * @param groupName   分组名
+     * @param clusters    集群列表 (为 null 或空时透明降级为查询全部集群)
+     * @return 实例列表 (空安全保证，绝不返回 null)
+     */
+    public List<Instance> getInstances(String serviceName, String groupName, List<String> clusters) {
+        return getHealthyInstances(serviceName, groupName, clusters);
+    }
+
+    /**
      * 随机选择单个健康可用实例
      *
      * @param serviceName 服务名
      * @return 单实例 Optional 封装 (绝不返回 null)
      */
     public Optional<Instance> selectOneHealthyInstance(String serviceName) {
-        return selectOneHealthyInstance(serviceName, null);
+        return selectOneHealthyInstance(serviceName, null, null);
     }
 
     /**
@@ -232,7 +303,30 @@ public class NacosTemplate implements DisposableBean {
      * @return 单实例 Optional 封装 (绝不返回 null)
      */
     public Optional<Instance> selectOneHealthyInstance(String serviceName, String groupName) {
-        List<Instance> healthy = getHealthyInstances(serviceName, groupName);
+        return selectOneHealthyInstance(serviceName, groupName, null);
+    }
+
+    /**
+     * 随机选择指定集群列表下单个健康可用实例（默认分组）
+     *
+     * @param serviceName 服务名
+     * @param clusters    集群列表 (为 null 或空时透明降级为全部集群)
+     * @return 单实例 Optional 封装 (绝不返回 null)
+     */
+    public Optional<Instance> selectOneHealthyInstance(String serviceName, List<String> clusters) {
+        return selectOneHealthyInstance(serviceName, null, clusters);
+    }
+
+    /**
+     * 随机选择指定分组与集群列表下单个健康可用实例
+     *
+     * @param serviceName 服务名
+     * @param groupName   分组名
+     * @param clusters    集群列表 (为 null 或空时透明降级为全部集群)
+     * @return 单实例 Optional 封装 (绝不返回 null)
+     */
+    public Optional<Instance> selectOneHealthyInstance(String serviceName, String groupName, List<String> clusters) {
+        List<Instance> healthy = getHealthyInstances(serviceName, groupName, clusters);
         if (healthy.isEmpty()) {
             return Optional.empty();
         }
@@ -273,7 +367,7 @@ public class NacosTemplate implements DisposableBean {
      * @return 亲和筛选后的实例列表 (空安全保证)
      */
     public List<Instance> getSameZoneInstances(String serviceName) {
-        return getSameZoneInstances(serviceName, null);
+        return getSameZoneInstances(serviceName, null, null);
     }
 
     /**
@@ -284,7 +378,33 @@ public class NacosTemplate implements DisposableBean {
      * @return 亲和筛选后的实例列表 (空安全保证)
      */
     public List<Instance> getSameZoneInstances(String serviceName, String groupName) {
-        List<Instance> healthyInstances = getHealthyInstances(serviceName, groupName);
+        return getSameZoneInstances(serviceName, groupName, null);
+    }
+
+    /**
+     * 基于同机房就近亲和策略获取指定集群列表下的目标服务健康实例（默认分组）
+     *
+     * @param serviceName 目标服务名
+     * @param clusters    集群列表 (为 null 或空时透明降级为全部集群)
+     * @return 亲和筛选后的实例列表 (空安全保证)
+     */
+    public List<Instance> getSameZoneInstances(String serviceName, List<String> clusters) {
+        return getSameZoneInstances(serviceName, null, clusters);
+    }
+
+    /**
+     * 基于同机房就近亲和策略获取指定分组与集群列表下的目标服务健康实例
+     *
+     * <p>优先筛选目标集群列表内与当前调用端同机房（Zone）的健康节点；
+     * 若本机房无可用实例，平滑跨区降级至目标集群列表下的全部健康实例。</p>
+     *
+     * @param serviceName 目标服务名
+     * @param groupName   分组名
+     * @param clusters    集群列表 (为 null 或空时透明降级为全部集群)
+     * @return 亲和筛选后的实例列表 (空安全保证)
+     */
+    public List<Instance> getSameZoneInstances(String serviceName, String groupName, List<String> clusters) {
+        List<Instance> healthyInstances = getHealthyInstances(serviceName, groupName, clusters);
         if (healthyInstances.isEmpty()) {
             return Collections.emptyList();
         }
@@ -293,6 +413,27 @@ public class NacosTemplate implements DisposableBean {
             currentZone = metadataProvider.getMetadata().get(ZoneAffinityInstanceFilter.METADATA_KEY_ZONE);
         }
         return zoneAffinityFilter.filter(healthyInstances, currentZone);
+    }
+
+    private List<String> normalizeClusters(List<String> clusters) {
+        if (clusters == null || clusters.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> normalized = clusters.stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .collect(Collectors.toList());
+        return normalized.isEmpty() ? Collections.emptyList() : normalized;
+    }
+
+    private List<Instance> filterHealthyInstances(List<Instance> list) {
+        if (list == null || list.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return list.stream()
+                .filter(i -> i != null && i.isEnabled() && i.isHealthy() && i.getWeight() > 0.0)
+                .collect(Collectors.toList());
     }
 
     // ==========================================
@@ -361,7 +502,7 @@ public class NacosTemplate implements DisposableBean {
         }
 
         String targetGroup = resolveGroupName(groupName);
-        List<String> targetClusters = (clusters != null && !clusters.isEmpty()) ? clusters : Collections.emptyList();
+        List<String> targetClusters = normalizeClusters(clusters);
 
         // 1. 尝试首次立即拉取并派发当前最新有效健康实例快照
         deliverInitialInstances(serviceName, targetGroup, targetClusters, listener);
@@ -395,20 +536,7 @@ public class NacosTemplate implements DisposableBean {
 
     private void deliverInitialInstances(String serviceName, String targetGroup, List<String> clusters, Consumer<List<Instance>> listener) {
         try {
-            List<Instance> initialList;
-            if (clusters != null && !clusters.isEmpty()) {
-                NamingService namingService = getNamingService();
-                if (namingService != null) {
-                    List<Instance> list = namingService.selectInstances(serviceName, targetGroup, clusters, true);
-                    initialList = list != null ? list.stream()
-                            .filter(i -> i != null && i.isEnabled() && i.isHealthy() && i.getWeight() > 0.0)
-                            .collect(Collectors.toList()) : Collections.emptyList();
-                } else {
-                    initialList = Collections.emptyList();
-                }
-            } else {
-                initialList = getHealthyInstances(serviceName, targetGroup);
-            }
+            List<Instance> initialList = getHealthyInstances(serviceName, targetGroup, clusters);
             dispatchInstancesUpdate(initialList, listener, serviceName, targetGroup);
         } catch (Exception ex) {
             log.warn("Failed to fetch initial Nacos instances for service '{}', group '{}'", serviceName, targetGroup, ex);

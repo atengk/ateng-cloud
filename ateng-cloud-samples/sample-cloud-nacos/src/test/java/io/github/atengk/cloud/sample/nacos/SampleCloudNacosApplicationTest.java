@@ -245,6 +245,19 @@ class SampleCloudNacosApplicationTest {
                 .andExpect(jsonPath("$.code", is(200)))
                 .andExpect(jsonPath("$.data").isArray());
 
+        // 2.1 测试三维寻址坐标：带 groupName 与 clusters 参数的实例与同机房查询接口
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/instances?serviceName=sample-cloud-nacos&groupName=DEFAULT_GROUP&clusters=cluster-a,cluster-b")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data").isArray());
+
+        mockMvc.perform(get("/sample/cloud/nacos/discovery/same-zone?serviceName=sample-cloud-nacos&groupName=DEFAULT_GROUP&clusters=cluster-a&clusters=cluster-b")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data").isArray());
+
         // 3. 测试获取自身实例（双模自适应：离线为 null，在线返回自身节点）
         mockMvc.perform(get("/sample/cloud/nacos/discovery/me")
                         .accept(MediaType.APPLICATION_JSON))

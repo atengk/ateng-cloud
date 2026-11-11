@@ -30,6 +30,7 @@ import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -47,6 +48,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -87,6 +89,16 @@ class NacosTemplateTest {
         assertThat(template.selectOneHealthyInstance("any-service")).isEmpty();
         assertThat(template.getMyInstance()).isEmpty();
         assertThat(template.getSameZoneInstances("any-service")).isEmpty();
+        assertThat(template.getAllInstances("any-service", List.of("c1"))).isEmpty();
+        assertThat(template.getAllInstances("any-service", "CUSTOM_GROUP", List.of("c1"))).isEmpty();
+        assertThat(template.getHealthyInstances("any-service", List.of("c1"))).isEmpty();
+        assertThat(template.getHealthyInstances("any-service", "CUSTOM_GROUP", List.of("c1"))).isEmpty();
+        assertThat(template.getInstances("any-service", List.of("c1"))).isEmpty();
+        assertThat(template.getInstances("any-service", "CUSTOM_GROUP", List.of("c1"))).isEmpty();
+        assertThat(template.selectOneHealthyInstance("any-service", List.of("c1"))).isEmpty();
+        assertThat(template.selectOneHealthyInstance("any-service", "CUSTOM_GROUP", List.of("c1"))).isEmpty();
+        assertThat(template.getSameZoneInstances("any-service", List.of("c1"))).isEmpty();
+        assertThat(template.getSameZoneInstances("any-service", "CUSTOM_GROUP", List.of("c1"))).isEmpty();
         assertThat(template.getServices(1, 10)).isEmpty();
         assertThat(template.isUnderProtection("any-service")).isFalse();
 
@@ -1178,6 +1190,106 @@ class NacosTemplateTest {
 
         cfgSub.close();
         instSub.close();
+    }
+
+    @Test
+    @DisplayName("三维坐标主动查询与有效性过滤：支持指定 clusters 查询，空/null 集群列表透明降级并兼容机房亲和")
+    void testThreeDimensionalDiscoveryQueriesAndClusterFallback() throws Exception {
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+
+        Instance healthyZoneA = createInstance("10.1.0.1", 8080, "zone-a", 1.0, true, true);
+        Instance healthyZoneB = createInstance("10.2.0.2", 8080, "zone-b", 1.0, true, true);
+        Instance zeroWeightZoneA = createInstance("10.1.0.3", 8080, "zone-a", 0.0, true, true);
+        Instance disabledZoneA = createInstance("10.1.0.4", 8080, "zone-a", 1.0, true, false);
+        Instance unhealthyZoneA = createInstance("10.1.0.5", 8080, "zone-a", 1.0, false, true);
+
+        List<String> targetClusters = List.of("cluster-a", "cluster-b");
+
+        // 1. 非空集群三维坐标全量/健康查询（含脏节点待过滤）
+        when(namingService.getAllInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(targetClusters)))
+                .thenReturn(List.of(healthyZoneA, unhealthyZoneA, disabledZoneA));
+        when(namingService.getAllInstances(eq("order-service"), eq("DEFAULT_GROUP"), eq(targetClusters)))
+                .thenReturn(List.of(healthyZoneA));
+        when(namingService.selectInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(targetClusters), eq(true)))
+                .thenReturn(new ArrayList<>(List.of(healthyZoneA, healthyZoneB, zeroWeightZoneA, disabledZoneA, unhealthyZoneA)));
+        when(namingService.selectInstances(eq("order-service"), eq("DEFAULT_GROUP"), eq(targetClusters), eq(true)))
+                .thenReturn(new ArrayList<>(List.of(healthyZoneA, zeroWeightZoneA)));
+
+        // 2. 仅集群含 cross-zone 节点的降级场景
+        List<String> backupCluster = List.of("cluster-backup");
+        when(namingService.selectInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(backupCluster), eq(true)))
+                .thenReturn(new ArrayList<>(List.of(healthyZoneB)));
+
+        // 3. 空/null 集群列表应透明降级至无 clusters 参数方法
+        when(namingService.getAllInstances(eq("order-service"), eq("CUSTOM_GROUP")))
+                .thenReturn(List.of(healthyZoneB));
+        when(namingService.selectInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(true)))
+                .thenReturn(List.of(healthyZoneB));
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("serviceManager", serviceManager);
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+
+        AtengNacosProperties properties = new AtengNacosProperties();
+        properties.setZone("zone-a");
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                properties,
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        // 校验 getAllInstances 三维与二参集群重载
+        assertThat(template.getAllInstances("order-service", "CUSTOM_GROUP", targetClusters)).hasSize(3);
+        assertThat(template.getAllInstances("order-service", targetClusters)).hasSize(1);
+
+        // 校验含空白/重复集群名被规范化清洗去重后正确查询
+        assertThat(template.getAllInstances("order-service", "DEFAULT_GROUP", Arrays.asList(" cluster-a ", "cluster-b", "cluster-a", " ")))
+                .hasSize(1);
+
+        // 校验 getHealthyInstances / getInstances 过滤掉 weight <= 0、禁用与不健康实例
+        List<Instance> healthyCustom = template.getHealthyInstances("order-service", "CUSTOM_GROUP", targetClusters);
+        assertThat(healthyCustom).hasSize(2).extracting(Instance::getIp).containsExactlyInAnyOrder("10.1.0.1", "10.2.0.2");
+        assertThat(template.getInstances("order-service", "CUSTOM_GROUP", targetClusters)).hasSize(2);
+        assertThat(template.getHealthyInstances("order-service", targetClusters))
+                .hasSize(1).extracting(Instance::getIp).containsExactly("10.1.0.1");
+        assertThat(template.getInstances("order-service", targetClusters))
+                .hasSize(1).extracting(Instance::getIp).containsExactly("10.1.0.1");
+
+        // 校验 selectOneHealthyInstance 三维与二参集群重载
+        Optional<Instance> pickedDefault = template.selectOneHealthyInstance("order-service", targetClusters);
+        assertThat(pickedDefault).isPresent();
+        assertThat(pickedDefault.get().getIp()).isEqualTo("10.1.0.1");
+        assertThat(template.selectOneHealthyInstance("order-service", "CUSTOM_GROUP", backupCluster))
+                .isPresent().get().extracting(Instance::getIp).isEqualTo("10.2.0.2");
+
+        // 校验 getSameZoneInstances 在指定 clusters 下本区优先命中
+        List<Instance> sameZoneCustom = template.getSameZoneInstances("order-service", "CUSTOM_GROUP", targetClusters);
+        assertThat(sameZoneCustom).hasSize(1).extracting(Instance::getIp).containsExactly("10.1.0.1");
+        assertThat(template.getSameZoneInstances("order-service", targetClusters))
+                .hasSize(1).extracting(Instance::getIp).containsExactly("10.1.0.1");
+
+        // 校验本机房在目标集群内无节点时，平滑跨区降级至目标集群健康节点
+        List<Instance> crossZoneFallback = template.getSameZoneInstances("order-service", "CUSTOM_GROUP", backupCluster);
+        assertThat(crossZoneFallback).hasSize(1).extracting(Instance::getIp).containsExactly("10.2.0.2");
+
+        // 校验 null、空集合或纯空白列表时透明降级至无集群底层方法
+        assertThat(template.getAllInstances("order-service", "CUSTOM_GROUP", null)).hasSize(1);
+        assertThat(template.getAllInstances("order-service", "CUSTOM_GROUP", Collections.emptyList())).hasSize(1);
+        assertThat(template.getHealthyInstances("order-service", "CUSTOM_GROUP", Arrays.asList(" ", "", null)))
+                .hasSize(1).extracting(Instance::getIp).containsExactly("10.2.0.2");
+
+        verify(namingService, times(2)).getAllInstances("order-service", "CUSTOM_GROUP");
+        verify(namingService, times(1)).selectInstances("order-service", "CUSTOM_GROUP", true);
+        verify(namingService, never()).getAllInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(Collections.emptyList()));
+        verify(namingService, never()).selectInstances(eq("order-service"), eq("CUSTOM_GROUP"), eq(Collections.emptyList()), anyBoolean());
     }
 
 

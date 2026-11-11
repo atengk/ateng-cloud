@@ -61,22 +61,28 @@ public class NacosDiscoveryController {
     }
 
     /**
-     * 查询指定服务的健康可用实例列表
+     * 查询指定服务的健康可用实例列表（支持按分组与集群列表三维过滤）
      */
     @GetMapping("/instances")
-    public Result<List<InstanceVO>> getInstances(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
-        List<InstanceVO> list = nacosTemplate.getInstances(serviceName).stream()
+    public Result<List<InstanceVO>> getInstances(
+            @RequestParam(defaultValue = "sample-cloud-nacos") String serviceName,
+            @RequestParam(required = false) String groupName,
+            @RequestParam(required = false) List<String> clusters) {
+        List<InstanceVO> list = nacosTemplate.getInstances(serviceName, groupName, clusters).stream()
                 .map(InstanceVO::fromInstance)
                 .collect(Collectors.toList());
         return Result.success(list != null ? list : Collections.emptyList());
     }
 
     /**
-     * 查询同机房亲和优先的健康实例列表
+     * 查询同机房亲和优先的健康实例列表（支持按分组与集群列表三维过滤）
      */
     @GetMapping("/same-zone")
-    public Result<List<InstanceVO>> getSameZoneInstances(@RequestParam(defaultValue = "sample-cloud-nacos") String serviceName) {
-        List<InstanceVO> list = nacosTemplate.getSameZoneInstances(serviceName).stream()
+    public Result<List<InstanceVO>> getSameZoneInstances(
+            @RequestParam(defaultValue = "sample-cloud-nacos") String serviceName,
+            @RequestParam(required = false) String groupName,
+            @RequestParam(required = false) List<String> clusters) {
+        List<InstanceVO> list = nacosTemplate.getSameZoneInstances(serviceName, groupName, clusters).stream()
                 .map(InstanceVO::fromInstance)
                 .collect(Collectors.toList());
         return Result.success(list != null ? list : Collections.emptyList());
