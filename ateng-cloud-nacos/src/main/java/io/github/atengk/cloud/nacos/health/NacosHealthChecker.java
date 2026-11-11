@@ -3,6 +3,7 @@ package io.github.atengk.cloud.nacos.health;
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
 import com.alibaba.nacos.api.config.ConfigService;
+import io.github.atengk.boot.core.util.IdUtil;
 import io.github.atengk.cloud.nacos.constant.NacosConfigConstants;
 import io.github.atengk.cloud.nacos.metadata.DefaultNacosMetadataProvider;
 import io.github.atengk.cloud.nacos.metadata.NacosMetadataProvider;
@@ -320,7 +321,7 @@ public class NacosHealthChecker implements SmartInitializingSingleton {
                 return false;
             }
             // 尝试创建探测临时文件并确保在 finally 绝对删除，确保底层磁盘真实可写（防御只读文件系统且杜绝文件残留）
-            probeFile = snapshotDir.resolve(".probe_" + UUID.randomUUID());
+            probeFile = snapshotDir.resolve(".probe_" + IdUtil.simpleUUID());
             Files.createFile(probeFile);
             Files.writeString(probeFile, "health-probe");
             return true;

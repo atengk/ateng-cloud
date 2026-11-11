@@ -68,6 +68,9 @@ class SampleCloudNacosApplicationTest {
     @Autowired(required = false)
     private io.github.atengk.cloud.sample.nacos.event.DemoConfigRefreshFailureEventListener failureEventListener;
 
+    @Autowired
+    private org.springframework.core.env.ConfigurableEnvironment environment;
+
     /**
      * 离线 Mock/环境守卫测试配置
      * 关键守卫：标配 @Profile("!local")。当激活 local 时本配置自动失效，完全让位给真实中间件自动装配
@@ -597,5 +600,67 @@ class SampleCloudNacosApplicationTest {
 
         // 4. 执行全景自检输出
         healthChecker.checkAndLogStatus();
+    }
+
+    @Test
+    @DisplayName("Safe Hot-Reload 端到端 JSR-303 兜底校验：非法运费与件数上限被拦截并联动 FailureEvent、Actuator 与 Micrometer")
+    void testOrderConfigJsr303ValidationFailureAndMetricsLinkage() throws Exception {
+        String tempSourceName = "testInvalidOrderConfigSource";
+        double initialFailureCount = (meterRegistry != null && meterRegistry.find("nacos.config.refresh.failure").counter() != null)
+                ? meterRegistry.find("nacos.config.refresh.failure").counter().count()
+                : 0.0;
+
+        try {
+            environment.getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource(
+                    tempSourceName,
+                    Map.of(
+                            "sample.order.config.freight-rate", "-5.0",
+                            "sample.order.config.max-items-per-order", "0"
+                    )
+            ));
+
+            mockMvc.perform(post("/sample/cloud/nacos/config/simulate-refresh")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"keys\":[\"sample.order.config.freight-rate\",\"sample.order.config.max-items-per-order\"]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code", is(200)))
+                    .andExpect(jsonPath("$.data.traceId", notNullValue()));
+
+            // 1. 验证 Micrometer 失败计数器同步递增
+            if (meterRegistry != null && meterRegistry.find("nacos.config.refresh.failure").counter() != null) {
+                double afterFailureCount = meterRegistry.find("nacos.config.refresh.failure").counter().count();
+                org.junit.jupiter.api.Assertions.assertTrue(
+                        afterFailureCount > initialFailureCount,
+                        "nacos.config.refresh.failure 失败计数器应递增"
+                );
+            }
+
+            // 2. 验证 SafeConfigRefreshFailureEvent 携带 JSR-303 校验失败描述与 cause 因果链
+            if (failureEventListener != null && failureEventListener.getLastEvent() != null) {
+                org.junit.jupiter.api.Assertions.assertTrue(
+                        failureEventListener.getLastEvent().getErrorMessage().contains("JSR-303 validation failed"),
+                        "失败事件应包含 JSR-303 validation failed 描述"
+                );
+                org.junit.jupiter.api.Assertions.assertNotNull(failureEventListener.getLastEvent().getCause());
+            }
+
+            // 3. 验证 /actuator/nacosService 运维端点联动反映校验失败记录
+            mockMvc.perform(get("/actuator/nacosService")
+                            .accept(MediaType.APPLICATION_JSON))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.lastRefresh.success", is(false)))
+                    .andExpect(jsonPath("$.lastRefresh.errorMessage",
+                            org.hamcrest.Matchers.containsString("JSR-303 validation failed")));
+        } finally {
+            // 确定性清除临时属性源并重绑恢复 OrderConfigProperties 合法值
+            environment.getPropertySources().remove(tempSourceName);
+            if (nacosTemplate != null) {
+                nacosTemplate.refreshConfig(
+                        java.util.Set.of("sample.order.config.freight-rate", "sample.order.config.max-items-per-order"),
+                        "order-service.yml",
+                        "DEFAULT_GROUP"
+                );
+            }
+        }
     }
 }

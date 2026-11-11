@@ -11,6 +11,8 @@ import com.alibaba.nacos.api.naming.NamingMaintainService;
 import com.alibaba.nacos.api.naming.NamingService;
 import com.alibaba.nacos.api.naming.pojo.Instance;
 import com.alibaba.nacos.api.naming.pojo.ListView;
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
 import io.github.atengk.cloud.nacos.config.NacosConfigParser;
@@ -59,6 +61,8 @@ class NacosTemplateTest {
     @AfterEach
     void tearDown() {
         MDC.clear();
+        UserContextHolder.clear();
+        TenantContextHolder.clear();
     }
 
     @Test
@@ -1091,6 +1095,89 @@ class NacosTemplateTest {
         listenerCaptor.getValue().onEvent(event);
 
         sub.close();
+    }
+
+    @Test
+    @DisplayName("三元上下文隔离屏障：动态配置与实例变更回调修改上下文后，出口 100% 恢复或彻底清空")
+    void testSubscriptionTernaryContextIsolationBarrier() throws Exception {
+        NacosConfigManager configManager = mock(NacosConfigManager.class);
+        ConfigService configService = mock(ConfigService.class);
+        NacosConfigProperties configProperties = new NacosConfigProperties();
+        configProperties.setGroup("DEFAULT_GROUP");
+        configProperties.setTimeout(3000);
+        when(configManager.getConfigService()).thenReturn(configService);
+        when(configManager.getNacosConfigProperties()).thenReturn(configProperties);
+        when(configService.getServerStatus()).thenReturn("UP");
+        when(configService.getConfig(anyString(), anyString(), any(Long.class))).thenReturn(null);
+
+        NacosServiceManager serviceManager = mock(NacosServiceManager.class);
+        NamingService namingService = mock(NamingService.class);
+        NacosDiscoveryProperties discoveryProperties = new NacosDiscoveryProperties();
+        discoveryProperties.setServerAddr("127.0.0.1:8848");
+        when(serviceManager.getNamingService(any())).thenReturn(namingService);
+        when(namingService.getServerStatus()).thenReturn("UP");
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("configManager", configManager);
+        beanFactory.addBean("serviceManager", serviceManager);
+        beanFactory.addBean("discoveryProperties", discoveryProperties);
+
+        NacosTemplate template = new NacosTemplate(
+                beanFactory.getBeanProvider(NacosServiceManager.class),
+                beanFactory.getBeanProvider(NacosDiscoveryProperties.class),
+                beanFactory.getBeanProvider(NacosConfigManager.class),
+                new AtengNacosProperties(),
+                mock(NacosMetadataProvider.class),
+                beanFactory.getBeanProvider(NacosLifecycleStateMachine.class),
+                new ZoneAffinityInstanceFilter()
+        );
+
+        AutoCloseable cfgSub = template.subscribeConfig("ctx-barrier.yml", AppTestConfig.class, cfg -> {
+            // 故意污染 MDC、用户与租户（含 ignoreTenant）上下文
+            MDC.put("traceId", "polluted-trace");
+            UserContextHolder.setUserId("polluted-user");
+            TenantContextHolder.setTenantId("polluted-tenant");
+            TenantContextHolder.setIgnoreTenant(true);
+        });
+        ArgumentCaptor<Listener> cfgListenerCaptor = ArgumentCaptor.forClass(Listener.class);
+        verify(configService).addListener(eq("ctx-barrier.yml"), eq("DEFAULT_GROUP"), cfgListenerCaptor.capture());
+
+        // 1. 空白后台线程场景：回调后必须全部彻底清空
+        MDC.clear();
+        UserContextHolder.clear();
+        TenantContextHolder.clear();
+        cfgListenerCaptor.getValue().receiveConfigInfo("name: test\nport: 8080");
+        assertThat(MDC.get("traceId")).isNull();
+        assertThat(UserContextHolder.getUserId()).isNull();
+        assertThat(TenantContextHolder.getTenantId()).isNull();
+        assertThat(TenantContextHolder.isIgnoreTenant()).isFalse();
+
+        // 2. 已有业务线程快照场景：实例变更订阅回调后必须精确恢复原快照
+        AutoCloseable instSub = template.subscribeInstances("ctx-service", instances -> {
+            MDC.put("traceId", "override-trace");
+            UserContextHolder.setUserId("override-user");
+            TenantContextHolder.setTenantId("override-tenant");
+            TenantContextHolder.setIgnoreTenant(false);
+        });
+        ArgumentCaptor<com.alibaba.nacos.api.naming.listener.EventListener> instCaptor =
+                ArgumentCaptor.forClass(com.alibaba.nacos.api.naming.listener.EventListener.class);
+        verify(namingService).subscribe(eq("ctx-service"), anyString(), instCaptor.capture());
+
+        MDC.put("traceId", "caller-trace-999");
+        UserContextHolder.setUserId("caller-user-888");
+        TenantContextHolder.setTenantId("caller-tenant-777");
+        TenantContextHolder.setIgnoreTenant(true);
+
+        instCaptor.getValue().onEvent(new com.alibaba.nacos.api.naming.listener.NamingEvent(
+                "ctx-service", "DEFAULT_GROUP", "", Collections.emptyList()));
+
+        assertThat(MDC.get("traceId")).isEqualTo("caller-trace-999");
+        assertThat(UserContextHolder.getUserId()).isEqualTo("caller-user-888");
+        assertThat(TenantContextHolder.getTenantId()).isEqualTo("caller-tenant-777");
+        assertThat(TenantContextHolder.isIgnoreTenant()).isTrue();
+
+        cfgSub.close();
+        instSub.close();
     }
 
 

@@ -9,7 +9,7 @@ Nacos 服务注册发现与动态配置中心治理上下文，负责微服务�
 _Avoid_: 发布, 挂载, 登记
 
 **Discovery**:
-服务调用方从 Nacos 服务端拉取可用健康节点拓扑并建立本地缓存路由表的过程。
+服务调用方从 Nacos 服务端按服务名、分组与集群列表（`serviceName`、`groupName`、`clusters`）三维坐标拉取可用健康节点拓扑并建立本地缓存路由表的过程。
 _Avoid_: 寻址, 探测, 查表
 
 **Namespace**:
@@ -85,7 +85,7 @@ Nacos 客户端底层长连接（gRPC）生命周期状态变更时向 Spring �
 _Avoid_: 连接轮询器, 断线重连器, 状态探针
 
 **Zone & Warmup Load Balancing**:
-协同 Spring Cloud LoadBalancer 实现的同机房可用区就近亲和与启动预热期平滑线性升权调度机制。
+协同 Spring Cloud LoadBalancer 实现的同机房可用区就近亲和、实例静态基准权重（`nacos.weight`）感知与启动预热期连续线性升权平滑加权轮询（SWRR）调度机制。
 _Avoid_: 局部负载均衡, 客户端寻址器, 权重放大器
 
 **Adaptive Resource Weighting**:
@@ -93,11 +93,11 @@ _Avoid_: 局部负载均衡, 客户端寻址器, 权重放大器
 _Avoid_: 动态权重, 动态限流, 资源调度
 
 **Typed Config Subscription**:
-基于强类型泛型 POJO 反序列化、自动异常屏障与生命周期受管注销的动态配置编程式订阅机制。
+基于强类型 `Class<T>` 与复杂泛型 `TypeReference<T>`（集合/字典）自动反序列化、三元上下文快照隔离屏障与生命周期受管注销的动态配置编程式订阅机制。
 _Avoid_: 动态监听器, 原始回调, 字符串钩子
 
 **Instance Change Subscription**:
-基于受管生命周期、自动注销句柄（AutoCloseable）与 MDC 链路追踪屏障的服务实例拓扑动态变更编程式订阅机制。
+基于受管生命周期、自动注销句柄（AutoCloseable）与三元上下文快照隔离屏障的服务实例拓扑（支持按服务、分组与集群列表三维坐标）动态变更编程式订阅机制。
 _Avoid_: 节点监听, 实例回调钩子, 原始监听器
 
 **Safe Config Refresh Failure Event**:

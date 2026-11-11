@@ -17,7 +17,7 @@
      - **第一阶段（主动注销与流量阻断）**：主动向 Nacos 撤销实例注册，并联动切换 Actuator 探针为 `ReadinessState.REFUSING_TRAFFIC`（返回 `OUT_OF_SERVICE`），通知外部 SLB / K8s 切断新流量；
      - **第二阶段（安全排空窗口）**：受控阻塞排空 `drain-timeout`（生产默认 10s，强类型 `Duration`），等待全网注册表缓存刷新并在途请求处理完毕；
      - **第三阶段（放行销毁）**：放行后续容器销毁与资源释放。
-   - **双模与并发防重**：提供 `/actuator/nacos-service` 运维端点支持显式提前摘牌，底层采用 `AtomicBoolean` 原子状态机保障并发防重与幂等，避免重复睡眠。
+   - **双模与并发防重**：提供 `/actuator/nacosService` 运维端点支持显式提前摘牌，底层采用 `AtomicReference` 原子状态机保障并发防重与幂等，避免重复睡眠。
 
 2. **平滑启动预热 (Startup Preheating) 与多维元数据增强**：
    - 节点注册时统一使用 Kebab-Case 自动注入：`startup-time`（启动时间戳）、`warmup-duration`（默认 60s）、`version`、`env`、`zone`、`cluster` 与 `traffic-tag`；
@@ -27,19 +27,19 @@
    - 严禁在承载业务与事务的单例 Bean 上标注 `@RefreshScope`；
    - 动态配置热更严格收敛于 `@ConfigurationProperties` 纯属性 POJO 增量热绑；
    - 对外提供 `NacosConfigChangeListener` SPI 接口与强类型 `SafeConfigRefreshEvent` 事件双模回调，附带 MDC 日志隔离与异常捕获屏障；
-   - **配置热更异常隔离屏障与失败领域事件 (`SafeConfigRefreshFailureEvent`)**：增量重绑、JSR-303 数据校验违规或受管监听器抛出未捕获异常时，框架不吞咽异常亦不阻断 Spring 容器，广播强类型 `SafeConfigRefreshFailureEvent`（封装 `dataId`、`group`、`changedKeys`、`errorMessage` 与 `traceId`），同时联动更新 Actuator `/actuator/nacosService` 端点 `lastRefresh` 失败快照，赋能企业级机器人告警与运维排障。
+   - **配置热更异常隔离屏障、JSR-303 兜底校验与失败领域事件 (`SafeConfigRefreshFailureEvent`)**：增量重绑后自动对受管 `@ConfigurationProperties` 单例执行 JSR-303 约束校验；当属性重绑失败、JSR-303 数据校验违规或受管监听器抛出未捕获异常时，框架不吞咽异常亦不阻断 Spring 容器，广播强类型 `SafeConfigRefreshFailureEvent`（封装 `dataId`、`group`、`changedKeys`、`errorMessage`、`cause` 与 `traceId`），同时联动更新 Actuator `/actuator/nacosService` 端点 `lastRefresh` 失败快照，赋能企业级机器人告警与运维排障。
 
 4. **对称运维抽象门面 (`NacosTemplate`)**：
-   - 提供完备对称的实例上下线（`markOnline` / `markOffline`）、节点探测（`getInstances` 返回空集合保底，`getMyInstance` 返回 `Optional<Instance>`）、元数据动态增删及配置读写 API；
+   - 提供完备对称的实例上下线（`markOnline` / `markOffline`）、三维坐标节点探测（按 `serviceName`、`groupName`、`clusters` 支持 `getAllInstances` / `getHealthyInstances` / `getInstances` / ` getSameZoneInstances` 返回空集合保底，`selectOneHealthyInstance` / `getMyInstance` 返回 `Optional<Instance>`）、元数据动态增删及配置读写 API；
    - 拦截底层 `NacosException`，统一转译为携带完整 `cause` 因果链的受管 `BusinessException`；
-   - **多格式强类型解析与发布预检**：支持泛型读取 `getConfig(dataId, group, Class<T>)`（依据 DataId 扩展名自动推断 YAML/JSON/Properties），写接口发布前执行语法 Fail-Fast 校验；
-   - **编程式强类型订阅门面 (`subscribeConfig`)**：提供强类型配置变更监听门面，自动捕获解析异常并注入 MDC 链路追踪，返回 `AutoCloseable` 并在容器停机时受管自动注销；
-   - **编程式微服务实例动态变更订阅门面 (`subscribeInstances`)**：提供完备对称的 4 组重载（支持指定服务名、配置分组与集群列表），在订阅建立时立即拉取并触发首帧快照派发，自动注入并清理 MDC `traceId`，单次回调抛错由独立异常隔离屏障拦截，返回不可变 `AutoCloseable` 订阅句柄以实现确定性生命周期注销与资源清理。
+   - **多格式强类型解析、复杂泛型 (`TypeReference<T>`) 与发布预检**：支持单类型 `Class<T>` 与复杂泛型集合/字典 `TypeReference<T>` 读取及弹性查询（`getConfig` / `findConfig`，依据 DataId 扩展名自动推断 YAML/JSON/Properties），写接口发布前执行语法 Fail-Fast 校验；
+   - **编程式强类型订阅门面 (`subscribeConfig`)**：对称支持 `Class<T>` 与 `TypeReference<T>` 动态配置监听，内置 $\langle\text{MDC traceId}, \text{UserContextHolder}, \text{TenantContextHolder}\rangle$ 上下文快照隔离屏障与异常捕获屏障，返回 `AutoCloseable` 并在容器停机时受管自动注销；
+   - **编程式微服务实例动态变更订阅门面 (`subscribeInstances`)**：提供完备对称的 4 组重载（支持指定服务名、配置分组与集群列表），在订阅建立时立即拉取并触发首帧快照派发，自动注入并在 `finally` 恢复/清理 $\langle\text{MDC traceId}, \text{UserContextHolder}, \text{TenantContextHolder}\rangle$ 上下文快照，单次回调抛错由独立异常隔离屏障拦截，返回不可变 `AutoCloseable` 订阅句柄以实现确定性生命周期注销与资源清理。
 
 5. **客户端负载均衡、平滑预热加权调度与自适应资源降权 (Zone & Warmup Load Balancing & Adaptive Weighting)**：
    - 基于 `@ConditionalOnClass(ServiceInstanceListSupplier.class)` 条件自动装配定制 `ZonePreferenceServiceInstanceListSupplier` 与 `NacosWarmupLoadBalancer`；
    - **同机房亲和优先**：优先向同可用区（Zone）健康实例路由流量，本区无可用节点时平滑跨区容灾降级；
-   - **平滑加权预热算法**：消费 `startup-time` 与 `warmup-duration`，采用“线性升权（$\text{uptime} / \text{warmupDuration}$）+ 10% 底噪保底权重”算法动态调度，预热期后平滑收敛为 100% 原始权重；
+   - **静态基准权重常驻与平滑加权预热算法**：始终消费实例 `nacos.weight` 基准权重，并在开启预热时结合 `startup-time` 与 `warmup-duration` 采用“连续线性升权（$\text{floorRatio} + (1.0 - \text{floorRatio}) \times (\text{uptime} / \text{warmupDuration})$）+ 10% 底噪保底权重”计算实时有效权重，通过 Nginx 平滑加权轮询（SWRR）调度；当所有候选实例有效权重完全相等时自动极速退化为均匀轮询；
    - **基于节点自身资源的自适应动态加权 (Adaptive Resource Weighting)**：对外提供 `InstanceWeightCalculator` SPI 扩展点，支持结合实例自身 CPU/内存等过载指标进行阶梯阻尼平滑降权（5s~10s 低频采样 + $\pm 15\%$ 防抖），并在全集群过载时触发安全熔断保底退化为均匀轮询，严防雪崩。
 
 6. **长连接通信事件总线 (Connection Event Bus)**：

@@ -1,18 +1,26 @@
 package io.github.atengk.cloud.nacos.refresh;
 
 import com.alibaba.cloud.nacos.refresh.NacosConfigRefreshEvent;
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.cloud.nacos.event.ConfigChangeItem;
 import io.github.atengk.cloud.nacos.event.ConfigChangeType;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
+import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cloud.context.environment.EnvironmentChangeEvent;
 import org.springframework.cloud.context.properties.ConfigurationPropertiesRebinder;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 
@@ -35,6 +43,8 @@ class NacosConfigRefreshEngineTest {
     @AfterEach
     void tearDown() {
         MDC.clear();
+        UserContextHolder.clear();
+        TenantContextHolder.clear();
     }
 
     @Test
@@ -465,5 +475,135 @@ class NacosConfigRefreshEngineTest {
 
         assertThat(traceIdDuringRebind.get()).isNotBlank();
         assertThat(traceIdDuringRebind.get()).isEqualTo(event.getTraceId());
+    }
+
+    @Test
+    @DisplayName("Safe Hot-Reload 三元上下文快照屏障：热更期间修改 MDC、User 与 Tenant 上下文后，出口精确还原或清空")
+    void testRefreshTernaryContextIsolationAndRestoration() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        NacosConfigChangeListener pollutingListener = event -> {
+            MDC.put(NacosConfigRefreshEngine.MDC_TRACE_ID_KEY, "listener-dirty-trace");
+            UserContextHolder.setUserId("listener-dirty-user");
+            TenantContextHolder.setTenantId("listener-dirty-tenant");
+            TenantContextHolder.setIgnoreTenant(false);
+        };
+
+        NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                environment,
+                publisher,
+                List.of(pollutingListener),
+                null,
+                properties
+        );
+
+        // 1. 原生业务请求线程已有快照 -> 热更结束精确还原
+        MDC.put(NacosConfigRefreshEngine.MDC_TRACE_ID_KEY, "req-trace-123");
+        UserContextHolder.setUserId("req-user-456");
+        TenantContextHolder.setTenantId("req-tenant-789");
+        TenantContextHolder.setIgnoreTenant(true);
+
+        engine.refreshConfig(Set.of("app.rate"), "app.yml", "DEFAULT_GROUP");
+
+        assertThat(MDC.get(NacosConfigRefreshEngine.MDC_TRACE_ID_KEY)).isEqualTo("req-trace-123");
+        assertThat(UserContextHolder.getUserId()).isEqualTo("req-user-456");
+        assertThat(TenantContextHolder.getTenantId()).isEqualTo("req-tenant-789");
+        assertThat(TenantContextHolder.isIgnoreTenant()).isTrue();
+
+        // 2. 无上下文后台线程 -> 热更结束彻底清空
+        MDC.clear();
+        UserContextHolder.clear();
+        TenantContextHolder.clear();
+
+        engine.refreshConfig(Set.of("app.rate"), "app.yml", "DEFAULT_GROUP");
+
+        assertThat(MDC.get(NacosConfigRefreshEngine.MDC_TRACE_ID_KEY)).isNull();
+        assertThat(UserContextHolder.getUserId()).isNull();
+        assertThat(TenantContextHolder.getTenantId()).isNull();
+        assertThat(TenantContextHolder.isIgnoreTenant()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Safe Hot-Reload JSR-303 兜底校验：受管 @ConfigurationProperties 违例时拦截并广播 SafeConfigRefreshFailureEvent")
+    void testJsr303ValidationFailureTriggersFailureEvent() {
+        StandardEnvironment environment = new StandardEnvironment();
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        io.github.atengk.cloud.nacos.metrics.NacosMetricsManager metricsManager =
+                mock(io.github.atengk.cloud.nacos.metrics.NacosMetricsManager.class);
+        AtengNacosProperties properties = new AtengNacosProperties();
+
+        GenericApplicationContext ctx = new GenericApplicationContext();
+        InvalidOrderConfigProperties invalidProps = new InvalidOrderConfigProperties();
+        invalidProps.setFreightRate(-5.0);
+        invalidProps.setMaxItemsPerOrder(0);
+        ctx.registerBean("invalidOrderConfigProperties", InvalidOrderConfigProperties.class, () -> invalidProps);
+        ctx.refresh();
+
+        try {
+            NacosConfigRefreshEngine engine = new NacosConfigRefreshEngine(
+                    environment,
+                    publisher,
+                    Collections.emptyList(),
+                    null,
+                    properties,
+                    metricsManager
+            );
+            engine.setApplicationContext(ctx);
+
+            SafeConfigRefreshEvent result = engine.refreshConfig(
+                    Set.of("sample.order.config.freight-rate"),
+                    "order-service.yml",
+                    "DEFAULT_GROUP"
+            );
+            assertThat(result).isNotNull();
+
+            NacosConfigRefreshEngine.RefreshRecord record = engine.getLastRefreshRecord();
+            assertThat(record).isNotNull();
+            assertThat(record.isSuccess()).isFalse();
+            assertThat(record.getError()).contains("JSR-303 validation failed");
+
+            verify(metricsManager, times(1)).recordRefreshFailure(anyLong(), contains("JSR-303 validation failed"));
+            verify(metricsManager, never()).recordRefreshSuccess(anyLong(), anyInt());
+
+            org.mockito.ArgumentCaptor<org.springframework.context.ApplicationEvent> eventCaptor =
+                    org.mockito.ArgumentCaptor.forClass(org.springframework.context.ApplicationEvent.class);
+            verify(publisher, times(1)).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getValue()).isInstanceOf(SafeConfigRefreshFailureEvent.class);
+            SafeConfigRefreshFailureEvent failureEvent = (SafeConfigRefreshFailureEvent) eventCaptor.getValue();
+            assertThat(failureEvent.getCause()).isInstanceOf(IllegalStateException.class);
+            assertThat(failureEvent.getCause().getCause()).isNotNull();
+        } finally {
+            ctx.close();
+        }
+    }
+
+    @ConfigurationProperties(prefix = "test.sample.order")
+    static class InvalidOrderConfigProperties {
+
+        @NotNull(message = "freightRate must not be null")
+        @PositiveOrZero(message = "freightRate must be zero or positive")
+        private Double freightRate = 10.0;
+
+        @NotNull(message = "maxItemsPerOrder must not be null")
+        @Min(value = 1, message = "maxItemsPerOrder must be at least 1")
+        private Integer maxItemsPerOrder = 10;
+
+        public Double getFreightRate() {
+            return freightRate;
+        }
+
+        public void setFreightRate(Double freightRate) {
+            this.freightRate = freightRate;
+        }
+
+        public Integer getMaxItemsPerOrder() {
+            return maxItemsPerOrder;
+        }
+
+        public void setMaxItemsPerOrder(Integer maxItemsPerOrder) {
+            this.maxItemsPerOrder = maxItemsPerOrder;
+        }
     }
 }

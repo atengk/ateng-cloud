@@ -1,5 +1,8 @@
 package io.github.atengk.cloud.sample.nacos.config;
 
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -21,11 +24,15 @@ public class OrderConfigProperties {
     /**
      * 基础订单运费（元）
      */
+    @NotNull(message = "freightRate must not be null")
+    @PositiveOrZero(message = "freightRate must be zero or positive")
     private Double freightRate = 10.0;
 
     /**
      * 满额包邮门槛（元）
      */
+    @NotNull(message = "freeFreightThreshold must not be null")
+    @PositiveOrZero(message = "freeFreightThreshold must be zero or positive")
     private Double freeFreightThreshold = 99.0;
 
     /**
@@ -36,11 +43,14 @@ public class OrderConfigProperties {
     /**
      * 未支付订单超时自动关闭时限（强类型 Duration 规范）
      */
+    @NotNull(message = "orderTimeout must not be null")
     private Duration orderTimeout = Duration.ofMinutes(30);
 
     /**
      * 单笔订单最大购买商品件数上限
      */
+    @NotNull(message = "maxItemsPerOrder must not be null")
+    @Min(value = 1, message = "maxItemsPerOrder must be at least 1")
     private Integer maxItemsPerOrder = 50;
 
     public Double getFreightRate() {

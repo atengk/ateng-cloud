@@ -19,6 +19,7 @@ import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.nacos.code.NacosResultCode;
 import io.github.atengk.cloud.nacos.config.NacosConfigParser;
 import io.github.atengk.cloud.nacos.constant.ConfigFormat;
+import io.github.atengk.cloud.nacos.context.NacosContextBarrier;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.filter.ZoneAffinityInstanceFilter;
 import io.github.atengk.cloud.nacos.lifecycle.NacosLifecycleStateMachine;
@@ -42,7 +43,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadLocalRandom;
@@ -1544,18 +1544,7 @@ public class NacosTemplate implements DisposableBean {
     }
 
     private void executeWithTrace(Runnable action) {
-        boolean traceIdCreated = false;
-        if (MDC.get("traceId") == null) {
-            MDC.put("traceId", UUID.randomUUID().toString().replace("-", ""));
-            traceIdCreated = true;
-        }
-        try {
-            action.run();
-        } finally {
-            if (traceIdCreated) {
-                MDC.remove("traceId");
-            }
-        }
+        NacosContextBarrier.run(action);
     }
 
     /**

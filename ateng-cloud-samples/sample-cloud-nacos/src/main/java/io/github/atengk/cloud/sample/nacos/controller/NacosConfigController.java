@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.sample.nacos.controller;
 
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.boot.core.util.JsonUtil;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.mask.ConfigMasker;
@@ -169,7 +170,7 @@ public class NacosConfigController {
     @PostMapping("/trade-rule/simulate")
     public Result<TradeRuleVO> simulateTradeRuleUpdate(@RequestBody @Valid TradeRuleConfig rule) {
         try {
-            String rawJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(rule);
+            String rawJson = JsonUtil.toJsonString(rule);
             typedSubscriptionService.simulateConfigPush(rawJson);
         } catch (Exception ex) {
             typedSubscriptionService.onTradeRuleUpdated(rule);

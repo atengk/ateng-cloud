@@ -1,6 +1,12 @@
 package io.github.atengk.cloud.nacos.refresh;
 
 import com.alibaba.cloud.nacos.refresh.NacosConfigRefreshEvent;
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.TenantContextHolder.TenantSnapshot;
+import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.util.IdUtil;
+import io.github.atengk.boot.core.util.ValidatorUtil;
 import io.github.atengk.cloud.nacos.event.ConfigChangeItem;
 import io.github.atengk.cloud.nacos.event.ConfigChangeType;
 import io.github.atengk.cloud.nacos.event.SafeConfigRefreshEvent;
@@ -8,13 +14,19 @@ import io.github.atengk.cloud.nacos.event.SafeConfigRefreshFailureEvent;
 import io.github.atengk.cloud.nacos.metrics.NacosMetricsManager;
 import io.github.atengk.cloud.nacos.properties.AtengNacosProperties;
 import io.github.atengk.cloud.nacos.spi.NacosConfigChangeListener;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.NoProviderFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cloud.context.environment.EnvironmentChangeEvent;
 import org.springframework.cloud.context.properties.ConfigurationPropertiesRebinder;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ApplicationListener;
@@ -37,8 +49,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *     热更新仅增量重绑 {@code @ConfigurationProperties} 纯属性 POJO；</li>
  *     <li><b>受管监听 SPI 过滤匹配</b>：支持注册 {@link NacosConfigChangeListener}，按配置前缀精准过滤与顺序执行；</li>
  *     <li><b>强类型安全事件通知</b>：发布 {@link SafeConfigRefreshEvent} 强类型事件，携带脱敏变更明细；</li>
- *     <li><b>MDC 链路追踪穿透</b>：自动在热更全链路注入并传递 {@code traceId}，并在 {@code finally} 块安全恢复或清除；</li>
- *     <li><b>异常捕获隔离屏障</b>：单个监听器抛出异常仅记录错误日志，绝不阻断后续监听器与事件广播；</li>
+ *     <li><b>三元上下文隔离屏障</b>：自动在热更全链路保存与穿透 {@code MDC traceId}、{@code UserContextHolder} 及 {@code TenantContextHolder} 快照，并在 {@code finally} 块确定性恢复或清理；</li>
+ *     <li><b>异常捕获与 JSR-303 校验兜底屏障</b>：对重绑后的 {@code @ConfigurationProperties} 单例执行 JSR-303 约束校验，单个监听器或校验异常绝不击穿容器，并发布 {@link SafeConfigRefreshFailureEvent}；</li>
  *     <li><b>Micrometer 全维监控与脱敏防泄露</b>：向监控指标上报热更频次与成功/失败指标，并在审计日志中星号脱敏敏感属性。</li>
  * </ul>
  * </p>
@@ -46,7 +58,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * @author Ateng
  * @since 2026-10-27
  */
-public class NacosConfigRefreshEngine implements SmartInitializingSingleton, ApplicationListener<ApplicationEvent> {
+public class NacosConfigRefreshEngine implements SmartInitializingSingleton, ApplicationListener<ApplicationEvent>, ApplicationContextAware {
 
     private static final Logger log = LoggerFactory.getLogger(NacosConfigRefreshEngine.class);
 
@@ -74,6 +86,13 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
      * 最近一次热更执行状态记录（供 Actuator 运维端点读取展示）
      */
     private volatile RefreshRecord lastRefreshRecord;
+
+    private volatile ApplicationContext applicationContext;
+
+    @Override
+    public void setApplicationContext(@Nullable ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+    }
 
     public NacosConfigRefreshEngine(Environment environment,
                                     ApplicationEventPublisher eventPublisher,
@@ -203,15 +222,15 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
         boolean anyError = false;
         String errorMessage = null;
 
-        // 1. 注入或维持 MDC 链路追踪上下文 (置于最前置，确保重绑与广播全程具备 traceId)
+        // 1. 捕获并注入三元上下文快照 (置于最前置，确保重绑、JSR-303 校验与事件广播全程具备上下文与对称隔离)
         String existingTraceId = MDC.get(MDC_TRACE_ID_KEY);
-        String traceId = StringUtils.hasText(existingTraceId) ? existingTraceId : generateTraceId();
-        boolean traceIdInjected = false;
+        String existingUserId = UserContextHolder.getUserId();
+        TenantSnapshot existingTenantSnapshot = TenantContextHolder.capture();
+        String traceId = StringUtils.hasText(existingTraceId) ? existingTraceId : IdUtil.simpleUUID();
 
         try {
             if (!StringUtils.hasText(existingTraceId)) {
                 MDC.put(MDC_TRACE_ID_KEY, traceId);
-                traceIdInjected = true;
             }
 
             // 2. 确保 @ConfigurationProperties 纯属性 POJO 增量热绑
@@ -276,23 +295,30 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
                 }
             }
 
-            // 8. 闭环清理 MDC
-            if (traceIdInjected) {
-                MDC.remove(MDC_TRACE_ID_KEY);
-            } else if (existingTraceId != null) {
+            // 8. 闭环恢复与清理三元上下文快照 (MDC traceId / UserContextHolder / TenantContextHolder)
+            if (existingTraceId != null) {
                 MDC.put(MDC_TRACE_ID_KEY, existingTraceId);
+            } else {
+                MDC.remove(MDC_TRACE_ID_KEY);
+            }
+            if (existingUserId != null) {
+                UserContextHolder.setUserId(existingUserId);
+            } else {
+                UserContextHolder.clear();
+            }
+            if (existingTenantSnapshot != null) {
+                TenantContextHolder.restore(existingTenantSnapshot);
+            } else {
+                TenantContextHolder.clear();
             }
         }
     }
 
     /**
-     * 触发 @ConfigurationProperties 增量重绑
+     * 触发 @ConfigurationProperties 增量重绑并执行 JSR-303 约束兜底校验
      */
     private void rebindConfigurationProperties() {
-        if (rebinderProvider == null) {
-            return;
-        }
-        ConfigurationPropertiesRebinder rebinder = rebinderProvider.getIfAvailable();
+        ConfigurationPropertiesRebinder rebinder = rebinderProvider != null ? rebinderProvider.getIfAvailable() : null;
         if (rebinder != null) {
             try {
                 rebinder.rebind();
@@ -300,6 +326,42 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
             } catch (Exception ex) {
                 log.error("[ateng-cloud-nacos] 执行 ConfigurationPropertiesRebinder.rebind() 时捕获异常: {}", ex.getMessage(), ex);
                 throw new IllegalStateException("ConfigurationProperties rebinding failed: " + ex.getMessage(), ex);
+            }
+        }
+        validateConfigurationPropertiesBeans();
+    }
+
+    /**
+     * 对容器中受管 @ConfigurationProperties 单例执行 JSR-303 约束兜底校验
+     */
+    private void validateConfigurationPropertiesBeans() {
+        ApplicationContext ctx = this.applicationContext;
+        if (ctx == null) {
+            return;
+        }
+        Map<String, Object> configBeans = ctx.getBeansWithAnnotation(ConfigurationProperties.class);
+        if (configBeans.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : configBeans.entrySet()) {
+            String beanName = entry.getKey();
+            Object bean = entry.getValue();
+            if (bean == null) {
+                continue;
+            }
+            Object unwrapped = AopProxyUtils.getSingletonTarget(bean);
+            Object targetBean = unwrapped != null ? unwrapped : bean;
+            try {
+                ValidatorUtil.validate(targetBean);
+            } catch (BusinessException | ConstraintViolationException ex) {
+                throw new IllegalStateException(
+                        String.format("@ConfigurationProperties bean '%s' [%s] JSR-303 validation failed: %s",
+                                beanName, targetBean.getClass().getName(), ex.getMessage()),
+                        ex);
+            } catch (NoProviderFoundException ex) {
+                log.debug("[ateng-cloud-nacos] 当前运行环境未引入 Jakarta Bean Validation 实现，跳过 JSR-303 兜底校验: {}",
+                        ex.getMessage());
+                return;
             }
         }
     }
@@ -465,10 +527,6 @@ public class NacosConfigRefreshEngine implements SmartInitializingSingleton, App
     @Nullable
     public RefreshRecord getLastRefreshRecord() {
         return lastRefreshRecord;
-    }
-
-    private String generateTraceId() {
-        return UUID.randomUUID().toString().replace("-", "");
     }
 
     /**
