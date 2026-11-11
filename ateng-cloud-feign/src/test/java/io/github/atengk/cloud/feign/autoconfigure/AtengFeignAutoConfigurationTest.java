@@ -1,13 +1,22 @@
 package io.github.atengk.cloud.feign.autoconfigure;
 
+import feign.Logger;
 import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.http.HttpMessageConvertersAutoConfiguration;
+import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.cloud.openfeign.FeignAutoConfiguration;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.cloud.openfeign.FeignClientProperties;
 import org.springframework.cloud.openfeign.clientconfig.HttpClient5FeignConfiguration;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.bind.annotation.GetMapping;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -113,5 +122,73 @@ public class AtengFeignAutoConfigurationTest {
                     org.apache.hc.client5.http.impl.classic.HttpClientBuilder.create();
             customizer.customize(builder);
         });
+    }
+
+    @FeignClient(name = "shared-order-service", contextId = "orderReadClient", url = "http://localhost:8080")
+    interface OrderReadClient {
+        @GetMapping("/orders/read")
+        String read();
+    }
+
+    @FeignClient(name = "shared-order-service", contextId = "orderFallbackClient", url = "http://localhost:8080")
+    interface OrderFallbackClient {
+        @GetMapping("/orders/fallback")
+        String fallback();
+    }
+
+    @FeignClient(name = "shared-order-service", contextId = "orderNativeOverrideClient", url = "http://localhost:8080")
+    interface OrderNativeOverrideClient {
+        @GetMapping("/orders/native")
+        String nativeOverride();
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableFeignClients(clients = {OrderReadClient.class, OrderFallbackClient.class, OrderNativeOverrideClient.class})
+    static class TestFeignClientsConfig {
+    }
+
+    @Test
+    @DisplayName("验证配置同步处理器对 FeignClient 按 contextId 优先、服务名回退合并超时与日志级别，且不覆盖原生显式配置")
+    void testClientPropertiesSyncContextIdPrecedenceAndNameFallback() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        JacksonAutoConfiguration.class,
+                        HttpMessageConvertersAutoConfiguration.class,
+                        FeignAutoConfiguration.class,
+                        AtengFeignAutoConfiguration.class
+                ))
+                .withUserConfiguration(TestFeignClientsConfig.class)
+                .withPropertyValues(
+                        "ateng.cloud.feign.clients.shared-order-service.connect-timeout=400ms",
+                        "ateng.cloud.feign.clients.shared-order-service.socket-timeout=800ms",
+                        "ateng.cloud.feign.clients.shared-order-service.logger-level=FULL",
+                        "ateng.cloud.feign.clients.orderReadClient.socket-timeout=250ms",
+                        "spring.cloud.openfeign.client.config.orderNativeOverrideClient.read-timeout=999"
+                )
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    FeignClientProperties feignClientProperties = context.getBean(FeignClientProperties.class);
+
+                    // 1. orderReadClient：readTimeout 采用 contextId 优先覆盖(250)，connectTimeout 与 loggerLevel 平滑回退继承自 shared-order-service
+                    var readConfig = feignClientProperties.getConfig().get("orderReadClient");
+                    assertThat(readConfig).isNotNull();
+                    assertThat(readConfig.getReadTimeout()).isEqualTo(250);
+                    assertThat(readConfig.getConnectTimeout()).isEqualTo(400);
+                    assertThat(readConfig.getLoggerLevel()).isEqualTo(Logger.Level.FULL);
+
+                    // 2. orderFallbackClient：未配置 contextId 专属配置，完整回退继承自 shared-order-service
+                    var fallbackConfig = feignClientProperties.getConfig().get("orderFallbackClient");
+                    assertThat(fallbackConfig).isNotNull();
+                    assertThat(fallbackConfig.getConnectTimeout()).isEqualTo(400);
+                    assertThat(fallbackConfig.getReadTimeout()).isEqualTo(800);
+                    assertThat(fallbackConfig.getLoggerLevel()).isEqualTo(Logger.Level.FULL);
+
+                    // 3. orderNativeOverrideClient：原生 spring.cloud.openfeign.client.config 显式配置了 readTimeout=999，绝不被覆盖
+                    var nativeConfig = feignClientProperties.getConfig().get("orderNativeOverrideClient");
+                    assertThat(nativeConfig).isNotNull();
+                    assertThat(nativeConfig.getReadTimeout()).isEqualTo(999);
+                    assertThat(nativeConfig.getConnectTimeout()).isEqualTo(400);
+                    assertThat(nativeConfig.getLoggerLevel()).isEqualTo(Logger.Level.FULL);
+                });
     }
 }

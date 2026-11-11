@@ -11,8 +11,10 @@ import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.feign.annotation.AdaptiveUnwrap;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
+import io.github.atengk.cloud.feign.support.FeignTargetSupport;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -21,6 +23,9 @@ import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Feign 双模自适应契约解码引擎
@@ -56,68 +61,56 @@ public class AtengFeignDecoder implements Decoder {
             return delegate.decode(response, type);
         }
 
-        // 2. 如果方法声明返回类型本身就是 Result，原样透传不剥壳
-        if (isResultType(type)) {
-            return delegate.decode(response, type);
-        }
+        // 2. 硬防爆安全前置防御：按 contextId 优先、name 回退解析当前客户端有效阈值，校验 Content-Length 并有界读取响应流
+        List<String> candidateNames = FeignTargetSupport.resolveCandidateNames(response);
+        long maxBytes = FeignTargetSupport.resolveMaxResponseSizeBytes(properties, candidateNames);
+        validateContentLengthHeader(response, maxBytes);
 
-        // 3. 检查自适应解包是否被全局、客户端或注解显式禁用
-        if (!isUnwrapEnabled(response)) {
-            return checkPrimitiveNull(type, delegate.decode(response, type));
-        }
-
-        // 4. 硬防爆安全前置防御：校验 Content-Length 标头
-        long maxBytes = properties.getPayload() != null && properties.getPayload().getMaxResponseSize() != null
-                ? properties.getPayload().getMaxResponseSize().toBytes() : 10 * 1024 * 1024L;
-
-        if (response.headers().containsKey("content-length")) {
-            for (String lenStr : response.headers().get("content-length")) {
-                try {
-                    long len = Long.parseLong(lenStr);
-                    if (len > maxBytes) {
-                        throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
-                                String.format("Feign 响应标头 Content-Length [%d 字节] 超出硬防爆限制 [%d 字节]", len, maxBytes));
-                    }
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-
-        // 5. 按照硬防爆上限流式读取 body 字节流并保留副本，防流关闭
         byte[] bodyBytes;
         try (InputStream is = response.body().asInputStream()) {
             bodyBytes = readBoundedBody(is, maxBytes);
         }
+        Response bufferedResponse = response.toBuilder().body(bodyBytes).build();
+
+        // 3. 如果方法声明返回类型本身就是 Result，原样交由底层解码器透传不剥壳
+        if (isResultType(type)) {
+            return delegate.decode(bufferedResponse, type);
+        }
+
+        // 4. 检查自适应解包是否被全局、客户端或注解显式禁用
+        if (!isUnwrapEnabled(response, candidateNames)) {
+            return checkPrimitiveNull(type, delegate.decode(bufferedResponse, type));
+        }
+
         if (bodyBytes.length == 0) {
             return checkPrimitiveNull(type, null);
         }
 
-        // 6. 尝试将 body 解析为 JsonNode
+        // 5. 尝试将 body 解析为 JsonNode
         JsonNode jsonNode;
         try {
             jsonNode = objectMapper.readTree(bodyBytes);
         } catch (Exception e) {
             // 非 JSON 格式，回退直接用原生 delegate 解码
-            Response copy = response.toBuilder().body(bodyBytes).build();
-            return checkPrimitiveNull(type, delegate.decode(copy, type));
+            return checkPrimitiveNull(type, delegate.decode(bufferedResponse, type));
         }
 
-        // 7. 判断是否符合 Result 结构 (具备数字类型的 code 字段)
+        // 6. 判断是否符合 Result 结构 (具备数字类型的 code 字段)
         if (FeignResultSupport.isResultObject(jsonNode)) {
             int code = FeignResultSupport.extractCode(jsonNode);
             String msg = FeignResultSupport.extractMessage(jsonNode);
 
-            // 7.1 业务失败 (code != 200)，直接抛出受管 BusinessException
+            // 6.1 业务失败 (code != 200)，直接抛出受管 BusinessException
             if (code != 200) {
                 throw new BusinessException(code, msg);
             }
 
-            // 7.2 业务成功，处理 void 返回
+            // 6.2 业务成功，处理 void 返回
             if (type == void.class || type == Void.class) {
                 return null;
             }
 
-            // 7.3 业务成功，反序列化 data 字段为业务类型 T
+            // 6.3 业务成功，反序列化 data 字段为业务类型 T
             if (!jsonNode.has("data") || jsonNode.get("data").isNull()) {
                 return checkPrimitiveNull(type, null);
             }
@@ -126,9 +119,31 @@ public class AtengFeignDecoder implements Decoder {
             return checkPrimitiveNull(type, objectMapper.readValue(jsonNode.get("data").traverse(objectMapper), javaType));
         }
 
-        // 8. 若返回 JSON 不包含 code 字段（如第三方 API），平滑降级反序列化为声明的 type
+        // 7. 若返回 JSON 不包含 code 字段（如第三方 API），平滑降级反序列化为声明的 type
         JavaType javaType = objectMapper.getTypeFactory().constructType(type);
         return checkPrimitiveNull(type, objectMapper.readValue(bodyBytes, javaType));
+    }
+
+    private void validateContentLengthHeader(Response response, long maxBytes) {
+        if (response.headers() == null || response.headers().isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Collection<String>> entry : response.headers().entrySet()) {
+            if (!HttpHeaders.CONTENT_LENGTH.equalsIgnoreCase(entry.getKey()) || entry.getValue() == null) {
+                continue;
+            }
+            for (String lenStr : entry.getValue()) {
+                try {
+                    long len = Long.parseLong(lenStr.trim());
+                    if (len > maxBytes) {
+                        Util.ensureClosed(response.body());
+                        throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
+                                String.format("Feign 响应标头 Content-Length [%d 字节] 超出硬防爆限制 [%d 字节]", len, maxBytes));
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
     }
 
     private boolean isPrimitiveNonVoid(Type type) {
@@ -198,7 +213,7 @@ public class AtengFeignDecoder implements Decoder {
         return false;
     }
 
-    private boolean isUnwrapEnabled(Response response) {
+    private boolean isUnwrapEnabled(Response response, List<String> candidateNames) {
         // 1. 最高优先级：方法级别 @AdaptiveUnwrap 声明式注解
         Method method = extractMethod(response);
         if (method != null && method.isAnnotationPresent(AdaptiveUnwrap.class)) {
@@ -206,28 +221,13 @@ public class AtengFeignDecoder implements Decoder {
         }
 
         // 2. 次高优先级：类/接口级别 @AdaptiveUnwrap 声明式注解
-        Class<?> targetType = extractTargetType(response);
+        Class<?> targetType = FeignTargetSupport.resolveTargetType(extractRequestTemplate(response));
         if (targetType != null && targetType.isAnnotationPresent(AdaptiveUnwrap.class)) {
             return targetType.getAnnotation(AdaptiveUnwrap.class).value();
         }
 
-        // 3. 单 Client 独立配置优先级高于全局白名单与全局开关
-        String clientName = extractClientName(response);
-        if (clientName != null && properties.getClients() != null) {
-            var clientProps = properties.getClients().get(clientName);
-            if (clientProps != null && clientProps.getAdaptiveUnwrap() != null) {
-                return clientProps.getAdaptiveUnwrap();
-            }
-        }
-
-        // 4. 客户端排除白名单检查
-        if (clientName != null && properties.getAdaptiveUnwrap() != null
-                && properties.getAdaptiveUnwrap().getExcludeClients().contains(clientName)) {
-            return false;
-        }
-
-        // 5. 全局开关保底
-        return properties.getAdaptiveUnwrap() != null && properties.getAdaptiveUnwrap().isEnabled();
+        // 3. 按 contextId 优先、name 回退的顺序匹配单客户端覆盖配置与排除白名单，最终回退全局开关
+        return FeignTargetSupport.resolveClientAdaptiveUnwrap(properties, candidateNames);
     }
 
     private feign.RequestTemplate extractRequestTemplate(Response response) {
@@ -237,31 +237,10 @@ public class AtengFeignDecoder implements Decoder {
         return null;
     }
 
-    private String extractClientName(Response response) {
-        feign.RequestTemplate template = extractRequestTemplate(response);
-        if (template != null && template.feignTarget() != null) {
-            return template.feignTarget().name();
-        }
-        return null;
-    }
-
     private Method extractMethod(Response response) {
         feign.RequestTemplate template = extractRequestTemplate(response);
         if (template != null && template.methodMetadata() != null) {
             return template.methodMetadata().method();
-        }
-        return null;
-    }
-
-    private Class<?> extractTargetType(Response response) {
-        feign.RequestTemplate template = extractRequestTemplate(response);
-        if (template != null) {
-            if (template.methodMetadata() != null && template.methodMetadata().targetType() != null) {
-                return template.methodMetadata().targetType();
-            }
-            if (template.feignTarget() != null) {
-                return template.feignTarget().type();
-            }
         }
         return null;
     }

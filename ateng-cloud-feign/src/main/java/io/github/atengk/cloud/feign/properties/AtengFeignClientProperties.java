@@ -2,6 +2,7 @@ package io.github.atengk.cloud.feign.properties;
 
 import feign.Logger;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
+import org.springframework.util.unit.DataSize;
 
 import java.time.Duration;
 
@@ -39,6 +40,11 @@ public class AtengFeignClientProperties {
      * Client 级是否开启自适应契约解包（未配置则遵循全局规则与注解）
      */
     private Boolean adaptiveUnwrap;
+
+    /**
+     * Client 级独立的响应报文大小硬防爆阈值（强类型 DataSize，未配置则回退全局 payload.max-response-size）
+     */
+    private DataSize maxResponseSize;
 
     public Duration getConnectTimeout() {
         return connectTimeout;
@@ -96,5 +102,23 @@ public class AtengFeignClientProperties {
 
     public void setAdaptiveUnwrap(Boolean adaptiveUnwrap) {
         this.adaptiveUnwrap = adaptiveUnwrap;
+    }
+
+    /**
+     * 获取 Client 级响应报文大小硬防爆阈值
+     *
+     * @return 响应防爆阈值（未配置则返回 null）
+     */
+    public DataSize getMaxResponseSize() {
+        return maxResponseSize;
+    }
+
+    /**
+     * 设置 Client 级响应报文大小硬防爆阈值
+     *
+     * @param maxResponseSize 响应防爆阈值
+     */
+    public void setMaxResponseSize(DataSize maxResponseSize) {
+        this.maxResponseSize = maxResponseSize;
     }
 }

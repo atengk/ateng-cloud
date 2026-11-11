@@ -18,9 +18,11 @@ import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
 import io.github.atengk.cloud.feign.interceptor.FeignContextPropagationInterceptor;
 import io.github.atengk.cloud.feign.logger.AtengFeignLoggerFactory;
 import io.github.atengk.cloud.feign.preheat.AtengFeignPreheatListener;
+import io.github.atengk.cloud.feign.properties.AtengFeignClientProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.retry.AtengFeignRetryer;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
+import io.github.atengk.cloud.feign.support.FeignTargetSupport;
 import io.github.atengk.cloud.feign.support.SaTokenSameTokenProvider;
 import io.micrometer.observation.ObservationRegistry;
 import org.apache.hc.client5.http.config.RequestConfig;
@@ -41,6 +43,7 @@ import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.openfeign.FeignAutoConfiguration;
 import org.springframework.cloud.openfeign.FeignBuilderCustomizer;
+import org.springframework.cloud.openfeign.FeignClientFactoryBean;
 import org.springframework.cloud.openfeign.FeignClientProperties;
 import org.springframework.cloud.openfeign.FeignLoggerFactory;
 import io.github.atengk.cloud.feign.interceptor.AtengFeignAcceptGzipEncodingInterceptor;
@@ -51,9 +54,11 @@ import org.springframework.cloud.openfeign.support.ResponseEntityDecoder;
 import org.springframework.cloud.openfeign.support.SpringDecoder;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.util.StringUtils;
 
 import java.lang.reflect.InvocationHandler;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -211,7 +216,8 @@ public class AtengFeignAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(name = "atengFeignClientPropertiesSyncPostProcessor")
     public static BeanPostProcessor atengFeignClientPropertiesSyncPostProcessor(
-            ObjectProvider<AtengFeignProperties> propertiesProvider) {
+            ObjectProvider<AtengFeignProperties> propertiesProvider,
+            ObjectProvider<FeignClientProperties> feignClientPropertiesProvider) {
         return new BeanPostProcessor() {
             @Override
             public Object postProcessAfterInitialization(Object bean, String beanName) {
@@ -219,6 +225,12 @@ public class AtengFeignAutoConfiguration {
                     AtengFeignProperties properties = propertiesProvider.getIfAvailable();
                     if (properties != null) {
                         syncFeignClientProperties(feignClientProperties, properties);
+                    }
+                } else if (bean instanceof FeignClientFactoryBean factoryBean) {
+                    AtengFeignProperties properties = propertiesProvider.getIfAvailable();
+                    FeignClientProperties feignClientProperties = feignClientPropertiesProvider.getIfAvailable();
+                    if (properties != null && feignClientProperties != null) {
+                        syncFeignClientFactoryBeanProperties(factoryBean, feignClientProperties, properties);
                     }
                 }
                 return bean;
@@ -232,20 +244,17 @@ public class AtengFeignAutoConfiguration {
         if (properties.getHttpclient() != null && properties.getHttpclient().isEnabled()) {
             var defaultConfig = feignClientProperties.getConfig()
                     .computeIfAbsent(feignClientProperties.getDefaultConfig(), k -> new FeignClientProperties.FeignClientConfiguration());
-            if (defaultConfig.getConnectTimeout() == null) {
-                defaultConfig.setConnectTimeout((int) properties.getHttpclient().getConnectionTimeout().toMillis());
-            }
-            if (defaultConfig.getReadTimeout() == null) {
-                defaultConfig.setReadTimeout((int) properties.getHttpclient().getSocketTimeout().toMillis());
-            }
-            if (defaultConfig.getLoggerLevel() == null && properties.getLoggerLevel() != null) {
-                defaultConfig.setLoggerLevel(properties.getLoggerLevel());
-            }
+            applyClientConfiguration(
+                    defaultConfig,
+                    properties.getHttpclient().getConnectionTimeout(),
+                    properties.getHttpclient().getSocketTimeout(),
+                    properties.getLoggerLevel()
+            );
         }
 
         // 2. 映射单 Client 独立隔离配置 (ateng.cloud.feign.clients.<name>.*)
         if (properties.getClients() != null) {
-            for (Map.Entry<String, io.github.atengk.cloud.feign.properties.AtengFeignClientProperties> entry : properties.getClients().entrySet()) {
+            for (Map.Entry<String, AtengFeignClientProperties> entry : properties.getClients().entrySet()) {
                 String clientName = entry.getKey();
                 var clientProps = entry.getValue();
                 if (clientProps == null) {
@@ -253,19 +262,64 @@ public class AtengFeignAutoConfiguration {
                 }
                 var config = feignClientProperties.getConfig()
                         .computeIfAbsent(clientName, k -> new FeignClientProperties.FeignClientConfiguration());
-
-                if (clientProps.getConnectTimeout() != null) {
-                    config.setConnectTimeout((int) clientProps.getConnectTimeout().toMillis());
-                }
-                Duration readTimeout = clientProps.getReadTimeout() != null ? clientProps.getReadTimeout() : clientProps.getSocketTimeout();
-                if (readTimeout != null) {
-                    config.setReadTimeout((int) readTimeout.toMillis());
-                }
-                if (clientProps.getLoggerLevel() != null) {
-                    config.setLoggerLevel(clientProps.getLoggerLevel());
-                }
+                applyClientConfiguration(
+                        config,
+                        clientProps.getConnectTimeout(),
+                        clientProps.getReadTimeout() != null ? clientProps.getReadTimeout() : clientProps.getSocketTimeout(),
+                        clientProps.getLoggerLevel()
+                );
             }
         }
+    }
+
+    private static void syncFeignClientFactoryBeanProperties(FeignClientFactoryBean factoryBean,
+                                                             FeignClientProperties feignClientProperties,
+                                                             AtengFeignProperties properties) {
+        List<String> candidateNames = FeignTargetSupport.resolveCandidateNames(
+                factoryBean.getType(), factoryBean.getContextId(), factoryBean.getName());
+        String contextId = FeignTargetSupport.resolvePrimaryClientName(candidateNames);
+        if (!StringUtils.hasText(contextId)) {
+            return;
+        }
+
+        Duration connectTimeout = FeignTargetSupport.resolveClientSetting(
+                properties, candidateNames, AtengFeignClientProperties::getConnectTimeout);
+        Duration readTimeout = FeignTargetSupport.resolveClientSetting(
+                properties, candidateNames, AtengFeignClientProperties::getReadTimeout);
+        feign.Logger.Level loggerLevel = FeignTargetSupport.resolveClientSetting(
+                properties, candidateNames, AtengFeignClientProperties::getLoggerLevel);
+
+        if (connectTimeout == null && readTimeout == null && loggerLevel == null) {
+            return;
+        }
+
+        var config = feignClientProperties.getConfig()
+                .computeIfAbsent(contextId, k -> new FeignClientProperties.FeignClientConfiguration());
+        applyClientConfiguration(config, connectTimeout, readTimeout, loggerLevel);
+    }
+
+    private static void applyClientConfiguration(FeignClientProperties.FeignClientConfiguration config,
+                                                 Duration connectTimeout,
+                                                 Duration readTimeout,
+                                                 feign.Logger.Level loggerLevel) {
+        if (config.getConnectTimeout() == null && connectTimeout != null) {
+            config.setConnectTimeout(toTimeoutMillis(connectTimeout, "connect-timeout"));
+        }
+        if (config.getReadTimeout() == null && readTimeout != null) {
+            config.setReadTimeout(toTimeoutMillis(readTimeout, "read-timeout"));
+        }
+        if (config.getLoggerLevel() == null && loggerLevel != null) {
+            config.setLoggerLevel(loggerLevel);
+        }
+    }
+
+    private static int toTimeoutMillis(Duration timeout, String fieldName) {
+        long millis = timeout.toMillis();
+        if (millis < 0 || millis > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    String.format("Feign %s 超时时间毫秒值非法或超出 int 上限: %s", fieldName, timeout));
+        }
+        return (int) millis;
     }
 
     @Bean

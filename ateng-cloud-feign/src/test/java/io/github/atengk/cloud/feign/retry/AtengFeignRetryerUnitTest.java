@@ -263,4 +263,43 @@ public class AtengFeignRetryerUnitTest {
         assertTrue(uniqueIntervals.size() > 10, "Full Jitter 必须具备充分的离散度以打散惊群");
         assertTrue(minObserved < maxObserved, "最大观测值必须严格大于最小观测值");
     }
+
+    @Test
+    @DisplayName("11. 验证 contextId 未配置 retry 时平滑回退匹配服务名重试策略，且同时存在时 contextId 优先")
+    void testContextIdFallbackToServiceNameAndPrecedence() {
+        // 1. contextId 仅配置了 maxResponseSize（retry=null），服务名 shared-service 配置 maxAttempts=3 -> 应回退匹配 shared-service
+        AtengFeignProperties fallbackProps = new AtengFeignProperties();
+        AtengFeignClientProperties serviceRetryProps = new AtengFeignClientProperties();
+        AtengFeignRetryProperties serviceRetry = new AtengFeignRetryProperties();
+        serviceRetry.setMaxAttempts(3);
+        serviceRetry.setPeriod(Duration.ofMillis(5));
+        serviceRetry.setMaxPeriod(Duration.ofMillis(20));
+        serviceRetryProps.setRetry(serviceRetry);
+        fallbackProps.getClients().put("shared-service", serviceRetryProps);
+
+        AtengFeignClientProperties ctxPartialProps = new AtengFeignClientProperties();
+        ctxPartialProps.setMaxResponseSize(org.springframework.util.unit.DataSize.ofMegabytes(2));
+        fallbackProps.getClients().put("contextIdClient", ctxPartialProps);
+
+        RequestTemplate template = new RequestTemplate();
+        template.feignTarget(new Target.HardCodedTarget<>(ContextIdTestClient.class, "alias-runtime-name", "http://shared-service"));
+        Request request = Request.create(Request.HttpMethod.GET, "/test", Collections.emptyMap(), new byte[0], StandardCharsets.UTF_8, template);
+        RetryableException ex = new RetryableException(-1, "Connect failed", Request.HttpMethod.GET, new ConnectTimeoutException("Connect timed out"), (Long) null, request);
+
+        AtengFeignRetryer fallbackRetryer = new AtengFeignRetryer(fallbackProps);
+        assertDoesNotThrow(() -> fallbackRetryer.continueOrPropagate(ex)); // 1 -> 2
+        assertDoesNotThrow(() -> fallbackRetryer.continueOrPropagate(ex)); // 2 -> 3
+        assertThrows(RetryableException.class, () -> fallbackRetryer.continueOrPropagate(ex)); // 3 >= 3
+
+        // 2. 当 contextId 与服务名同时配置 retry 时，contextId 配置（enabled=false）优先覆盖服务名
+        AtengFeignClientProperties ctxOverrideProps = new AtengFeignClientProperties();
+        AtengFeignRetryProperties disabledRetry = new AtengFeignRetryProperties();
+        disabledRetry.setEnabled(false);
+        ctxOverrideProps.setRetry(disabledRetry);
+        fallbackProps.getClients().put("contextIdClient", ctxOverrideProps);
+
+        AtengFeignRetryer overrideRetryer = new AtengFeignRetryer(fallbackProps);
+        assertThrows(RetryableException.class, () -> overrideRetryer.continueOrPropagate(ex));
+        assertEquals(1, overrideRetryer.getAttempt(), "contextId 级 retry 配置必须优先覆盖服务名配置");
+    }
 }

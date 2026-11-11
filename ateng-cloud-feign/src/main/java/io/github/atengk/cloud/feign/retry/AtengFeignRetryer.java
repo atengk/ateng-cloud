@@ -1,17 +1,19 @@
 package io.github.atengk.cloud.feign.retry;
 
 import feign.Request;
+import feign.RequestTemplate;
 import feign.RetryableException;
 import feign.Retryer;
-import feign.Target;
 import io.github.atengk.cloud.feign.properties.AtengFeignClientProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignRetryProperties;
+import io.github.atengk.cloud.feign.support.FeignTargetSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -92,9 +94,11 @@ public class AtengFeignRetryer implements Retryer {
             throw e;
         }
 
-        // 4. 解析 Client 级别独立的重试配置与最大尝试次数 (优先匹配 contextId，其次匹配 name)
-        String clientName = resolveClientName(e);
-        AtengFeignRetryProperties retryProps = resolveRetryProperties(e, clientName);
+        // 4. 解析 Client 级别独立的重试配置与最大尝试次数 (优先匹配 contextId，其次匹配注解 value/name 与 target.name)
+        RequestTemplate template = e.request() != null ? e.request().requestTemplate() : null;
+        List<String> candidateNames = FeignTargetSupport.resolveCandidateNames(template);
+        String clientName = FeignTargetSupport.resolvePrimaryClientName(candidateNames);
+        AtengFeignRetryProperties retryProps = resolveRetryProperties(candidateNames);
 
         if (retryProps != null && !retryProps.isEnabled()) {
             log.debug("Feign 客户端 [{}] 重试机制已显式禁用", clientName);
@@ -220,56 +224,13 @@ public class AtengFeignRetryer implements Retryer {
         return false;
     }
 
-    private Target<?> extractFeignTarget(RetryableException e) {
-        if (e != null && e.request() != null && e.request().requestTemplate() != null) {
-            return e.request().requestTemplate().feignTarget();
+    private AtengFeignRetryProperties resolveRetryProperties(List<String> candidateNames) {
+        AtengFeignRetryProperties clientRetry = FeignTargetSupport.resolveClientSetting(
+                properties, candidateNames, AtengFeignClientProperties::getRetry);
+        if (clientRetry != null) {
+            return clientRetry;
         }
-        return null;
-    }
-
-    private String resolveClientName(RetryableException e) {
-        Target<?> target = extractFeignTarget(e);
-        if (target != null) {
-            Class<?> type = target.type();
-            if (type != null && type.isAnnotationPresent(org.springframework.cloud.openfeign.FeignClient.class)) {
-                var feignClient = type.getAnnotation(org.springframework.cloud.openfeign.FeignClient.class);
-                if (feignClient.contextId() != null && !feignClient.contextId().isBlank()) {
-                    return feignClient.contextId();
-                }
-                if (feignClient.value() != null && !feignClient.value().isBlank()) {
-                    return feignClient.value();
-                }
-                if (feignClient.name() != null && !feignClient.name().isBlank()) {
-                    return feignClient.name();
-                }
-            }
-            if (target.name() != null) {
-                return target.name();
-            }
-        }
-        return null;
-    }
-
-    private AtengFeignRetryProperties resolveRetryProperties(RetryableException e, String clientName) {
-        if (properties == null || properties.getClients() == null) {
-            return properties != null ? properties.getRetry() : null;
-        }
-        // 1. 优先按解析出的 clientName (contextId 优先) 匹配配置
-        if (clientName != null && properties.getClients().containsKey(clientName)) {
-            AtengFeignClientProperties clientProps = properties.getClients().get(clientName);
-            if (clientProps != null && clientProps.getRetry() != null) {
-                return clientProps.getRetry();
-            }
-        }
-        // 2. 其次按 target.name() 匹配配置
-        Target<?> target = extractFeignTarget(e);
-        if (target != null && target.name() != null && properties.getClients().containsKey(target.name())) {
-            AtengFeignClientProperties clientProps = properties.getClients().get(target.name());
-            if (clientProps != null && clientProps.getRetry() != null) {
-                return clientProps.getRetry();
-            }
-        }
-        return properties.getRetry();
+        return properties != null ? properties.getRetry() : null;
     }
 
     protected long currentTimeMillis() {
