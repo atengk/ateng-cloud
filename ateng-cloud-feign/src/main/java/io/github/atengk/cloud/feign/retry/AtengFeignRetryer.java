@@ -7,12 +7,11 @@ import feign.Retryer;
 import io.github.atengk.cloud.feign.properties.AtengFeignClientProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignRetryProperties;
+import io.github.atengk.cloud.feign.support.FeignErrorSupport;
 import io.github.atengk.cloud.feign.support.FeignTargetSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -166,62 +165,14 @@ public class AtengFeignRetryer implements Retryer {
      * 判断异常因果链中是否包含网络建连超时或端口不可达
      */
     protected boolean isConnectTimeout(Throwable t) {
-        return hasCause(t, current -> {
-            if (current instanceof org.apache.hc.client5.http.ConnectTimeoutException
-                    || current instanceof ConnectException) {
-                return true;
-            }
-            String msg = current.getMessage();
-            if (msg != null) {
-                String lower = msg.toLowerCase();
-                if (lower.contains("connect timed out")
-                        || lower.contains("connection refused")
-                        || lower.contains("connect to")) {
-                    return !lower.contains("read timed out") && !lower.contains("response timeout");
-                }
-            }
-            return false;
-        });
+        return FeignErrorSupport.isConnectTimeoutCause(t);
     }
 
     /**
      * 判断异常因果链中是否包含读取超时
      */
     protected boolean isReadTimeout(Throwable t) {
-        // Apache HttpClient 5 的 ConnectTimeoutException 继承自 SocketTimeoutException，前置排除
-        if (isConnectTimeout(t)) {
-            return false;
-        }
-        return hasCause(t, current -> {
-            if (current instanceof SocketTimeoutException) {
-                String msg = current.getMessage();
-                return msg == null || !msg.toLowerCase().contains("connect");
-            }
-            if (current instanceof org.apache.hc.core5.http.ConnectionClosedException
-                    || current instanceof org.apache.hc.core5.http.NoHttpResponseException) {
-                return true;
-            }
-            String msg = current.getMessage();
-            if (msg != null) {
-                String lower = msg.toLowerCase();
-                return lower.contains("read timed out")
-                        || lower.contains("response timeout")
-                        || lower.contains("socket read timeout")
-                        || lower.contains("read timeout");
-            }
-            return false;
-        });
-    }
-
-    private static boolean hasCause(Throwable t, java.util.function.Predicate<Throwable> predicate) {
-        Throwable current = t;
-        while (current != null) {
-            if (predicate.test(current)) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
+        return FeignErrorSupport.isReadTimeoutCause(t);
     }
 
     private AtengFeignRetryProperties resolveRetryProperties(List<String> candidateNames) {

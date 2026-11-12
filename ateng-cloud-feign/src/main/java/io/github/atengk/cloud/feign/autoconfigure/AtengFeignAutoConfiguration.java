@@ -3,16 +3,13 @@ package io.github.atengk.cloud.feign.autoconfigure;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.Capability;
 import feign.Feign;
-import feign.InvocationHandlerFactory;
 import feign.QueryMapEncoder;
 import feign.Retryer;
-import feign.codec.DecodeException;
 import feign.codec.Decoder;
 import feign.codec.ErrorDecoder;
 import feign.micrometer.MicrometerObservationCapability;
 import feign.optionals.OptionalDecoder;
 import feign.querymap.BeanQueryMapEncoder;
-import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.feign.decoder.AtengFeignDecoder;
 import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
 import io.github.atengk.cloud.feign.filter.FeignContextWebFilter;
@@ -24,6 +21,7 @@ import io.github.atengk.cloud.feign.properties.AtengFeignContextProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.retry.AtengFeignRetryer;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
+import io.github.atengk.cloud.feign.support.AtengFeignInvocationHandlerFactory;
 import io.github.atengk.cloud.feign.support.FeignTargetSupport;
 import io.github.atengk.cloud.feign.support.SaTokenSameTokenProvider;
 import io.micrometer.observation.ObservationRegistry;
@@ -63,7 +61,6 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.StringUtils;
 
-import java.lang.reflect.InvocationHandler;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -184,7 +181,8 @@ public class AtengFeignAutoConfiguration {
     @ConditionalOnMissingBean
     public FeignBuilderCustomizer atengFeignBuilderCustomizer(ObjectProvider<Retryer> retryerProvider,
                                                              ObjectProvider<QueryMapEncoder> queryMapEncoderProvider,
-                                                             ObjectProvider<Capability> capabilitiesProvider) {
+                                                             ObjectProvider<Capability> capabilitiesProvider,
+                                                             AtengFeignProperties properties) {
         return builder -> {
             // 开启 void 方法返回体的响应解码 (使 void 接口也能解析校验 Result<Void> 的 code 业务状态)
             builder.decodeVoid();
@@ -202,21 +200,8 @@ public class AtengFeignAutoConfiguration {
             // 挂载度量监控等扩展能力 (如 MicrometerObservationCapability)
             capabilitiesProvider.orderedStream().forEach(builder::addCapability);
 
-            // 挂载动态代理调用拦截，将 DecodeException 内部的 BusinessException 剥壳向外抛出
-            builder.invocationHandlerFactory((target, dispatch) -> {
-                InvocationHandlerFactory defaultFactory = new InvocationHandlerFactory.Default();
-                InvocationHandler defaultHandler = defaultFactory.create(target, dispatch);
-                return (proxy, method, args) -> {
-                    try {
-                        return defaultHandler.invoke(proxy, method, args);
-                    } catch (DecodeException e) {
-                        if (e.getCause() instanceof BusinessException be) {
-                            throw be;
-                        }
-                        throw e;
-                    }
-                };
-            });
+            // 挂载动态代理调用异常治理（DecodeException 剥壳与可选网络异常因果转译）
+            builder.invocationHandlerFactory(new AtengFeignInvocationHandlerFactory(properties));
         };
     }
 
@@ -345,8 +330,8 @@ public class AtengFeignAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(FeignLoggerFactory.class)
-    public FeignLoggerFactory feignLoggerFactory() {
-        return new AtengFeignLoggerFactory();
+    public FeignLoggerFactory feignLoggerFactory(AtengFeignProperties properties) {
+        return new AtengFeignLoggerFactory(properties);
     }
 
     @Bean

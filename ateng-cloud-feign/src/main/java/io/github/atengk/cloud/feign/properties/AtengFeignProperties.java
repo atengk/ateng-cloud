@@ -3,6 +3,7 @@ package io.github.atengk.cloud.feign.properties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -71,6 +72,16 @@ public class AtengFeignProperties {
      * 全局 Feign 请求响应日志打印级别，生产默认 BASIC
      */
     private feign.Logger.Level loggerLevel = feign.Logger.Level.BASIC;
+
+    /**
+     * 全局慢调用告警阈值（强类型 Duration，默认 2s；设为 0 或负数时关闭全局慢调用告警）
+     */
+    private Duration slowCallThreshold = Duration.ofSeconds(2);
+
+    /**
+     * 是否开启网络层异常（RetryableException）与未转译 FeignException 的自动因果转译，默认 false（保持原生 RetryableException 兼容熔断统计）
+     */
+    private boolean translateNetworkExceptions = false;
 
     public boolean isEnabled() {
         return enabled;
@@ -150,5 +161,41 @@ public class AtengFeignProperties {
 
     public void setLoggerLevel(feign.Logger.Level loggerLevel) {
         this.loggerLevel = loggerLevel;
+    }
+
+    /**
+     * 获取全局慢调用告警阈值
+     *
+     * @return 慢调用告警阈值（为 null、0 或负数时表示关闭）
+     */
+    public Duration getSlowCallThreshold() {
+        return slowCallThreshold;
+    }
+
+    /**
+     * 设置全局慢调用告警阈值
+     *
+     * @param slowCallThreshold 慢调用告警阈值
+     */
+    public void setSlowCallThreshold(Duration slowCallThreshold) {
+        this.slowCallThreshold = slowCallThreshold;
+    }
+
+    /**
+     * 判断是否开启网络层与未转译 Feign 异常的因果转译
+     *
+     * @return true 表示自动转译为携带原始 cause 的 BusinessException
+     */
+    public boolean isTranslateNetworkExceptions() {
+        return translateNetworkExceptions;
+    }
+
+    /**
+     * 设置是否开启网络层与未转译 Feign 异常的因果转译
+     *
+     * @param translateNetworkExceptions 是否开启异常因果转译
+     */
+    public void setTranslateNetworkExceptions(boolean translateNetworkExceptions) {
+        this.translateNetworkExceptions = translateNetworkExceptions;
     }
 }

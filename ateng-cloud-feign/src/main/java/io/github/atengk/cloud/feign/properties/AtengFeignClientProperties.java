@@ -46,6 +46,11 @@ public class AtengFeignClientProperties {
      */
     private DataSize maxResponseSize;
 
+    /**
+     * Client 级独立的慢调用告警阈值（强类型 Duration，设为 0 或负数可关闭单客户端慢调用告警，未配置则回退全局 slow-call-threshold）
+     */
+    private Duration slowCallThreshold;
+
     public Duration getConnectTimeout() {
         return connectTimeout;
     }
@@ -120,5 +125,23 @@ public class AtengFeignClientProperties {
      */
     public void setMaxResponseSize(DataSize maxResponseSize) {
         this.maxResponseSize = maxResponseSize;
+    }
+
+    /**
+     * 获取 Client 级慢调用告警阈值
+     *
+     * @return 慢调用告警阈值（未配置则返回 null）
+     */
+    public Duration getSlowCallThreshold() {
+        return slowCallThreshold;
+    }
+
+    /**
+     * 设置 Client 级慢调用告警阈值
+     *
+     * @param slowCallThreshold 慢调用告警阈值（0 或负数可单独关闭）
+     */
+    public void setSlowCallThreshold(Duration slowCallThreshold) {
+        this.slowCallThreshold = slowCallThreshold;
     }
 }

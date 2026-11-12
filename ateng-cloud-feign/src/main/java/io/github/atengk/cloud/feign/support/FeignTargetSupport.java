@@ -10,6 +10,7 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.util.unit.DataSize;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -35,6 +36,11 @@ public final class FeignTargetSupport {
      * 默认响应报文大小硬防爆阈值（10MB）
      */
     public static final long DEFAULT_MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024L;
+
+    /**
+     * 默认慢调用告警阈值（2s）
+     */
+    public static final Duration DEFAULT_SLOW_CALL_THRESHOLD = Duration.ofSeconds(2);
 
     private FeignTargetSupport() {
     }
@@ -187,6 +193,24 @@ public final class FeignTargetSupport {
             return bytes;
         }
         return DEFAULT_MAX_RESPONSE_SIZE_BYTES;
+    }
+
+    /**
+     * 解析当前客户端有效慢调用告警阈值（按候选优先级匹配单客户端 slowCallThreshold，未配置回退全局 slowCallThreshold）
+     *
+     * @param properties     全局 Feign 配置属性
+     * @param candidateNames 有序候选名称列表
+     * @return 生效的慢调用阈值（为 null、0 或负数时表示关闭）
+     */
+    public static Duration resolveSlowCallThreshold(AtengFeignProperties properties, List<String> candidateNames) {
+        Duration clientThreshold = resolveClientSetting(properties, candidateNames, AtengFeignClientProperties::getSlowCallThreshold);
+        if (clientThreshold != null) {
+            return clientThreshold;
+        }
+        if (properties != null) {
+            return properties.getSlowCallThreshold();
+        }
+        return DEFAULT_SLOW_CALL_THRESHOLD;
     }
 
     /**

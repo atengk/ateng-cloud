@@ -6,9 +6,9 @@ import feign.FeignException;
 import feign.Response;
 import feign.Util;
 import feign.codec.ErrorDecoder;
-import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.code.IResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.feign.support.FeignErrorSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,22 +49,8 @@ public class AtengFeignErrorDecoder implements ErrorDecoder {
         }
 
         // 依据 HTTP 状态码映射标准错误码
-        IResultCode resultCode = mapHttpStatusToResultCode(response.status());
+        IResultCode resultCode = FeignErrorSupport.mapHttpStatusToResultCode(response.status());
         String errorMsg = String.format("Feign 调用下游服务异常: [%s], HTTP 状态码: %d", methodKey, response.status());
         return new BusinessException(resultCode, errorMsg, feignException);
-    }
-
-    private IResultCode mapHttpStatusToResultCode(int status) {
-        return switch (status) {
-            case 400 -> CommonResultCode.BAD_REQUEST;
-            case 401 -> CommonResultCode.UNAUTHORIZED;
-            case 403 -> CommonResultCode.FORBIDDEN;
-            case 404 -> CommonResultCode.NOT_FOUND;
-            case 405 -> CommonResultCode.METHOD_NOT_ALLOWED;
-            case 413 -> CommonResultCode.PAYLOAD_TOO_LARGE;
-            case 429 -> CommonResultCode.TOO_MANY_REQUESTS;
-            case 503 -> CommonResultCode.SERVICE_UNAVAILABLE;
-            default -> CommonResultCode.INTERNAL_SERVER_ERROR;
-        };
     }
 }

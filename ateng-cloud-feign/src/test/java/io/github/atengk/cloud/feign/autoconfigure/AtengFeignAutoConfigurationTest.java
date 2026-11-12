@@ -240,4 +240,54 @@ public class AtengFeignAutoConfigurationTest {
         // 6. 非 Web 环境不装配 Servlet 过滤器
         contextRunner.run(context -> assertThat(context).doesNotHaveBean("feignContextWebFilter"));
     }
+
+    @Test
+    @DisplayName("验证慢调用告警阈值与网络异常转译开关配置绑定及自动装配生效")
+    void testSlowCallThresholdAndNetworkExceptionTranslationBinding() {
+        contextRunner.withConfiguration(AutoConfigurations.of(
+                        JacksonAutoConfiguration.class,
+                        HttpMessageConvertersAutoConfiguration.class,
+                        FeignAutoConfiguration.class
+                ))
+                .withPropertyValues(
+                        "ateng.cloud.feign.slow-call-threshold=500ms",
+                        "ateng.cloud.feign.translate-network-exceptions=true",
+                        "ateng.cloud.feign.clients.orderReadClient.slow-call-threshold=150ms"
+                ).run(context -> {
+                    assertThat(context).hasNotFailed();
+                    io.github.atengk.cloud.feign.properties.AtengFeignProperties properties =
+                            context.getBean(io.github.atengk.cloud.feign.properties.AtengFeignProperties.class);
+                    assertThat(properties.getSlowCallThreshold()).isEqualTo(java.time.Duration.ofMillis(500));
+                    assertThat(properties.isTranslateNetworkExceptions()).isTrue();
+                    assertThat(properties.getClients().get("orderReadClient").getSlowCallThreshold())
+                            .isEqualTo(java.time.Duration.ofMillis(150));
+
+                    assertThat(context).hasSingleBean(org.springframework.cloud.openfeign.FeignLoggerFactory.class);
+                    org.springframework.cloud.openfeign.FeignLoggerFactory loggerFactory =
+                            context.getBean(org.springframework.cloud.openfeign.FeignLoggerFactory.class);
+                    assertThat(loggerFactory).isInstanceOf(io.github.atengk.cloud.feign.logger.AtengFeignLoggerFactory.class);
+                    assertThat(loggerFactory.create(OrderReadClient.class))
+                            .isInstanceOf(io.github.atengk.cloud.feign.logger.AtengFeignLogger.class);
+
+                    // 验证容器装配的 atengFeignBuilderCustomizer 实际生效网络异常因果转译
+                    org.springframework.cloud.openfeign.FeignBuilderCustomizer customizer = context.getBean(
+                            "atengFeignBuilderCustomizer",
+                            org.springframework.cloud.openfeign.FeignBuilderCustomizer.class);
+                    feign.Feign.Builder builder = feign.Feign.builder()
+                            .client((request, options) -> {
+                                throw new java.net.SocketTimeoutException("Read timed out");
+                            });
+                    customizer.customize(builder);
+                    SampleTimeoutApi api = builder.target(SampleTimeoutApi.class, "http://demo-service");
+                    io.github.atengk.boot.core.exception.BusinessException ex =
+                            org.junit.jupiter.api.Assertions.assertThrows(
+                                    io.github.atengk.boot.core.exception.BusinessException.class, api::ping);
+                    assertThat(ex.getCause()).isInstanceOf(feign.RetryableException.class);
+                });
+    }
+
+    interface SampleTimeoutApi {
+        @feign.RequestLine("GET /ping")
+        String ping();
+    }
 }
