@@ -1,7 +1,6 @@
 package io.github.atengk.cloud.gateway.properties;
 
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
-import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,7 +37,11 @@ public class AtengGatewaySecurityProperties {
             GatewayConstants.X_TENANT_ID,
             GatewayConstants.X_IGNORE_TENANT,
             GatewayConstants.SAME_TOKEN,
-            GatewayConstants.SAME_TOKEN_UPPER
+            GatewayConstants.SAME_TOKEN_UPPER,
+            GatewayConstants.SA_SAME_TOKEN,
+            GatewayConstants.TX_XID,
+            GatewayConstants.X_TRAFFIC_LANE,
+            GatewayConstants.X_TRAFFIC_RULE
     ));
 
     /**
@@ -62,6 +65,11 @@ public class AtengGatewaySecurityProperties {
     private boolean saTokenEnabled = true;
 
     /**
+     * 是否向下游注入 Sa-Token 内部同源 Same-Token 受信凭据 (仅当 saTokenEnabled=true 时生效)
+     */
+    private boolean sameTokenEnabled = true;
+
+    /**
      * Sa-Token 鉴权忽略放行的 AntPath 路径列表 (如 /auth/**, /actuator/**)
      */
     private List<String> excludePaths = new ArrayList<>();
@@ -80,12 +88,6 @@ public class AtengGatewaySecurityProperties {
      * IP 白名单列表 (若配置非空，则仅放行白名单 IP，其它直接 403 阻断)
      */
     private List<String> ipWhitelist = new ArrayList<>();
-
-    /**
-     * 出站安全响应头强化配置
-     */
-    @NestedConfigurationProperty
-    private AtengGatewaySecurityHeadersProperties securityHeaders = new AtengGatewaySecurityHeadersProperties();
 
     public boolean isEnabled() {
         return enabled;
@@ -151,6 +153,14 @@ public class AtengGatewaySecurityProperties {
         this.saTokenEnabled = saTokenEnabled;
     }
 
+    public boolean isSameTokenEnabled() {
+        return sameTokenEnabled;
+    }
+
+    public void setSameTokenEnabled(boolean sameTokenEnabled) {
+        this.sameTokenEnabled = sameTokenEnabled;
+    }
+
     public List<String> getExcludePaths() {
         return excludePaths;
     }
@@ -181,13 +191,5 @@ public class AtengGatewaySecurityProperties {
 
     public void setIpWhitelist(List<String> ipWhitelist) {
         this.ipWhitelist = ipWhitelist;
-    }
-
-    public AtengGatewaySecurityHeadersProperties getSecurityHeaders() {
-        return securityHeaders;
-    }
-
-    public void setSecurityHeaders(AtengGatewaySecurityHeadersProperties securityHeaders) {
-        this.securityHeaders = securityHeaders;
     }
 }

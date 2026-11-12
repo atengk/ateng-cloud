@@ -195,6 +195,6 @@ public class OpenApiGuardFilter implements WebFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return GatewayConstants.ORDER_IP_FILTER + 1;
+        return GatewayConstants.ORDER_OPENAPI_GUARD;
     }
 }

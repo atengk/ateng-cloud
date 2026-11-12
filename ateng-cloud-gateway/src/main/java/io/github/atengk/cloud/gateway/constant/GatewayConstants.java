@@ -55,6 +55,26 @@ public final class GatewayConstants {
     public static final String SAME_TOKEN_UPPER = "SAME_TOKEN";
 
     /**
+     * Sa-Token 内部同源凭证连字符大写标头
+     */
+    public static final String SA_SAME_TOKEN = "SA-SAME-TOKEN";
+
+    /**
+     * Seata 分布式事务全局 XID 透传标头
+     */
+    public static final String TX_XID = "TX_XID";
+
+    /**
+     * 灰度全链路泳道染色标签标头
+     */
+    public static final String X_TRAFFIC_LANE = "X-Traffic-Lane";
+
+    /**
+     * 灰度全链路路由规则标头
+     */
+    public static final String X_TRAFFIC_RULE = "X-Traffic-Rule";
+
+    /**
      * 标准 X-Forwarded-For 代理链标头
      */
     public static final String X_FORWARDED_FOR = "X-Forwarded-For";
@@ -153,22 +173,32 @@ public final class GatewayConstants {
     /**
      * 响应式链路追踪 traceId 生成与透传过滤器执行顺序
      */
-    public static final int ORDER_TRACE = Ordered.HIGHEST_PRECEDENCE + 1;
+    public static final int ORDER_TRACE = Ordered.HIGHEST_PRECEDENCE + 2;
 
     /**
      * 外部入站敏感标头物理剥离清洗过滤器执行顺序
      */
-    public static final int ORDER_HEADER_SANITIZE = Ordered.HIGHEST_PRECEDENCE + 2;
+    public static final int ORDER_HEADER_SANITIZE = Ordered.HIGHEST_PRECEDENCE + 3;
 
     /**
      * 真实公网客户端 IP 解析过滤器执行顺序
      */
-    public static final int ORDER_CLIENT_IP = Ordered.HIGHEST_PRECEDENCE + 3;
+    public static final int ORDER_CLIENT_IP = Ordered.HIGHEST_PRECEDENCE + 4;
 
     /**
      * IP 黑白名单防卫过滤器执行顺序
      */
-    public static final int ORDER_IP_FILTER = Ordered.HIGHEST_PRECEDENCE + 4;
+    public static final int ORDER_IP_FILTER = Ordered.HIGHEST_PRECEDENCE + 5;
+
+    /**
+     * 开放平台 OpenAPI 接入防卫过滤器执行顺序
+     */
+    public static final int ORDER_OPENAPI_GUARD = Ordered.HIGHEST_PRECEDENCE + 6;
+
+    /**
+     * 请求签名校验与防重放防卫过滤器执行顺序 (置于集中鉴权之前)
+     */
+    public static final int ORDER_SIGN_GUARD = -101;
 
     /**
      * Sa-Token 反应式集中鉴权过滤器执行顺序
@@ -185,6 +215,10 @@ public final class GatewayConstants {
      */
     public static final int ORDER_TRAFFIC_TAG = ORDER_TENANT + 10;
 
+    /**
+     * 网关限流异常标准 JSON 响应收敛过滤器执行顺序
+     */
+    public static final int ORDER_RATE_LIMIT_RESPONSE = -20;
 
     /**
      * 访问日志轻量审计与慢请求告警过滤器执行顺序

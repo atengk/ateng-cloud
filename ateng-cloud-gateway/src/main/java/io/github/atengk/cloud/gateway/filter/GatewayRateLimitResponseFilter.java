@@ -48,7 +48,7 @@ public class GatewayRateLimitResponseFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return -80;
+        return GatewayConstants.ORDER_RATE_LIMIT_RESPONSE;
     }
 
     @Override

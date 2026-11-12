@@ -115,7 +115,9 @@ public class SaTokenGatewayFilter implements GlobalFilter, Ordered {
                 reqBuilder.header(GatewayConstants.X_TENANT_ID, tenantId);
             }
         }
-        injectSameTokenHeaders(reqBuilder);
+        if (securityProperties == null || securityProperties.isSameTokenEnabled()) {
+            injectSameTokenHeaders(reqBuilder);
+        }
     }
 
     /**

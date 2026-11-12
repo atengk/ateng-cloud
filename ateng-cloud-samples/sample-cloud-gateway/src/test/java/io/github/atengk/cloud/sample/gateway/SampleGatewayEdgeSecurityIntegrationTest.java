@@ -110,14 +110,21 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
                 .header(GatewayConstants.X_TENANT_ID, "forged-tenant-888")
                 .header(GatewayConstants.X_IGNORE_TENANT, "true")
                 .header(GatewayConstants.SAME_TOKEN, "forged-same-token-signature")
+                .header(GatewayConstants.SA_SAME_TOKEN, "forged-sa-same-token")
+                .header(GatewayConstants.TX_XID, "192.168.1.1:8091:999999")
+                .header(GatewayConstants.X_TRAFFIC_LANE, "forged-canary-lane")
+                .header(GatewayConstants.X_TRAFFIC_RULE, "forged-canary-rule")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(200)
-                // 强断言：下游接收到的标头字典中绝对不得包含伪造的敏感标头
                 .jsonPath("$.data['x-user-id']").doesNotExist()
                 .jsonPath("$.data['x-tenant-id']").doesNotExist()
                 .jsonPath("$.data['x-ignore-tenant']").doesNotExist()
+                .jsonPath("$.data['sa-same-token']").doesNotExist()
+                .jsonPath("$.data['tx_xid']").doesNotExist()
+                .jsonPath("$.data['x-traffic-lane']").doesNotExist()
+                .jsonPath("$.data['x-traffic-rule']").doesNotExist()
                 // 伪造的 Same-Token 被剥离，网关重新签发合法的内部同源凭据
                 .jsonPath("$.data['same-token']").value(org.hamcrest.Matchers.not("forged-same-token-signature"));
     }

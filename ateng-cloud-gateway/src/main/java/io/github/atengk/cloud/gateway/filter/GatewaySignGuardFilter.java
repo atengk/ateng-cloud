@@ -347,6 +347,6 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return GatewayConstants.ORDER_SA_TOKEN - 1;
+        return GatewayConstants.ORDER_SIGN_GUARD;
     }
 }

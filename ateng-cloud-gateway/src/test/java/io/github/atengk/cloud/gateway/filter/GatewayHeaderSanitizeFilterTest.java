@@ -33,6 +33,11 @@ class GatewayHeaderSanitizeFilterTest {
                 .header(GatewayConstants.X_TENANT_ID, "forged-tenant-1")
                 .header(GatewayConstants.X_IGNORE_TENANT, "true")
                 .header(GatewayConstants.SAME_TOKEN, "forged-token-1")
+                .header(GatewayConstants.SAME_TOKEN_UPPER, "forged-token-upper")
+                .header(GatewayConstants.SA_SAME_TOKEN, "forged-sa-same-token")
+                .header(GatewayConstants.TX_XID, "forged-xid-123")
+                .header(GatewayConstants.X_TRAFFIC_LANE, "forged-lane")
+                .header(GatewayConstants.X_TRAFFIC_RULE, "forged-rule")
                 .header("Custom-Header", "keep-me")
                 .build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
@@ -42,6 +47,11 @@ class GatewayHeaderSanitizeFilterTest {
             assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.X_TENANT_ID));
             assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.X_IGNORE_TENANT));
             assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.SAME_TOKEN));
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.SAME_TOKEN_UPPER));
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.SA_SAME_TOKEN));
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.TX_XID));
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.X_TRAFFIC_LANE));
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.X_TRAFFIC_RULE));
             assertEquals("keep-me", ex.getRequest().getHeaders().getFirst("Custom-Header"));
             return Mono.empty();
         };
