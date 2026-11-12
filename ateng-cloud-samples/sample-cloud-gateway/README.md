@@ -26,7 +26,9 @@ mvn spring-boot:run -pl ateng-cloud-samples/sample-cloud-gateway -Dspring-boot.r
 
 ## 3. 核心 Controller 接口与一键体验
 
-| 功能场景 | Controller / 路由端点 | 请求方式与路径 | 快速体验 cURL 命令 |
+> **说明**：网关作为分布式边缘反向代理层，对外统一暴露 `/api/**` 边缘路由端点；客户端请求经由网关全局过滤器链与路由断言后，在内部通过响应式 `forward:/` 转发至对应微服务领域的底层 Controller 契约。
+
+| 功能场景 | 承接 Controller 契约 | 网关边缘代理请求方式与路径 | 快速体验 cURL 命令 |
 | :--- | :--- | :--- | :--- |
 | **集中登录与令牌签发** | `GatewayAuthController#login` | `GET /api/auth/login` | `curl "http://localhost:9000/api/auth/login?userId=10001&tenantId=tenant-888"` |
 | **受保护用户信息** | `GatewayAuthController#userInfo` | `GET /api/auth/user-info` | `curl -H "satoken: YOUR_TOKEN" "http://localhost:9000/api/auth/user-info"` |

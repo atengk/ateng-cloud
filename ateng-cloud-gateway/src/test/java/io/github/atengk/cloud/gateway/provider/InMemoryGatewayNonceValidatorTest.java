@@ -126,4 +126,19 @@ class InMemoryGatewayNonceValidatorTest {
         extraResults.add(validator.validateAndStore("extra-after-flood", ttl));
         assertFalse(extraResults.get(0));
     }
+
+    @Test
+    @DisplayName("前置无锁快速失败：未过期 Nonce 重放被立即拦截且不影响其他正常 Nonce 写入")
+    void testFastPathReplayRejection() {
+        InMemoryGatewayNonceValidator validator = new InMemoryGatewayNonceValidator(10);
+        Duration ttl = Duration.ofMinutes(5);
+
+        assertTrue(validator.validateAndStore("replay-nonce-1", ttl));
+        // 重复请求触发快速失败
+        assertFalse(validator.validateAndStore("replay-nonce-1", ttl));
+        assertFalse(validator.validateAndStore(" replay-nonce-1 ", ttl));
+
+        // 其他全新 Nonce 仍可正常写入
+        assertTrue(validator.validateAndStore("fresh-nonce-2", ttl));
+    }
 }

@@ -24,12 +24,14 @@ public class InMemoryGatewayNonceValidator implements GatewayNonceValidator {
 
     public static final int DEFAULT_MAX_CAPACITY = 100_000;
     private static final int DEFAULT_CLEANUP_THRESHOLD = 5_000;
+    private static final long DEFAULT_CLEANUP_INTERVAL_MILLIS = 1_000L;
     private static final long DEFAULT_TTL_MILLIS = 300_000L;
 
-    private final Map<String, Long> nonceCache = new ConcurrentHashMap<>();
+    private final Map<String, NonceRecord> nonceCache = new ConcurrentHashMap<>();
     private final ReentrantLock cacheLock = new ReentrantLock();
     private final int maxCapacity;
     private final int cleanupThreshold;
+    private long lastCleanupTimeMillis = 0L;
 
     public InMemoryGatewayNonceValidator() {
         this(DEFAULT_MAX_CAPACITY);
@@ -50,36 +52,58 @@ public class InMemoryGatewayNonceValidator implements GatewayNonceValidator {
         }
         String normalizedNonce = nonce.trim();
         long now = System.currentTimeMillis();
+
+        // 1. 无锁前置快速失败：若既有 Nonce 存在且未过期，立即判定为重放攻击，阻断对同步锁的无效竞争
+        NonceRecord existingRecord = nonceCache.get(normalizedNonce);
+        if (existingRecord != null && now <= existingRecord.expireAt()) {
+            return false;
+        }
+
         long allowedMs = (ttl != null && !ttl.isNegative()) ? ttl.toMillis() : DEFAULT_TTL_MILLIS;
         long expireAt = now + allowedMs * 2;
 
         cacheLock.lock();
         try {
-            if (nonceCache.size() >= cleanupThreshold) {
-                nonceCache.entrySet().removeIf(entry -> now > entry.getValue());
+            // 2. 启发式双重清理：达到硬上限或在超过清理阈值且间隔超时时执行过期驱逐，避免每次请求全表扫描加剧锁竞争
+            boolean reachCapacity = nonceCache.size() >= maxCapacity;
+            boolean reachThresholdAndInterval = nonceCache.size() >= cleanupThreshold
+                    && (now - lastCleanupTimeMillis >= DEFAULT_CLEANUP_INTERVAL_MILLIS);
+
+            if (reachCapacity || reachThresholdAndInterval) {
+                nonceCache.entrySet().removeIf(entry -> now > entry.getValue().expireAt());
+                lastCleanupTimeMillis = now;
             }
 
-            Long existingExpireAt = nonceCache.get(normalizedNonce);
-            if (existingExpireAt != null) {
-                if (now <= existingExpireAt) {
+            // 3. 锁内二次检查防并发重复写入
+            existingRecord = nonceCache.get(normalizedNonce);
+            if (existingRecord != null) {
+                if (now <= existingRecord.expireAt()) {
                     return false;
                 }
                 nonceCache.remove(normalizedNonce);
             }
 
-            // 因 cleanupThreshold <= maxCapacity，上方已先驱逐全部过期条目；若仍满载则执行 Fail-Closed
+            // 4. 因上方已优先驱逐过期条目；若仍满载则执行 Fail-Closed
             if (nonceCache.size() >= maxCapacity) {
                 log.warn("[GatewaySign] 内存 Nonce 防重放缓存已达容量上限且无过期条目可驱逐，执行 Fail-Closed 拒绝: maxCapacity={}",
                         maxCapacity);
                 return false;
             }
 
-            nonceCache.put(normalizedNonce, expireAt);
+            nonceCache.put(normalizedNonce, new NonceRecord(expireAt));
             return true;
         } finally {
             if (cacheLock.isHeldByCurrentThread()) {
                 cacheLock.unlock();
             }
         }
+    }
+
+    /**
+     * Nonce 缓存元数据记录
+     *
+     * @param expireAt 过期时间戳（毫秒）
+     */
+    private record NonceRecord(long expireAt) {
     }
 }
