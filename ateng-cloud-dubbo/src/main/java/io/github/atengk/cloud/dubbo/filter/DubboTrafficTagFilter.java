@@ -19,6 +19,8 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 
+import java.util.Arrays;
+
 /**
  * Dubbo 消费端金丝雀流量染色与标签路由平滑降级过滤器
  * <p>
@@ -40,6 +42,14 @@ public class DubboTrafficTagFilter implements Filter, BaseFilter.Listener {
     private static final String SHORT_TAG_KEY = "tag";
     private static final String DUBBO_TAG_FORCE_KEY = "dubbo.tagforce";
     private static final String TAG_FORCE_KEY = "tagforce";
+    private static final String[] BASE_MANAGED_KEYS = {
+            CommonConstants.TAG_KEY,
+            SHORT_TAG_KEY,
+            Constants.FORCE_USE_TAG,
+            DUBBO_TAG_FORCE_KEY,
+            TAG_FORCE_KEY,
+            DEFAULT_TRAFFIC_TAG_HEADER
+    };
 
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
@@ -73,14 +83,15 @@ public class DubboTrafficTagFilter implements Filter, BaseFilter.Listener {
             if (!trimmedTag.equals(providerTag)) {
                 DubboAttachmentSupport.removeOutboundAttachments(invocation, CommonConstants.TAG_KEY, SHORT_TAG_KEY);
                 DubboAttachmentSupport.removeClientAttachments(getManagedKeys(headerName));
-                throw new RpcException("No provider available for the service " + resolveServiceName(invoker)
+                throw new RpcException("No provider available for the service "
+                        + DubboAttachmentSupport.resolveServiceName(invoker)
                         + " under tag " + trimmedTag + " (tagforce=true, providerTag=" + providerTag + ")");
             }
         }
 
         if (log.isDebugEnabled()) {
             log.debug("[DUBBO-TRAFFIC] 注入金丝雀标签路由: tag={}, tagForce={}, service={}, method={}",
-                    trimmedTag, tagForce, resolveServiceName(invoker), invocation.getMethodName());
+                    trimmedTag, tagForce, DubboAttachmentSupport.resolveServiceName(invoker), invocation.getMethodName());
         }
 
         // 4. 对称写入 Dubbo 标签路由键、平滑降级标记与全链路透传请求头
@@ -133,25 +144,12 @@ public class DubboTrafficTagFilter implements Filter, BaseFilter.Listener {
     }
 
     private String[] getManagedKeys(String headerName) {
-        if (DEFAULT_TRAFFIC_TAG_HEADER.equals(headerName)) {
-            return new String[]{
-                    CommonConstants.TAG_KEY,
-                    SHORT_TAG_KEY,
-                    Constants.FORCE_USE_TAG,
-                    DUBBO_TAG_FORCE_KEY,
-                    TAG_FORCE_KEY,
-                    DEFAULT_TRAFFIC_TAG_HEADER
-            };
+        if (!StringUtils.hasText(headerName) || DEFAULT_TRAFFIC_TAG_HEADER.equals(headerName)) {
+            return BASE_MANAGED_KEYS;
         }
-        return new String[]{
-                CommonConstants.TAG_KEY,
-                SHORT_TAG_KEY,
-                Constants.FORCE_USE_TAG,
-                DUBBO_TAG_FORCE_KEY,
-                TAG_FORCE_KEY,
-                headerName,
-                DEFAULT_TRAFFIC_TAG_HEADER
-        };
+        String[] keys = Arrays.copyOf(BASE_MANAGED_KEYS, BASE_MANAGED_KEYS.length + 1);
+        keys[BASE_MANAGED_KEYS.length] = headerName;
+        return keys;
     }
 
     private void clearOutboundRouteAttachments(Invocation invocation, String headerName) {
@@ -234,15 +232,5 @@ public class DubboTrafficTagFilter implements Filter, BaseFilter.Listener {
         }
         String providerTag = invoker.getUrl().getParameter(CommonConstants.TAG_KEY);
         return StringUtils.hasText(providerTag) ? providerTag : invoker.getUrl().getParameter(SHORT_TAG_KEY);
-    }
-
-    private String resolveServiceName(Invoker<?> invoker) {
-        if (invoker != null && invoker.getInterface() != null) {
-            return invoker.getInterface().getName();
-        }
-        if (invoker != null && invoker.getUrl() != null && StringUtils.hasText(invoker.getUrl().getServiceInterface())) {
-            return invoker.getUrl().getServiceInterface();
-        }
-        return "UnknownService";
     }
 }

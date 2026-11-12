@@ -15,6 +15,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -277,6 +278,20 @@ class AtengDubboAutoConfigurationTest {
         assertThat(singleton).isNotNull();
         // 执行应安全自洽，不抛出异常
         singleton.afterSingletonsInstantiated();
+    }
+
+    @Test
+    @DisplayName("类路径缺失 MeterRegistry 时自动装配安全类隔离降级，不加载指标采集器")
+    void testMeterRegistryClassIsolation() {
+        contextRunner
+                .withClassLoader(new FilteredClassLoader(MeterRegistry.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(AtengDubboAutoConfiguration.class);
+                    assertThat(context).hasSingleBean(AtengDubboAutoConfiguration.AtengDubboConfigBeanCustomizer.class);
+                    assertThat(context).doesNotHaveBean(DubboOverloadMetrics.class);
+                    assertThat(context).doesNotHaveBean(DubboSlowCallMetrics.class);
+                });
     }
 
     @Configuration(proxyBeanMethods = false)

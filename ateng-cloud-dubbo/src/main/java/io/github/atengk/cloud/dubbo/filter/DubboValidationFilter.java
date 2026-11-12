@@ -61,10 +61,8 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
                 for (Object arg : arguments) {
                     String errorMsg = validateArgumentTree(arg, "", 0, null);
                     if (errorMsg != null) {
-                        String serviceName = invoker != null && invoker.getInterface() != null
-                                ? invoker.getInterface().getName()
-                                : "unknown";
-                        String methodName = invocation.getMethodName();
+                        String serviceName = DubboAttachmentSupport.resolveServiceName(invoker);
+                        String methodName = DubboExceptionUtils.resolveMethodName(invocation);
                         log.warn("[DUBBO-VALIDATION] Provider 入参校验拦截: service={}, method={}, error={}",
                                 serviceName, methodName, errorMsg);
                         BusinessException businessException = new BusinessException(
@@ -156,8 +154,8 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
             if (violations != null && !violations.isEmpty()) {
                 return DubboExceptionUtils.formatConstraintViolations(violations, pathPrefix);
             }
-        } catch (Throwable t) {
-            log.debug("[DUBBO-VALIDATION] 执行参数校验异常: {}", t.getMessage());
+        } catch (Exception e) {
+            log.debug("[DUBBO-VALIDATION] 执行参数校验异常: {}", e.getMessage());
         }
         return null;
     }
@@ -193,7 +191,9 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
         if (cve != null) {
             String errorMessage = DubboExceptionUtils.formatConstraintViolations(cve.getConstraintViolations());
             log.warn("[DUBBO] JSR-303 参数校验拦截: service={}, method={}, error={}",
-                    invoker.getInterface().getName(), invocation.getMethodName(), errorMessage);
+                    DubboAttachmentSupport.resolveServiceName(invoker),
+                    DubboExceptionUtils.resolveMethodName(invocation),
+                    errorMessage);
             BusinessException businessException = new BusinessException(
                     CommonResultCode.BAD_REQUEST.getCode(),
                     errorMessage,

@@ -13,7 +13,6 @@ import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcException;
 import org.apache.dubbo.rpc.cluster.filter.ClusterFilter;
-import org.apache.dubbo.rpc.support.RpcUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,9 +98,8 @@ public class DubboConsumerExceptionClusterFilter implements ClusterFilter, BaseF
             return innerBusinessException;
         }
         BusinessException translated = DubboExceptionUtils.translateConsumerRpcException(rpcException);
-        String serviceName = invoker != null && invoker.getInterface() != null
-                ? invoker.getInterface().getName() : "unknown";
-        String methodName = invocation != null ? RpcUtils.getMethodName(invocation) : "unknown";
+        String serviceName = DubboAttachmentSupport.resolveServiceName(invoker);
+        String methodName = DubboExceptionUtils.resolveMethodName(invocation);
         log.warn("[DUBBO-CONSUMER-EXCEPTION] 消费端 RpcException 因果转译: code={}, rpcCode={}, service={}, method={}, msg={}",
                 translated.getCode(), rpcException.getCode(), serviceName, methodName, rpcException.getMessage());
         return translated;

@@ -22,6 +22,7 @@ import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcException;
 import org.apache.dubbo.rpc.RpcInvocation;
 import org.apache.dubbo.rpc.model.ApplicationModel;
+import org.apache.dubbo.rpc.service.GenericService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -174,35 +175,7 @@ class DubboSlowCallFilterTest {
     @Test
     @DisplayName("异步 AsyncRpcResult 在 onResponse 阶段完成计时且不会重复统计")
     void testAsyncResultDeferredMeasurementOnResponse() throws Exception {
-        configureSlowCall(true, Duration.ofMillis(30), true, true);
-        MDC.put("traceId", "trace-async-003");
-
-        Invoker<?> invoker = mockInvoker("tri://127.0.0.1:50051/DemoService?side=consumer", DemoService.class);
-        RpcInvocation invocation = new RpcInvocation("echo", DemoService.class.getName(), null,
-                new Class<?>[]{String.class}, new Object[]{"async"});
-        CompletableFuture<AppResponse> future = new CompletableFuture<>();
-        AsyncRpcResult pendingResult = new AsyncRpcResult(future, invocation);
-        when(invoker.invoke(invocation)).thenReturn(pendingResult);
-
-        Result returned = filter.invoke(invoker, invocation);
-        assertThat(returned).isSameAs(pendingResult);
-        // 异步尚未完成时不提前记录
-        assertThat(findWarnLogs()).isEmpty();
-
-        Thread.sleep(55L);
-        MDC.clear(); // 模拟 Netty 回调线程已无 MDC
-        AppResponse completed = new AppResponse("async-ok");
-        future.complete(completed);
-        filter.onResponse(completed, invoker, invocation);
-        // 重复回调亦不重复计数
-        filter.onResponse(completed, invoker, invocation);
-
-        List<ILoggingEvent> warnLogs = findWarnLogs();
-        assertThat(warnLogs).hasSize(1);
-        assertThat(warnLogs.get(0).getFormattedMessage()).contains("traceId=trace-async-003");
-        Counter counter = meterRegistry.find(DubboSlowCallMetrics.METRIC_SLOW_CALLS).counter();
-        assertThat(counter).isNotNull();
-        assertThat(counter.count()).isEqualTo(1.0d);
+        assertAsyncDeferredSlowCall("trace-async-003", "async", false);
     }
 
     @Test
@@ -296,30 +269,74 @@ class DubboSlowCallFilterTest {
     @Test
     @DisplayName("异步 AsyncRpcResult 在 onError 回调阶段完成慢调用计时且不重复统计")
     void testAsyncResultDeferredMeasurementOnError() throws Exception {
+        assertAsyncDeferredSlowCall("trace-async-err-004", "async-err", true);
+    }
+
+    private void assertAsyncDeferredSlowCall(String traceId, String arg, boolean simulateError) throws Exception {
         configureSlowCall(true, Duration.ofMillis(30), true, true);
-        MDC.put("traceId", "trace-async-err-004");
+        MDC.put("traceId", traceId);
 
         Invoker<?> invoker = mockInvoker("tri://127.0.0.1:50051/DemoService?side=consumer", DemoService.class);
         RpcInvocation invocation = new RpcInvocation("echo", DemoService.class.getName(), null,
-                new Class<?>[]{String.class}, new Object[]{"async-err"});
+                new Class<?>[]{String.class}, new Object[]{arg});
         CompletableFuture<AppResponse> future = new CompletableFuture<>();
         AsyncRpcResult pendingResult = new AsyncRpcResult(future, invocation);
         when(invoker.invoke(invocation)).thenReturn(pendingResult);
 
-        filter.invoke(invoker, invocation);
+        Result returned = filter.invoke(invoker, invocation);
+        assertThat(returned).isSameAs(pendingResult);
+        // 异步尚未完成时不提前记录
         assertThat(findWarnLogs()).isEmpty();
 
         Thread.sleep(55L);
-        MDC.clear();
-        RpcException asyncError = new RpcException(RpcException.TIMEOUT_EXCEPTION, "async timeout");
-        future.completeExceptionally(asyncError);
-        filter.onError(asyncError, invoker, invocation);
-        filter.onError(asyncError, invoker, invocation);
+        MDC.clear(); // 模拟 Netty 回调线程已无 MDC
+        if (simulateError) {
+            RpcException asyncError = new RpcException(RpcException.TIMEOUT_EXCEPTION, "async timeout");
+            future.completeExceptionally(asyncError);
+            filter.onError(asyncError, invoker, invocation);
+            filter.onError(asyncError, invoker, invocation);
+        } else {
+            AppResponse completed = new AppResponse("async-ok");
+            future.complete(completed);
+            filter.onResponse(completed, invoker, invocation);
+            filter.onResponse(completed, invoker, invocation);
+        }
 
         List<ILoggingEvent> warnLogs = findWarnLogs();
         assertThat(warnLogs).hasSize(1);
-        assertThat(warnLogs.get(0).getFormattedMessage()).contains("traceId=trace-async-err-004");
+        assertThat(warnLogs.get(0).getFormattedMessage()).contains("traceId=" + traceId);
         Counter counter = meterRegistry.find(DubboSlowCallMetrics.METRIC_SLOW_CALLS).counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("GenericService 泛化调用解析真实 URL 服务接口名并过滤字面量 null traceId")
+    void testGenericServiceInterfaceAndLiteralNullTraceIdSanitization() {
+        configureSlowCall(true, Duration.ofMillis(20), true, true);
+        MDC.put("traceId", "null");
+
+        Invoker<?> genericInvoker = mockInvoker(
+                "tri://127.0.0.1:50051/com.example.GenericTargetService?side=consumer", GenericService.class);
+        RpcInvocation invocation = new RpcInvocation("$invoke", GenericService.class.getName(), null,
+                new Class<?>[]{String.class, String[].class, Object[].class},
+                new Object[]{"ping", new String[0], new Object[0]});
+        invocation.setAttachment("X-Trace-Id", "null");
+        when(genericInvoker.invoke(invocation)).thenAnswer(inv -> {
+            Thread.sleep(40L);
+            return new AppResponse("pong");
+        });
+
+        filter.invoke(genericInvoker, invocation);
+
+        List<ILoggingEvent> warnLogs = findWarnLogs();
+        assertThat(warnLogs).hasSize(1);
+        assertThat(warnLogs.get(0).getFormattedMessage())
+                .contains("service=com.example.GenericTargetService")
+                .contains("traceId=N/A");
+        Counter counter = meterRegistry.find(DubboSlowCallMetrics.METRIC_SLOW_CALLS)
+                .tag("service", "com.example.GenericTargetService")
+                .counter();
         assertThat(counter).isNotNull();
         assertThat(counter.count()).isEqualTo(1.0d);
     }

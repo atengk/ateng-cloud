@@ -3,6 +3,7 @@ package io.github.atengk.cloud.dubbo.filter;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboContractProperties;
+import io.github.atengk.cloud.dubbo.support.DubboAttachmentSupport;
 import io.github.atengk.cloud.dubbo.support.DubboExceptionUtils;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import org.apache.dubbo.common.constants.CommonConstants;
@@ -52,7 +53,8 @@ public class DubboContractAssertFilter implements Filter, BaseFilter.Listener {
         }
 
         // 豁免流式调用与泛化调用
-        if (isStreamInvocation(invocation) || DubboExceptionUtils.isGenericInvocation(invoker, invocation)) {
+        if (DubboExceptionUtils.isStreamInvocation(invocation)
+                || DubboExceptionUtils.isGenericInvocation(invoker, invocation)) {
             return;
         }
 
@@ -70,7 +72,9 @@ public class DubboContractAssertFilter implements Filter, BaseFilter.Listener {
             int code = result.getCode() != null ? result.getCode() : CommonResultCode.INTERNAL_SERVER_ERROR.getCode();
             String msg = result.getMsg() != null ? result.getMsg() : "RPC 远端业务调用失败";
             log.warn("[DUBBO] 消费端拦截到非 200 业务结果: code={}, msg={}, service={}, method={}",
-                    code, msg, resolveServiceName(invoker), resolveMethodName(invocation));
+                    code, msg,
+                    DubboAttachmentSupport.resolveServiceName(invoker),
+                    DubboExceptionUtils.resolveMethodName(invocation));
             failWithBusinessException(appResponse, new BusinessException(code, msg));
         }
     }
@@ -87,8 +91,8 @@ public class DubboContractAssertFilter implements Filter, BaseFilter.Listener {
             return;
         }
 
-        String serviceName = resolveServiceName(invoker);
-        String methodName = resolveMethodName(invocation);
+        String serviceName = DubboAttachmentSupport.resolveServiceName(invoker);
+        String methodName = DubboExceptionUtils.resolveMethodName(invocation);
 
         // 1. 基本类型返回 null 前置防拆箱 NPE 拦截 (排除 void.class，其 isPrimitive() 为 true)
         if (returnType != void.class && returnType.isPrimitive()) {
@@ -128,7 +132,7 @@ public class DubboContractAssertFilter implements Filter, BaseFilter.Listener {
         if (invoker == null || invoker.getInterface() == null || invocation == null) {
             return null;
         }
-        String methodName = resolveMethodName(invocation);
+        String methodName = RpcUtils.getMethodName(invocation);
         if (methodName == null || methodName.isEmpty() || methodName.startsWith("$")) {
             return null;
         }
@@ -142,17 +146,5 @@ public class DubboContractAssertFilter implements Filter, BaseFilter.Listener {
                     invoker.getInterface().getName(), methodName);
             return null;
         }
-    }
-
-    private String resolveServiceName(Invoker<?> invoker) {
-        return invoker != null && invoker.getInterface() != null ? invoker.getInterface().getName() : "unknown";
-    }
-
-    private String resolveMethodName(Invocation invocation) {
-        return invocation != null ? RpcUtils.getMethodName(invocation) : null;
-    }
-
-    private boolean isStreamInvocation(Invocation invocation) {
-        return DubboExceptionUtils.isStreamInvocation(invocation);
     }
 }

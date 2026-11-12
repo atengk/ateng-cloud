@@ -17,6 +17,7 @@ import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcContext;
+import org.apache.dubbo.rpc.RpcContextAttachment;
 import org.apache.dubbo.rpc.RpcException;
 import org.apache.dubbo.rpc.RpcInvocation;
 import org.apache.seata.core.context.RootContext;
@@ -25,6 +26,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
+
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -460,23 +463,21 @@ class DubboTrafficTagFilterTest {
     }
 
     private void assertManagedRouteAttachmentsNull(Invocation invocation, String headerName) {
-        assertThat(invocation.getAttachment(CommonConstants.TAG_KEY)).isNull();
-        assertThat(invocation.getAttachment("tag")).isNull();
-        assertThat(invocation.getAttachment(Constants.FORCE_USE_TAG)).isNull();
-        assertThat(invocation.getAttachment("dubbo.tagforce")).isNull();
-        assertThat(invocation.getAttachment("tagforce")).isNull();
-        assertThat(invocation.getAttachment(headerName)).isNull();
-        assertThat(invocation.getAttachment(DubboTrafficTagFilter.DEFAULT_TRAFFIC_TAG_HEADER)).isNull();
+        assertManagedRouteAttachmentsNull(invocation::getAttachment, headerName);
     }
 
-    private void assertManagedRouteAttachmentsNull(org.apache.dubbo.rpc.RpcContextAttachment attachment, String headerName) {
-        assertThat(attachment.getAttachment(CommonConstants.TAG_KEY)).isNull();
-        assertThat(attachment.getAttachment("tag")).isNull();
-        assertThat(attachment.getAttachment(Constants.FORCE_USE_TAG)).isNull();
-        assertThat(attachment.getAttachment("dubbo.tagforce")).isNull();
-        assertThat(attachment.getAttachment("tagforce")).isNull();
-        assertThat(attachment.getAttachment(headerName)).isNull();
-        assertThat(attachment.getAttachment(DubboTrafficTagFilter.DEFAULT_TRAFFIC_TAG_HEADER)).isNull();
+    private void assertManagedRouteAttachmentsNull(RpcContextAttachment attachment, String headerName) {
+        assertManagedRouteAttachmentsNull(attachment::getAttachment, headerName);
+    }
+
+    private void assertManagedRouteAttachmentsNull(Function<String, String> attachmentGetter, String headerName) {
+        assertThat(attachmentGetter.apply(CommonConstants.TAG_KEY)).isNull();
+        assertThat(attachmentGetter.apply("tag")).isNull();
+        assertThat(attachmentGetter.apply(Constants.FORCE_USE_TAG)).isNull();
+        assertThat(attachmentGetter.apply("dubbo.tagforce")).isNull();
+        assertThat(attachmentGetter.apply("tagforce")).isNull();
+        assertThat(attachmentGetter.apply(headerName)).isNull();
+        assertThat(attachmentGetter.apply(DubboTrafficTagFilter.DEFAULT_TRAFFIC_TAG_HEADER)).isNull();
     }
 
     private Invoker<?> invocationChainInvoker(DubboTrafficTagFilter nextFilter, Invoker<?> targetInvoker) {

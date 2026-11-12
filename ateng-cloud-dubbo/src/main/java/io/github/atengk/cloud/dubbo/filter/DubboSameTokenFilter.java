@@ -2,6 +2,7 @@ package io.github.atengk.cloud.dubbo.filter;
 
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.dubbo.support.DubboAttachmentSupport;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
@@ -12,7 +13,6 @@ import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcException;
 import org.apache.dubbo.rpc.RpcInvocation;
-import org.apache.dubbo.rpc.service.GenericService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.ClassUtils;
@@ -57,12 +57,11 @@ public class DubboSameTokenFilter implements Filter {
         }
 
         // 本地短路调用 (injvm 进程内内存直接调用，未暴露任何物理网络端口) 豁免零信任防穿透拦截
-        if (invoker != null && invoker.getUrl() != null
-                && "injvm".equalsIgnoreCase(invoker.getUrl().getProtocol())) {
+        if (DubboAttachmentSupport.isInjvmProtocol(invoker)) {
             return invoker.invoke(invocation);
         }
 
-        boolean isConsumer = isConsumerSide(invoker);
+        boolean isConsumer = DubboAttachmentSupport.isConsumerSide(invoker);
         if (isConsumer) {
             handleConsumer(invocation);
             return invoker.invoke(invocation);
@@ -70,19 +69,6 @@ public class DubboSameTokenFilter implements Filter {
             handleProvider(invoker, invocation, properties);
             return invoker.invoke(invocation);
         }
-    }
-
-    private boolean isConsumerSide(Invoker<?> invoker) {
-        if (invoker != null && invoker.getUrl() != null) {
-            String side = invoker.getUrl().getParameter(CommonConstants.SIDE_KEY);
-            if (CommonConstants.CONSUMER_SIDE.equalsIgnoreCase(side)) {
-                return true;
-            }
-            if (CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(side)) {
-                return false;
-            }
-        }
-        return RpcContext.getServiceContext().getUrl() != null && RpcContext.getContext().isConsumerSide();
     }
 
     private void handleConsumer(Invocation invocation) {
@@ -121,7 +107,7 @@ public class DubboSameTokenFilter implements Filter {
             return;
         }
 
-        String interfaceName = resolveInterfaceName(invoker);
+        String interfaceName = DubboAttachmentSupport.resolveInterfaceName(invoker);
         String displayInterfaceName = StringUtils.hasText(interfaceName) ? interfaceName : "UnknownService";
         if (isExcludedInterface(interfaceName, properties.getSameToken().getExcludeInterfaces())) {
             if (log.isDebugEnabled()) {
@@ -157,20 +143,6 @@ public class DubboSameTokenFilter implements Filter {
             throw new BusinessException(CommonResultCode.UNAUTHORIZED.getCode(),
                     "微服务内部调用 Same-Token 凭据校验无效或已过期，拒绝非法访问");
         }
-    }
-
-    private String resolveInterfaceName(Invoker<?> invoker) {
-        if (invoker == null) {
-            return null;
-        }
-        Class<?> interfaceClass = invoker.getInterface();
-        if (interfaceClass != null && !GenericService.class.equals(interfaceClass)) {
-            return interfaceClass.getName();
-        }
-        if (invoker.getUrl() != null && StringUtils.hasText(invoker.getUrl().getServiceInterface())) {
-            return invoker.getUrl().getServiceInterface();
-        }
-        return interfaceClass != null ? interfaceClass.getName() : null;
     }
 
     private boolean isExcludedInterface(String interfaceName, List<String> excludeInterfaces) {

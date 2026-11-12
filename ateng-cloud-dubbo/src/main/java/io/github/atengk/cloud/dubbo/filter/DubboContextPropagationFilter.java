@@ -83,10 +83,7 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
 
     private void handleConsumer(Invocation invocation) {
         // 1. 对称对齐分布式链路追踪 Trace ID
-        String traceId = MDC.get("traceId");
-        if (!StringUtils.hasText(traceId)) {
-            traceId = MDC.get(MessageHeaderConstants.TRACE_ID);
-        }
+        String traceId = DubboAttachmentSupport.resolveMdcTraceId();
         DubboAttachmentSupport.reconcileOutboundAttachment(invocation, MessageHeaderConstants.TRACE_ID, traceId);
 
         // 2. 对称对齐当前登录用户 ID 与当前租户 ID

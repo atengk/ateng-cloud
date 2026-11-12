@@ -69,18 +69,7 @@ public final class DubboExceptionUtils {
      * @return ConstraintViolationException 实例，未找到返回 null
      */
     public static ConstraintViolationException findConstraintViolationException(Throwable throwable) {
-        Throwable current = throwable;
-        for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++) {
-            if (current instanceof ConstraintViolationException cve) {
-                return cve;
-            }
-            Throwable next = current.getCause();
-            if (next == current) {
-                break;
-            }
-            current = next;
-        }
-        return null;
+        return (ConstraintViolationException) findCause(throwable, ConstraintViolationException.class::isInstance);
     }
 
     /**
@@ -213,13 +202,17 @@ public final class DubboExceptionUtils {
      * @return 因果链上任意节点满足断言则返回 true
      */
     public static boolean hasCause(Throwable throwable, Predicate<Throwable> predicate) {
+        return findCause(throwable, predicate) != null;
+    }
+
+    private static Throwable findCause(Throwable throwable, Predicate<Throwable> predicate) {
         if (throwable == null || predicate == null) {
-            return false;
+            return null;
         }
         Throwable current = throwable;
         for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++) {
             if (predicate.test(current)) {
-                return true;
+                return current;
             }
             Throwable next = current.getCause();
             if (next == current) {
@@ -227,7 +220,21 @@ public final class DubboExceptionUtils {
             }
             current = next;
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * 安全提取 RPC 调用方法名（空值或空白时回落为 {@code "unknown"}）
+     *
+     * @param invocation RPC 调用元数据
+     * @return 非空方法名
+     */
+    public static String resolveMethodName(Invocation invocation) {
+        if (invocation == null) {
+            return "unknown";
+        }
+        String methodName = RpcUtils.getMethodName(invocation);
+        return StringUtils.hasText(methodName) ? methodName : "unknown";
     }
 
     /**

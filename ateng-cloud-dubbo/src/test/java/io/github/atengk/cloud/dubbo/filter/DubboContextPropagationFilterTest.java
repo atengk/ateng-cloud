@@ -16,6 +16,7 @@ import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcContext;
+import org.apache.dubbo.rpc.RpcContextAttachment;
 import org.apache.dubbo.rpc.RpcInvocation;
 import org.apache.seata.core.context.RootContext;
 import org.junit.jupiter.api.AfterEach;
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.slf4j.MDC;
+
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -333,27 +336,23 @@ class DubboContextPropagationFilterTest {
         assertThat(RpcContext.getClientAttachment().getAttachment("X-Custom-Header")).isEqualTo("keep-on-error");
     }
 
-    private void assertConsumerManagedAttachmentsNull(org.apache.dubbo.rpc.RpcContextAttachment attachment) {
-        assertThat(attachment.getAttachment(MessageHeaderConstants.TRACE_ID)).isNull();
-        assertThat(attachment.getAttachment(MessageHeaderConstants.USER_ID)).isNull();
-        assertThat(attachment.getAttachment(MessageHeaderConstants.TENANT_ID)).isNull();
-        assertThat(attachment.getAttachment(MessageHeaderConstants.IGNORE_TENANT)).isNull();
-        assertThat(attachment.getAttachment(DubboContextPropagationFilter.TRAFFIC_TAG)).isNull();
-        assertThat(attachment.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
-        assertThat(attachment.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isNull();
-        assertThat(attachment.getAttachment(DubboSeataPropagationSupport.TX_XID)).isNull();
-        assertThat(attachment.getAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
+    private void assertConsumerManagedAttachmentsNull(RpcContextAttachment attachment) {
+        assertConsumerManagedAttachmentsNull(attachment::getAttachment);
     }
 
     private void assertConsumerManagedAttachmentsNull(Invocation invocation) {
-        assertThat(invocation.getAttachment(MessageHeaderConstants.TRACE_ID)).isNull();
-        assertThat(invocation.getAttachment(MessageHeaderConstants.USER_ID)).isNull();
-        assertThat(invocation.getAttachment(MessageHeaderConstants.TENANT_ID)).isNull();
-        assertThat(invocation.getAttachment(MessageHeaderConstants.IGNORE_TENANT)).isNull();
-        assertThat(invocation.getAttachment(DubboContextPropagationFilter.TRAFFIC_TAG)).isNull();
-        assertThat(invocation.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
-        assertThat(invocation.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isNull();
-        assertThat(invocation.getAttachment(DubboSeataPropagationSupport.TX_XID)).isNull();
-        assertThat(invocation.getAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
+        assertConsumerManagedAttachmentsNull(invocation::getAttachment);
+    }
+
+    private void assertConsumerManagedAttachmentsNull(Function<String, String> attachmentGetter) {
+        assertThat(attachmentGetter.apply(MessageHeaderConstants.TRACE_ID)).isNull();
+        assertThat(attachmentGetter.apply(MessageHeaderConstants.USER_ID)).isNull();
+        assertThat(attachmentGetter.apply(MessageHeaderConstants.TENANT_ID)).isNull();
+        assertThat(attachmentGetter.apply(MessageHeaderConstants.IGNORE_TENANT)).isNull();
+        assertThat(attachmentGetter.apply(DubboContextPropagationFilter.TRAFFIC_TAG)).isNull();
+        assertThat(attachmentGetter.apply(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
+        assertThat(attachmentGetter.apply(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isNull();
+        assertThat(attachmentGetter.apply(DubboSeataPropagationSupport.TX_XID)).isNull();
+        assertThat(attachmentGetter.apply(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
     }
 }

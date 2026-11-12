@@ -1,14 +1,18 @@
 package io.github.atengk.cloud.dubbo.support;
 
+import io.github.atengk.boot.core.constant.MessageHeaderConstants;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcInvocation;
+import org.apache.dubbo.rpc.service.GenericService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -66,6 +70,97 @@ public final class DubboAttachmentSupport {
                 && invoker.getUrl() != null
                 && CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(
                         invoker.getUrl().getParameter(CommonConstants.SIDE_KEY));
+    }
+
+    /**
+     * 解析调用器真实服务接口全限定名（支持 {@link GenericService} 优先回落至 URL 接口名，无法识别时返回 {@code null}）
+     *
+     * @param invoker Dubbo 调用器
+     * @return 服务接口全限定名，无法解析时返回 {@code null}
+     */
+    public static String resolveInterfaceName(Invoker<?> invoker) {
+        if (invoker == null) {
+            return null;
+        }
+        Class<?> interfaceClass = invoker.getInterface();
+        if (interfaceClass != null && !GenericService.class.equals(interfaceClass)) {
+            return interfaceClass.getName();
+        }
+        if (invoker.getUrl() != null && StringUtils.hasText(invoker.getUrl().getServiceInterface())) {
+            return invoker.getUrl().getServiceInterface();
+        }
+        return interfaceClass != null ? interfaceClass.getName() : null;
+    }
+
+    /**
+     * 解析用于日志展示与异常消息的服务名称（无法识别时回落为 {@code "UnknownService"}）
+     *
+     * @param invoker Dubbo 调用器
+     * @return 非空服务展示名
+     */
+    public static String resolveServiceName(Invoker<?> invoker) {
+        String interfaceName = resolveInterfaceName(invoker);
+        return StringUtils.hasText(interfaceName) ? interfaceName : "UnknownService";
+    }
+
+    /**
+     * 从当前线程 {@link MDC} 提取有效 {@code traceId}（过滤空白与字面量 {@code "null"}）
+     *
+     * @return 有效 TraceId，不存在或无效时返回 {@code null}
+     */
+    public static String resolveMdcTraceId() {
+        String traceId = MDC.get("traceId");
+        if (isValidAttachmentValue(traceId)) {
+            return traceId.trim();
+        }
+        traceId = MDC.get(MessageHeaderConstants.TRACE_ID);
+        return isValidAttachmentValue(traceId) ? traceId.trim() : null;
+    }
+
+    /**
+     * 按 MDC -&gt; Invocation 附件 -&gt; RpcContext 附件顺序提取有效 {@code traceId}（用于可观测性诊断日志，缺省回落 {@code "N/A"}）
+     *
+     * @param invocation   当前 RPC 调用元数据
+     * @param consumerSide 是否为消费端
+     * @return 有效 TraceId 或 {@code "N/A"}
+     */
+    public static String resolveTraceId(Invocation invocation, boolean consumerSide) {
+        String traceId = resolveMdcTraceId();
+        if (traceId != null) {
+            return traceId;
+        }
+        String[] keys = {MessageHeaderConstants.TRACE_ID, "traceId"};
+        if (invocation != null) {
+            for (String key : keys) {
+                String value = findValidAttachment(invocation, key);
+                if (value != null) {
+                    return value;
+                }
+            }
+        }
+        var attachment = consumerSide ? RpcContext.getClientAttachment() : RpcContext.getServerAttachment();
+        if (attachment != null) {
+            for (String key : keys) {
+                String value = attachment.getAttachment(key);
+                if (isValidAttachmentValue(value)) {
+                    return value.trim();
+                }
+                value = attachment.getAttachment(key.toLowerCase(Locale.ROOT));
+                if (isValidAttachmentValue(value)) {
+                    return value.trim();
+                }
+            }
+        }
+        return "N/A";
+    }
+
+    private static String findValidAttachment(Invocation invocation, String key) {
+        String value = invocation.getAttachment(key);
+        if (isValidAttachmentValue(value)) {
+            return value.trim();
+        }
+        value = invocation.getAttachment(key.toLowerCase(Locale.ROOT));
+        return isValidAttachmentValue(value) ? value.trim() : null;
     }
 
     /**

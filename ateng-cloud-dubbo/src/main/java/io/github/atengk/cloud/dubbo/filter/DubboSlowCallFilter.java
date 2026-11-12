@@ -1,6 +1,5 @@
 package io.github.atengk.cloud.dubbo.filter;
 
-import io.github.atengk.boot.core.constant.MessageHeaderConstants;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboSlowCallProperties;
 import io.github.atengk.cloud.dubbo.support.DubboAttachmentSupport;
@@ -15,17 +14,13 @@ import org.apache.dubbo.rpc.Filter;
 import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
-import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcException;
-import org.apache.dubbo.rpc.support.RpcUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
-import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -80,8 +75,8 @@ public class DubboSlowCallFilter implements Filter, BaseFilter.Listener {
                 thresholdMs,
                 consumerSide ? CommonConstants.CONSUMER_SIDE : CommonConstants.PROVIDER_SIDE,
                 resolveServiceName(invoker, invocation),
-                resolveMethodName(invocation),
-                resolveTraceId(invocation, consumerSide)
+                DubboExceptionUtils.resolveMethodName(invocation),
+                DubboAttachmentSupport.resolveTraceId(invocation, consumerSide)
         );
         if (invocation != null) {
             invocation.put(SLOW_CALL_CONTEXT_KEY, ctx);
@@ -164,60 +159,11 @@ public class DubboSlowCallFilter implements Filter, BaseFilter.Listener {
     }
 
     private String resolveServiceName(Invoker<?> invoker, Invocation invocation) {
-        if (invoker != null && invoker.getInterface() != null) {
-            return invoker.getInterface().getName();
+        String serviceName = DubboAttachmentSupport.resolveInterfaceName(invoker);
+        if (!StringUtils.hasText(serviceName) && invocation != null && StringUtils.hasText(invocation.getServiceName())) {
+            serviceName = invocation.getServiceName();
         }
-        if (invocation != null && StringUtils.hasText(invocation.getServiceName())) {
-            return invocation.getServiceName();
-        }
-        return "unknown";
-    }
-
-    private String resolveMethodName(Invocation invocation) {
-        if (invocation == null) {
-            return "unknown";
-        }
-        String methodName = RpcUtils.getMethodName(invocation);
-        return StringUtils.hasText(methodName) ? methodName : "unknown";
-    }
-
-    private String resolveTraceId(Invocation invocation, boolean consumerSide) {
-        String traceId = MDC.get("traceId");
-        if (StringUtils.hasText(traceId)) {
-            return traceId;
-        }
-        traceId = MDC.get(MessageHeaderConstants.TRACE_ID);
-        if (StringUtils.hasText(traceId)) {
-            return traceId;
-        }
-        if (invocation != null) {
-            traceId = getFirstAttachment(invocation, MessageHeaderConstants.TRACE_ID, "traceId");
-            if (StringUtils.hasText(traceId)) {
-                return traceId;
-            }
-        }
-        var attachment = consumerSide ? RpcContext.getClientAttachment() : RpcContext.getServerAttachment();
-        if (attachment != null) {
-            traceId = attachment.getAttachment(MessageHeaderConstants.TRACE_ID);
-            if (!StringUtils.hasText(traceId)) {
-                traceId = attachment.getAttachment("traceId");
-            }
-            if (StringUtils.hasText(traceId)) {
-                return traceId;
-            }
-        }
-        return "N/A";
-    }
-
-    private String getFirstAttachment(Invocation invocation, String primaryKey, String secondaryKey) {
-        String value = invocation.getAttachment(primaryKey);
-        if (!StringUtils.hasText(value)) {
-            value = invocation.getAttachment(primaryKey.toLowerCase(Locale.ROOT));
-        }
-        if (!StringUtils.hasText(value)) {
-            value = invocation.getAttachment(secondaryKey);
-        }
-        return value;
+        return StringUtils.hasText(serviceName) ? serviceName : "unknown";
     }
 
     private static final class SlowCallContext {

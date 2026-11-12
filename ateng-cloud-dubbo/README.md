@@ -561,12 +561,14 @@ package io.github.atengk.cloud.sample.dubbo.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/sample/cloud/dubbo/governance")
 public class DubboGovernanceConsumerController {
 
+    @DubboReference(url = "${dubbo.consumer.direct-url:${dubbo.test.reference.url:tri://127.0.0.1:50051}}", check = false)
     private UserRpcService userRpcService;
 
     /**
@@ -674,12 +676,14 @@ package io.github.atengk.cloud.sample.dubbo.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/sample/cloud/dubbo/governance")
 public class DubboGovernanceConsumerController {
 
+    @DubboReference(url = "${dubbo.consumer.direct-url:${dubbo.test.reference.url:tri://127.0.0.1:50051}}", check = false)
     private UserRpcService userRpcService;
 
     /**
@@ -730,12 +734,14 @@ package io.github.atengk.cloud.sample.dubbo.controller;
 
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/sample/cloud/dubbo/governance")
 public class DubboGovernanceConsumerController {
 
+    @DubboReference(url = "${dubbo.consumer.direct-url:${dubbo.test.reference.url:tri://127.0.0.1:50051}}", check = false)
     private UserRpcService userRpcService;
 
     /**
