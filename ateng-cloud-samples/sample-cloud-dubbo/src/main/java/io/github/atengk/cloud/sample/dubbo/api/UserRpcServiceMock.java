@@ -93,4 +93,14 @@ public class UserRpcServiceMock implements UserRpcService {
     public int echoPayload(String data) {
         return -1;
     }
+
+    @Override
+    public Result<UserVO> getNullResult(Long id) {
+        return Result.success(new UserVO(id != null ? id : 0L, "mock-null-result-fallback", DEFAULT_MOCK_EMAIL));
+    }
+
+    @Override
+    public String slowEcho(long sleepMillis) {
+        return MOCK_TAG + " slow-fallback:" + sleepMillis;
+    }
 }

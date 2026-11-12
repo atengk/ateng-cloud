@@ -15,6 +15,7 @@ import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.RpcInvocation;
 import org.apache.dubbo.rpc.model.ApplicationModel;
+import org.apache.dubbo.rpc.service.GenericService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -173,7 +174,137 @@ class DubboContractAssertFilterTest {
         assertThat(result.getValue()).isEqualTo("ok");
     }
 
+    @Test
+    @DisplayName("当方法声明返回非 void 基本类型且对端返回 null 时，前置拦截并转译为 BusinessException 防拆箱 NPE")
+    void testPrimitiveNullReturnIntercepted() {
+        Invoker<?> invoker = Mockito.mock(Invoker.class);
+        when(invoker.getInterface()).thenReturn((Class) TestService.class);
+
+        for (String methodName : new String[]{"countLong", "countInt", "checkBoolean", "calcDouble"}) {
+            RpcInvocation invocation = new RpcInvocation();
+            invocation.setMethodName(methodName);
+            invocation.setParameterTypes(new Class<?>[0]);
+
+            AppResponse response = new AppResponse((Object) null);
+            filter.onResponse(response, invoker, invocation);
+
+            assertThat(response.hasException()).as("method=%s", methodName).isTrue();
+            assertThat(response.getException()).isInstanceOf(BusinessException.class);
+            BusinessException be = (BusinessException) response.getException();
+            assertThat(be.getCode()).isEqualTo(io.github.atengk.boot.core.code.CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
+            assertThat(response.getValue()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("当方法声明返回 void 或普通 POJO 且返回值为 null 时，不触发基本类型空返回拦截")
+    void testVoidAndPojoNullReturnAllowed() {
+        Invoker<?> invoker = Mockito.mock(Invoker.class);
+        when(invoker.getInterface()).thenReturn((Class) TestService.class);
+
+        RpcInvocation voidInvocation = new RpcInvocation();
+        voidInvocation.setMethodName("doVoid");
+        voidInvocation.setParameterTypes(new Class<?>[0]);
+        AppResponse voidResponse = new AppResponse((Object) null);
+        filter.onResponse(voidResponse, invoker, voidInvocation);
+        assertThat(voidResponse.hasException()).isFalse();
+
+        RpcInvocation pojoInvocation = new RpcInvocation();
+        pojoInvocation.setMethodName("findPojo");
+        pojoInvocation.setParameterTypes(new Class<?>[0]);
+        AppResponse pojoResponse = new AppResponse((Object) null);
+        filter.onResponse(pojoResponse, invoker, pojoInvocation);
+        assertThat(pojoResponse.hasException()).isFalse();
+    }
+
+    @Test
+    @DisplayName("当方法声明返回 Result<?> 且返回 null 时，默认 assertNonNullResult=true 断言拦截；关闭后放行 null")
+    void testResultNullReturnAssertionAndToggle() {
+        Invoker<?> invoker = Mockito.mock(Invoker.class);
+        when(invoker.getInterface()).thenReturn((Class) TestService.class);
+
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("queryUser");
+        invocation.setParameterTypes(new Class<?>[0]);
+
+        // 1. 默认开启 assertNonNullResult = true：拦截 null Result<?>
+        AppResponse defaultResponse = new AppResponse((Object) null);
+        filter.onResponse(defaultResponse, invoker, invocation);
+        assertThat(defaultResponse.hasException()).isTrue();
+        assertThat(defaultResponse.getException()).isInstanceOf(BusinessException.class);
+        BusinessException be = (BusinessException) defaultResponse.getException();
+        assertThat(be.getCode()).isEqualTo(io.github.atengk.boot.core.code.CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
+        assertThat(be.getMessage()).contains("Result<?>");
+
+        // 2. 显式关闭 assertNonNullResult = false：允许 null 透传
+        AtengDubboProperties properties = new AtengDubboProperties();
+        properties.getContract().setAssertNonNullResult(false);
+        DubboPropertiesHolder.set(properties);
+
+        AppResponse allowedResponse = new AppResponse((Object) null);
+        filter.onResponse(allowedResponse, invoker, invocation);
+        assertThat(allowedResponse.hasException()).isFalse();
+        assertThat(allowedResponse.getValue()).isNull();
+    }
+
+    @Test
+    @DisplayName("当 contract.enabled=false 时，基本类型与 Result<?> 空返回均不触发拦截")
+    void testDisabledContractSkipsNullGuards() {
+        AtengDubboProperties properties = new AtengDubboProperties();
+        properties.getContract().setEnabled(false);
+        DubboPropertiesHolder.set(properties);
+
+        Invoker<?> invoker = Mockito.mock(Invoker.class);
+        when(invoker.getInterface()).thenReturn((Class) TestService.class);
+
+        RpcInvocation primitiveInvocation = new RpcInvocation();
+        primitiveInvocation.setMethodName("countLong");
+        primitiveInvocation.setParameterTypes(new Class<?>[0]);
+        AppResponse primitiveResponse = new AppResponse((Object) null);
+        filter.onResponse(primitiveResponse, invoker, primitiveInvocation);
+        assertThat(primitiveResponse.hasException()).isFalse();
+
+        RpcInvocation resultInvocation = new RpcInvocation();
+        resultInvocation.setMethodName("queryUser");
+        resultInvocation.setParameterTypes(new Class<?>[0]);
+        AppResponse resultResponse = new AppResponse((Object) null);
+        filter.onResponse(resultResponse, invoker, resultInvocation);
+        assertThat(resultResponse.hasException()).isFalse();
+    }
+
+    @Test
+    @DisplayName("GenericService 与 $invoke 泛化调用返回 null 或非 200 Result 时豁免拦截")
+    void testGenericServiceExemptionForNullAndFailedResult() {
+        Invoker<?> genericInvoker = Mockito.mock(Invoker.class);
+        when(genericInvoker.getInterface()).thenReturn((Class) GenericService.class);
+
+        RpcInvocation nullInvocation = new RpcInvocation();
+        nullInvocation.setMethodName("$invoke");
+        nullInvocation.setParameterTypes(new Class<?>[]{String.class, String[].class, Object[].class});
+        AppResponse nullResponse = new AppResponse((Object) null);
+        filter.onResponse(nullResponse, genericInvoker, nullInvocation);
+        assertThat(nullResponse.hasException()).isFalse();
+        assertThat(nullResponse.getValue()).isNull();
+
+        AppResponse failResultResponse = new AppResponse(Result.fail(4001, "generic fail payload"));
+        filter.onResponse(failResultResponse, genericInvoker, nullInvocation);
+        assertThat(failResultResponse.hasException()).isFalse();
+        assertThat(failResultResponse.getValue()).isInstanceOf(Result.class);
+    }
+
     interface TestService {
         Result<String> queryUser();
+
+        long countLong();
+
+        int countInt();
+
+        boolean checkBoolean();
+
+        double calcDouble();
+
+        void doVoid();
+
+        String findPojo();
     }
 }

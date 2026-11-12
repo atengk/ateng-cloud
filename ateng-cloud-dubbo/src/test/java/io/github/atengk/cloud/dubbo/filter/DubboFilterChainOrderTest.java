@@ -5,6 +5,7 @@ import org.apache.dubbo.common.URL;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.ExtensionLoader;
 import org.apache.dubbo.rpc.Filter;
+import org.apache.dubbo.rpc.cluster.filter.ClusterFilter;
 import org.apache.dubbo.rpc.model.ApplicationModel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,21 @@ class DubboFilterChainOrderTest {
                 DubboTrafficTagFilter.class,
                 DubboContractAssertFilter.class
         );
+    }
+
+    @Test
+    @DisplayName("Consumer 端 ClusterFilter 激活 DubboConsumerExceptionClusterFilter")
+    void testConsumerClusterFilterActivation() {
+        ExtensionLoader<ClusterFilter> loader = ApplicationModel.defaultModel()
+                .getDefaultModule()
+                .getExtensionLoader(ClusterFilter.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/io.github.atengk.cloud.dubbo.DemoService?side=" + CommonConstants.CONSUMER);
+        List<Class<?>> activeClusterFilters = loader.getActivateExtension(url, new String[0], CommonConstants.CONSUMER)
+                .stream()
+                .<Class<?>>map(ClusterFilter::getClass)
+                .toList();
+
+        assertThat(activeClusterFilters).contains(DubboConsumerExceptionClusterFilter.class);
     }
 
     private static List<Class<?>> getActiveFilterClasses(String group) {

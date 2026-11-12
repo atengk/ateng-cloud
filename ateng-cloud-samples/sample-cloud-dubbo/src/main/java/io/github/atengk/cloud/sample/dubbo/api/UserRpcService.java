@@ -101,5 +101,21 @@ public interface UserRpcService {
      * @return 接收到的报文长度
      */
     int echoPayload(String data);
+
+    /**
+     * 模拟对端直接返回 null 的 Result 空壳契约（验证 DubboContractAssertFilter assertNonNullResult 防御）
+     *
+     * @param id 用户主键
+     * @return 始终返回 null 以触发空壳断言
+     */
+    Result<UserVO> getNullResult(Long id);
+
+    /**
+     * 模拟耗时调用（用于验证消费端超时 RpcException 转译与 mock 降级协同）
+     *
+     * @param sleepMillis 模拟睡眠毫秒数
+     * @return 响应标识
+     */
+    String slowEcho(long sleepMillis);
 }
 

@@ -6,9 +6,16 @@ import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
 import org.apache.dubbo.config.annotation.DubboReference;
+import org.apache.dubbo.config.spring.ServiceBean;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.TestSocketUtils;
@@ -22,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * @since 2026-10-28
  */
 @SpringBootTest
+@Import(ContractAndExceptionDubboRpcTest.PrimitiveNullContractTestConfig.class)
 public class ContractAndExceptionDubboRpcTest {
 
     @DynamicPropertySource
@@ -33,6 +41,23 @@ public class ContractAndExceptionDubboRpcTest {
 
     @DubboReference(url = "tri://127.0.0.1:${test.contract.dubbo.port}", check = false)
     private UserRpcService userRpcService;
+
+    @DubboReference(
+            interfaceClass = PrimitiveNullConsumerService.class,
+            url = "tri://127.0.0.1:${test.contract.dubbo.port}",
+            check = false
+    )
+    private PrimitiveNullConsumerService primitiveNullConsumerService;
+
+    @Autowired
+    private ServiceBean<PrimitiveNullConsumerService> primitiveNullProvider;
+
+    @BeforeEach
+    void ensurePrimitiveNullProviderExported() {
+        if (!primitiveNullProvider.isExported()) {
+            primitiveNullProvider.export();
+        }
+    }
 
     @Test
     @DisplayName("验证声明返回 Result<T> 且业务成功时正常接收包裹对象并断言成功状态")
@@ -82,5 +107,43 @@ public class ContractAndExceptionDubboRpcTest {
         assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("模拟底座数据库死锁超时") || ex.getMessage().contains("CustomDatabaseException"),
                 "转译后的异常消息必须包含原始底层异常关键诊断信息");
+    }
+
+    @Test
+    @DisplayName("验证声明返回 Result<T> 且对端返回 null 空壳时由 DubboContractAssertFilter 拦截并转译为 BusinessException")
+    void testNullResultInterceptedAsBusinessException() {
+        assertNotNull(userRpcService, "UserRpcService 代理引用不可为空");
+        BusinessException ex = assertThrows(BusinessException.class, () -> userRpcService.getNullResult(123L),
+                "对端返回 null Result 时必须被断言拦截为 BusinessException");
+
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("Result<?>"), "异常信息应标明 Result<?> 空壳契约违规");
+    }
+
+    @Test
+    @DisplayName("验证接口声明返回基本类型 long 且对端返回 null 时，在动态代理拆箱前拦截转译为 BusinessException 防 NPE")
+    void testPrimitiveNullReturnInterceptedBeforeUnboxingNpe() {
+        assertNotNull(primitiveNullConsumerService, "PrimitiveNullConsumerService 代理引用不可为空");
+        BusinessException ex = assertThrows(BusinessException.class, () -> primitiveNullConsumerService.getNullCount(),
+                "基本类型返回 null 必须在拆箱 NPE 前被拦截转译为受管 BusinessException");
+
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("long"), "异常信息应包含基本类型名称");
+    }
+
+    public interface PrimitiveNullConsumerService {
+        long getNullCount();
+    }
+
+    @TestConfiguration
+    static class PrimitiveNullContractTestConfig {
+
+        @Bean
+        ServiceBean<PrimitiveNullConsumerService> primitiveNullProvider(ApplicationContext applicationContext) {
+            ServiceBean<PrimitiveNullConsumerService> serviceBean = new ServiceBean<>(applicationContext);
+            serviceBean.setInterface(PrimitiveNullConsumerService.class);
+            serviceBean.setRef(() -> 0L);
+            return serviceBean;
+        }
     }
 }

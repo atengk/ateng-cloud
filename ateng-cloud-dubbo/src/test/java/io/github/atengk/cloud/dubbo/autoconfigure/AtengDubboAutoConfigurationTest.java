@@ -60,18 +60,22 @@ class AtengDubboAutoConfigurationTest {
                     assertThat(properties.getOverload().getThreads()).isEqualTo(200);
                     assertThat(properties.getOverload().getQueues()).isEqualTo(0);
                     assertThat(properties.getSameToken().getExcludeInterfaces()).isEmpty();
+                    assertThat(properties.getContract().isAssertNonNullResult()).isTrue();
+                    assertThat(properties.getException().isTranslateConsumerRpcException()).isFalse();
                 });
     }
 
     @Test
-    @DisplayName("支持强类型绑定 same-token.exclude-interfaces 与 overload.threads/queues")
+    @DisplayName("支持强类型绑定 same-token.exclude-interfaces、overload.threads/queues、contract 与 exception 开关")
     void testExtendedPropertiesBinding() {
         contextRunner
                 .withPropertyValues(
                         "ateng.cloud.dubbo.same-token.exclude-interfaces[0]=com.example.OpenService",
                         "ateng.cloud.dubbo.same-token.exclude-interfaces[1]=*PublicRpc",
                         "ateng.cloud.dubbo.overload.threads=300",
-                        "ateng.cloud.dubbo.overload.queues=64"
+                        "ateng.cloud.dubbo.overload.queues=64",
+                        "ateng.cloud.dubbo.contract.assert-non-null-result=false",
+                        "ateng.cloud.dubbo.exception.translate-consumer-rpc-exception=true"
                 )
                 .run(context -> {
                     AtengDubboProperties properties = context.getBean(AtengDubboProperties.class);
@@ -79,6 +83,8 @@ class AtengDubboAutoConfigurationTest {
                             .containsExactly("com.example.OpenService", "*PublicRpc");
                     assertThat(properties.getOverload().getThreads()).isEqualTo(300);
                     assertThat(properties.getOverload().getQueues()).isEqualTo(64);
+                    assertThat(properties.getContract().isAssertNonNullResult()).isFalse();
+                    assertThat(properties.getException().isTranslateConsumerRpcException()).isTrue();
                 });
     }
 

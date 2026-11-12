@@ -130,4 +130,21 @@ public class UserRpcServiceImpl implements UserRpcService {
     public int echoPayload(String data) {
         return data != null ? data.length() : 0;
     }
+
+    @Override
+    public Result<UserVO> getNullResult(Long id) {
+        return null;
+    }
+
+    @Override
+    public String slowEcho(long sleepMillis) {
+        if (sleepMillis > 0) {
+            try {
+                Thread.sleep(sleepMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return "slow-ok:" + sleepMillis;
+    }
 }

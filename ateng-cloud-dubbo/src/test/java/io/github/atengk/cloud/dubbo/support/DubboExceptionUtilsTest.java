@@ -1,13 +1,17 @@
 package io.github.atengk.cloud.dubbo.support;
 
+import io.github.atengk.boot.core.code.CommonResultCode;
+import io.github.atengk.boot.core.exception.BusinessException;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Path;
+import org.apache.dubbo.common.URL;
 import org.apache.dubbo.common.stream.StreamObserver;
 import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.RpcException;
 import org.apache.dubbo.rpc.RpcInvocation;
+import org.apache.dubbo.rpc.service.GenericService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -16,6 +20,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -122,6 +127,107 @@ class DubboExceptionUtilsTest {
         returnStreamInvocation.setMethodName("serverStream");
         returnStreamInvocation.setParameterTypes(new Class<?>[]{String.class});
         assertThat(DubboExceptionUtils.isStreamInvocation(returnStreamInvocation)).isTrue();
+    }
+
+    @Test
+    @DisplayName("hasEffectiveMock: 精确识别服务级与方法级有效 mock 配置并过滤无效占位符")
+    void testHasEffectiveMock() {
+        assertThat(DubboExceptionUtils.hasEffectiveMock(null, null)).isFalse();
+
+        Invoker<?> noMockInvoker = mock(Invoker.class);
+        when(noMockInvoker.getUrl()).thenReturn(URL.valueOf("tri://127.0.0.1:50051/DemoService"));
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("ping");
+        assertThat(DubboExceptionUtils.hasEffectiveMock(noMockInvoker, invocation)).isFalse();
+
+        Invoker<?> falseMockInvoker = mock(Invoker.class);
+        when(falseMockInvoker.getUrl()).thenReturn(URL.valueOf("tri://127.0.0.1:50051/DemoService?mock=false"));
+        assertThat(DubboExceptionUtils.hasEffectiveMock(falseMockInvoker, invocation)).isFalse();
+
+        Invoker<?> trueMockInvoker = mock(Invoker.class);
+        when(trueMockInvoker.getUrl()).thenReturn(URL.valueOf("tri://127.0.0.1:50051/DemoService?mock=true"));
+        assertThat(DubboExceptionUtils.hasEffectiveMock(trueMockInvoker, invocation)).isTrue();
+
+        Invoker<?> methodMockInvoker = mock(Invoker.class);
+        when(methodMockInvoker.getUrl()).thenReturn(URL.valueOf("tri://127.0.0.1:50051/DemoService?ping.mock=fail:return+ok"));
+        assertThat(DubboExceptionUtils.hasEffectiveMock(methodMockInvoker, invocation)).isTrue();
+    }
+
+    @Test
+    @DisplayName("translateConsumerRpcException: 验证 504/503/429/500 状态码精确映射与原始 cause 链 100% 保留")
+    void testTranslateConsumerRpcException() {
+        RpcException timeoutEx = new RpcException(RpcException.TIMEOUT_EXCEPTION, "read timeout");
+        BusinessException beTimeout = DubboExceptionUtils.translateConsumerRpcException(timeoutEx);
+        assertThat(beTimeout.getCode()).isEqualTo(504);
+        assertThat(beTimeout.getCause()).isSameAs(timeoutEx);
+
+        RpcException nestedTimeoutEx = new RpcException(RpcException.UNKNOWN_EXCEPTION, "wrapped", new TimeoutException("jdk timeout"));
+        BusinessException beNestedTimeout = DubboExceptionUtils.translateConsumerRpcException(nestedTimeoutEx);
+        assertThat(beNestedTimeout.getCode()).isEqualTo(504);
+        assertThat(beNestedTimeout.getCause()).isSameAs(nestedTimeoutEx);
+
+        RpcException networkEx = new RpcException(RpcException.NETWORK_EXCEPTION, "connection refused");
+        BusinessException beNetwork = DubboExceptionUtils.translateConsumerRpcException(networkEx);
+        assertThat(beNetwork.getCode()).isEqualTo(CommonResultCode.SERVICE_UNAVAILABLE.getCode());
+        assertThat(beNetwork.getCause()).isSameAs(networkEx);
+
+        RpcException forbiddenEx = new RpcException(RpcException.FORBIDDEN_EXCEPTION, "forbidden");
+        assertThat(DubboExceptionUtils.translateConsumerRpcException(forbiddenEx).getCode())
+                .isEqualTo(CommonResultCode.SERVICE_UNAVAILABLE.getCode());
+
+        RpcException noInvokerEx = new RpcException(RpcException.NO_INVOKER_AVAILABLE_AFTER_FILTER, "no invoker");
+        assertThat(DubboExceptionUtils.translateConsumerRpcException(noInvokerEx).getCode())
+                .isEqualTo(CommonResultCode.SERVICE_UNAVAILABLE.getCode());
+
+        RpcException overloadEx = new RpcException(RpcException.UNKNOWN_EXCEPTION, "Thread pool is exhausted!");
+        BusinessException beOverload = DubboExceptionUtils.translateConsumerRpcException(overloadEx);
+        assertThat(beOverload.getCode()).isEqualTo(CommonResultCode.TOO_MANY_REQUESTS.getCode());
+        assertThat(beOverload.getCause()).isSameAs(overloadEx);
+
+        RpcException unknownEx = new RpcException(RpcException.UNKNOWN_EXCEPTION, "unexpected rpc error");
+        BusinessException beUnknown = DubboExceptionUtils.translateConsumerRpcException(unknownEx);
+        assertThat(beUnknown.getCode()).isEqualTo(CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
+        assertThat(beUnknown.getCause()).isSameAs(unknownEx);
+    }
+
+    @Test
+    @DisplayName("hasCause: 验证自引用与多节点异常环路防卫及 null 入参安全性")
+    void testHasCauseCycleAndNullGuards() {
+        assertThat(DubboExceptionUtils.hasCause(null, ex -> true)).isFalse();
+        assertThat(DubboExceptionUtils.hasCause(new RuntimeException("x"), null)).isFalse();
+
+        Throwable selfLoop = new RuntimeException("self-loop") {
+            @Override
+            public synchronized Throwable getCause() {
+                return this;
+            }
+        };
+        assertThat(DubboExceptionUtils.hasCause(selfLoop, ex -> false)).isFalse();
+
+        RuntimeException nodeA = new RuntimeException("nodeA");
+        RuntimeException nodeB = new RuntimeException("nodeB", nodeA);
+        nodeA.initCause(nodeB);
+        assertThat(DubboExceptionUtils.hasCause(nodeA, ex -> false)).isFalse();
+        assertThat(DubboExceptionUtils.hasCause(nodeA, ex -> ex == nodeB)).isTrue();
+    }
+
+    @Test
+    @DisplayName("isGenericInvocation: 准确识别 GenericService 及 $invoke/$invokeAsync 泛化调用")
+    void testIsGenericInvocation() {
+        Invoker<?> genericInvoker = mock(Invoker.class);
+        when(genericInvoker.getInterface()).thenReturn((Class) GenericService.class);
+        assertThat(DubboExceptionUtils.isGenericInvocation(genericInvoker, null)).isTrue();
+
+        Invoker<?> normalInvoker = mock(Invoker.class);
+        when(normalInvoker.getInterface()).thenReturn((Class) StreamDemoService.class);
+        RpcInvocation invokeCall = new RpcInvocation();
+        invokeCall.setMethodName("$invoke");
+        assertThat(DubboExceptionUtils.isGenericInvocation(normalInvoker, invokeCall)).isTrue();
+
+        RpcInvocation normalCall = new RpcInvocation();
+        normalCall.setMethodName("ping");
+        assertThat(DubboExceptionUtils.isGenericInvocation(normalInvoker, normalCall)).isFalse();
+        assertThat(DubboExceptionUtils.isGenericInvocation(null, null)).isFalse();
     }
 
     interface StreamDemoService {
