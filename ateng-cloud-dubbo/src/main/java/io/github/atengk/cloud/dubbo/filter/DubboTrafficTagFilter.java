@@ -30,7 +30,7 @@ import org.springframework.util.StringUtils;
  * @author Ateng
  * @since 2026-10-28
  */
-@Activate(group = CommonConstants.CONSUMER, order = -9500)
+@Activate(group = CommonConstants.CONSUMER, order = -8500)
 public class DubboTrafficTagFilter implements Filter {
 
     private static final Logger log = LoggerFactory.getLogger(DubboTrafficTagFilter.class);

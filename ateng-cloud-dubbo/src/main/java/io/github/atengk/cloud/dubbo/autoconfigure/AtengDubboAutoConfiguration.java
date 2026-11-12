@@ -96,8 +96,27 @@ public class AtengDubboAutoConfiguration {
                 if (providerConfig.getValidation() == null && properties.getValidation() != null && properties.getValidation().isEnabled()) {
                     providerConfig.setValidation("true");
                 }
-                if (providerConfig.getThreadpool() == null && properties.getOverload() != null && properties.getOverload().isEnabled()) {
-                    providerConfig.setThreadpool("overload");
+                var overloadProps = properties.getOverload();
+                if (overloadProps != null && overloadProps.isEnabled()) {
+                    if (providerConfig.getThreadpool() == null) {
+                        providerConfig.setThreadpool("overload");
+                    }
+                    if ("overload".equalsIgnoreCase(providerConfig.getThreadpool())) {
+                        if (providerConfig.getThreads() == null && overloadProps.getThreads() != null) {
+                            if (overloadProps.getThreads() > 0) {
+                                providerConfig.setThreads(overloadProps.getThreads());
+                            } else {
+                                log.warn("[DUBBO] 忽略非法的过载保护线程池大小配置 threads={}，有效值必须大于 0", overloadProps.getThreads());
+                            }
+                        }
+                        if (providerConfig.getQueues() == null && overloadProps.getQueues() != null) {
+                            if (overloadProps.getQueues() >= 0) {
+                                providerConfig.setQueues(overloadProps.getQueues());
+                            } else {
+                                log.warn("[DUBBO] 忽略非法的过载保护线程池队列配置 queues={}，有效值不能小于 0", overloadProps.getQueues());
+                            }
+                        }
+                    }
                 }
             } else if (dubboConfig instanceof ProtocolConfig protocolConfig) {
                 var protocolProps = properties.getProtocol();

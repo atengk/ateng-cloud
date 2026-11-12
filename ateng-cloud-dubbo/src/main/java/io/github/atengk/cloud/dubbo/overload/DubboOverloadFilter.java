@@ -27,7 +27,7 @@ import java.util.concurrent.RejectedExecutionException;
  * @author Ateng
  * @since 2026-10-28
  */
-@Activate(group = {CommonConstants.PROVIDER, CommonConstants.CONSUMER}, order = -8900)
+@Activate(group = {CommonConstants.PROVIDER, CommonConstants.CONSUMER}, order = -9500)
 public class DubboOverloadFilter implements Filter, BaseFilter.Listener {
 
     private static final Logger log = LoggerFactory.getLogger(DubboOverloadFilter.class);

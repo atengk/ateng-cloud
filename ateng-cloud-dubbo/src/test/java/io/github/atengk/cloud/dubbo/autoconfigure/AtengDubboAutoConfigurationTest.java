@@ -57,6 +57,28 @@ class AtengDubboAutoConfigurationTest {
                     assertThat(properties.getRetries()).isEqualTo(0);
                     assertThat(properties.getTimeout()).isEqualTo(Duration.ofSeconds(5));
                     assertThat(properties.getPayload()).isEqualTo(DataSize.ofMegabytes(16));
+                    assertThat(properties.getOverload().getThreads()).isEqualTo(200);
+                    assertThat(properties.getOverload().getQueues()).isEqualTo(0);
+                    assertThat(properties.getSameToken().getExcludeInterfaces()).isEmpty();
+                });
+    }
+
+    @Test
+    @DisplayName("支持强类型绑定 same-token.exclude-interfaces 与 overload.threads/queues")
+    void testExtendedPropertiesBinding() {
+        contextRunner
+                .withPropertyValues(
+                        "ateng.cloud.dubbo.same-token.exclude-interfaces[0]=com.example.OpenService",
+                        "ateng.cloud.dubbo.same-token.exclude-interfaces[1]=*PublicRpc",
+                        "ateng.cloud.dubbo.overload.threads=300",
+                        "ateng.cloud.dubbo.overload.queues=64"
+                )
+                .run(context -> {
+                    AtengDubboProperties properties = context.getBean(AtengDubboProperties.class);
+                    assertThat(properties.getSameToken().getExcludeInterfaces())
+                            .containsExactly("com.example.OpenService", "*PublicRpc");
+                    assertThat(properties.getOverload().getThreads()).isEqualTo(300);
+                    assertThat(properties.getOverload().getQueues()).isEqualTo(64);
                 });
     }
 
@@ -144,14 +166,51 @@ class AtengDubboAutoConfigurationTest {
         assertThat(providerConfig.getPayload()).isEqualTo((int) DataSize.ofMegabytes(10).toBytes());
         assertThat(providerConfig.getValidation()).isEqualTo("true");
         assertThat(providerConfig.getThreadpool()).isEqualTo("overload");
+        assertThat(providerConfig.getThreads()).isEqualTo(200);
+        assertThat(providerConfig.getQueues()).isEqualTo(0);
 
         // 2. 用户显式设置不予覆盖
         ProviderConfig userProviderConfig = new ProviderConfig();
         userProviderConfig.setValidation("customValidation");
         userProviderConfig.setThreadpool("fixed");
+        userProviderConfig.setThreads(512);
+        userProviderConfig.setQueues(128);
         customizer.customize("userProviderConfig", userProviderConfig);
         assertThat(userProviderConfig.getValidation()).isEqualTo("customValidation");
         assertThat(userProviderConfig.getThreadpool()).isEqualTo("fixed");
+        assertThat(userProviderConfig.getThreads()).isEqualTo(512);
+        assertThat(userProviderConfig.getQueues()).isEqualTo(128);
+
+        // 3. 禁用 overload 时不注入过载线程池参数
+        AtengDubboProperties disabledProps = new AtengDubboProperties();
+        disabledProps.getOverload().setEnabled(false);
+        AtengDubboAutoConfiguration.AtengDubboConfigBeanCustomizer disabledCustomizer =
+                new AtengDubboAutoConfiguration.AtengDubboConfigBeanCustomizer(disabledProps);
+        ProviderConfig disabledProviderConfig = new ProviderConfig();
+        disabledCustomizer.customize("disabledProviderConfig", disabledProviderConfig);
+        assertThat(disabledProviderConfig.getThreadpool()).isNull();
+        assertThat(disabledProviderConfig.getThreads()).isNull();
+        assertThat(disabledProviderConfig.getQueues()).isNull();
+
+        // 4. 用户显式指定非 overload 线程池时，即使 threads/queues 未设也不强行注入 overload 参数
+        ProviderConfig fixedPoolProviderConfig = new ProviderConfig();
+        fixedPoolProviderConfig.setThreadpool("fixed");
+        customizer.customize("fixedPoolProviderConfig", fixedPoolProviderConfig);
+        assertThat(fixedPoolProviderConfig.getThreadpool()).isEqualTo("fixed");
+        assertThat(fixedPoolProviderConfig.getThreads()).isNull();
+        assertThat(fixedPoolProviderConfig.getQueues()).isNull();
+
+        // 5. 非法 overload.threads (<=0) 与 overload.queues (<0) 不向 ProviderConfig 注入
+        AtengDubboProperties invalidOverloadProps = new AtengDubboProperties();
+        invalidOverloadProps.getOverload().setThreads(0);
+        invalidOverloadProps.getOverload().setQueues(-1);
+        AtengDubboAutoConfiguration.AtengDubboConfigBeanCustomizer invalidOverloadCustomizer =
+                new AtengDubboAutoConfiguration.AtengDubboConfigBeanCustomizer(invalidOverloadProps);
+        ProviderConfig invalidOverloadProviderConfig = new ProviderConfig();
+        invalidOverloadCustomizer.customize("invalidOverloadProviderConfig", invalidOverloadProviderConfig);
+        assertThat(invalidOverloadProviderConfig.getThreadpool()).isEqualTo("overload");
+        assertThat(invalidOverloadProviderConfig.getThreads()).isNull();
+        assertThat(invalidOverloadProviderConfig.getQueues()).isNull();
     }
 
     @Test

@@ -12,11 +12,14 @@ import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcException;
 import org.apache.dubbo.rpc.RpcInvocation;
+import org.apache.dubbo.rpc.service.GenericService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.ClassUtils;
+import org.springframework.util.PatternMatchUtils;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -30,7 +33,7 @@ import java.util.Locale;
  * @author Ateng
  * @since 2026-10-28
  */
-@Activate(group = {CommonConstants.CONSUMER, CommonConstants.PROVIDER}, order = -9000)
+@Activate(group = {CommonConstants.CONSUMER, CommonConstants.PROVIDER}, order = -9800)
 public class DubboSameTokenFilter implements Filter {
 
     private static final Logger log = LoggerFactory.getLogger(DubboSameTokenFilter.class);
@@ -79,7 +82,7 @@ public class DubboSameTokenFilter implements Filter {
                 return false;
             }
         }
-        return RpcContext.getContext().isConsumerSide();
+        return RpcContext.getServiceContext().getUrl() != null && RpcContext.getContext().isConsumerSide();
     }
 
     private void handleConsumer(Invocation invocation) {
@@ -118,17 +121,24 @@ public class DubboSameTokenFilter implements Filter {
             return;
         }
 
+        String interfaceName = resolveInterfaceName(invoker);
+        String displayInterfaceName = StringUtils.hasText(interfaceName) ? interfaceName : "UnknownService";
+        if (isExcludedInterface(interfaceName, properties.getSameToken().getExcludeInterfaces())) {
+            if (log.isDebugEnabled()) {
+                log.debug("[DUBBO] 零信任白名单放行: 接口 [{}.{}] 命中 excludeInterfaces，豁免 Same-Token 校验",
+                        displayInterfaceName, invocation.getMethodName());
+            }
+            return;
+        }
+
         String token = getAttachment(invocation, SAME_TOKEN_KEY);
         if (!StringUtils.hasText(token)) {
             token = getAttachment(invocation, SA_SAME_TOKEN_KEY);
         }
 
-        String interfaceName = (invoker != null && invoker.getInterface() != null)
-                ? invoker.getInterface().getName() : "UnknownService";
-
         if (!StringUtils.hasText(token) || "null".equalsIgnoreCase(token.trim())) {
             log.warn("[DUBBO] 零信任防穿透拦截: 接口 [{}.{}] 未携带合法 Same-Token 受信凭据，阻断直连访问",
-                    interfaceName, invocation.getMethodName());
+                    displayInterfaceName, invocation.getMethodName());
             throw new BusinessException(CommonResultCode.UNAUTHORIZED.getCode(),
                     "微服务内部调用未携带合法 Same-Token 受信凭据，拒绝非法访问");
         }
@@ -143,10 +153,36 @@ public class DubboSameTokenFilter implements Filter {
 
         if (!valid) {
             log.warn("[DUBBO] 零信任防穿透拦截: 接口 [{}.{}] 携带的 Same-Token 凭据校验无效或已过期: token={}",
-                    interfaceName, invocation.getMethodName(), token);
+                    displayInterfaceName, invocation.getMethodName(), token);
             throw new BusinessException(CommonResultCode.UNAUTHORIZED.getCode(),
                     "微服务内部调用 Same-Token 凭据校验无效或已过期，拒绝非法访问");
         }
+    }
+
+    private String resolveInterfaceName(Invoker<?> invoker) {
+        if (invoker == null) {
+            return null;
+        }
+        Class<?> interfaceClass = invoker.getInterface();
+        if (interfaceClass != null && !GenericService.class.equals(interfaceClass)) {
+            return interfaceClass.getName();
+        }
+        if (invoker.getUrl() != null && StringUtils.hasText(invoker.getUrl().getServiceInterface())) {
+            return invoker.getUrl().getServiceInterface();
+        }
+        return interfaceClass != null ? interfaceClass.getName() : null;
+    }
+
+    private boolean isExcludedInterface(String interfaceName, List<String> excludeInterfaces) {
+        if (!StringUtils.hasText(interfaceName) || excludeInterfaces == null || excludeInterfaces.isEmpty()) {
+            return false;
+        }
+        for (String pattern : excludeInterfaces) {
+            if (StringUtils.hasText(pattern) && PatternMatchUtils.simpleMatch(pattern.trim(), interfaceName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String getAttachment(Invocation invocation, String key) {

@@ -14,10 +14,14 @@ import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcInvocation;
+import org.apache.dubbo.rpc.service.GenericService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -209,6 +213,133 @@ class DubboSameTokenFilterTest {
         assertThat(RpcContext.getClientAttachment().getAttachment(DubboSameTokenFilter.SAME_TOKEN_KEY)).isNull();
     }
 
+    @Test
+    @DisplayName("服务端入站: 精确匹配 excludeInterfaces 白名单接口时豁免 Same-Token 校验，非白名单接口仍阻断")
+    void testProviderExcludeInterfacesExactMatch() {
+        AtengDubboProperties properties = new AtengDubboProperties();
+        properties.getSameToken().setEnabled(true);
+        properties.getSameToken().setCheck(true);
+        properties.getSameToken().setExcludeInterfaces(List.of(OpenCallbackService.class.getName()));
+        DubboPropertiesHolder.set(properties);
+
+        Invoker<?> openInvoker = mock(Invoker.class);
+        URL openUrl = URL.valueOf("tri://127.0.0.1:50051/" + OpenCallbackService.class.getName() + "?side=provider");
+        when(openInvoker.getUrl()).thenReturn(openUrl);
+        when(openInvoker.getInterface()).thenReturn((Class) OpenCallbackService.class);
+        when(openInvoker.invoke(any())).thenReturn(new AppResponse("open-callback-ok"));
+
+        RpcInvocation openInvocation = new RpcInvocation();
+        openInvocation.setMethodName("notify");
+        Result openResult = filter.invoke(openInvoker, openInvocation);
+        assertThat(openResult.getValue()).isEqualTo("open-callback-ok");
+
+        // 未命中白名单的接口即使在同一配置下也必须严格阻断
+        Invoker<?> secretInvoker = mock(Invoker.class);
+        URL secretUrl = URL.valueOf("tri://127.0.0.1:50051/" + DemoService.class.getName() + "?side=provider");
+        when(secretInvoker.getUrl()).thenReturn(secretUrl);
+        when(secretInvoker.getInterface()).thenReturn((Class) DemoService.class);
+
+        RpcInvocation secretInvocation = new RpcInvocation();
+        secretInvocation.setMethodName("directAccess");
+
+        assertThatThrownBy(() -> filter.invoke(secretInvoker, secretInvocation))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(CommonResultCode.UNAUTHORIZED.getCode()));
+    }
+
+    @Test
+    @DisplayName("服务端入站: 通配符匹配 excludeInterfaces 白名单模式时豁免 Same-Token 校验")
+    void testProviderExcludeInterfacesWildcardMatch() {
+        AtengDubboProperties properties = new AtengDubboProperties();
+        properties.getSameToken().setEnabled(true);
+        properties.getSameToken().setCheck(true);
+        properties.getSameToken().setExcludeInterfaces(List.of("*Open*Service"));
+        DubboPropertiesHolder.set(properties);
+
+        Invoker<?> invoker = mock(Invoker.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/" + OpenCallbackService.class.getName() + "?side=provider");
+        when(invoker.getUrl()).thenReturn(url);
+        when(invoker.getInterface()).thenReturn((Class) OpenCallbackService.class);
+        when(invoker.invoke(any())).thenReturn(new AppResponse("wildcard-pass"));
+
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("healthCheck");
+
+        Result result = filter.invoke(invoker, invocation);
+        assertThat(result.getValue()).isEqualTo("wildcard-pass");
+    }
+
+    @Test
+    @DisplayName("服务端入站: 过滤白名单空值与空白字符，且无法解析接口名时严禁被 *Service 通配符误放行")
+    void testProviderExcludeInterfacesSanitizationAndFailClosedOnUnknownInterface() {
+        AtengDubboProperties properties = new AtengDubboProperties();
+        properties.getSameToken().setEnabled(true);
+        properties.getSameToken().setCheck(true);
+        properties.getSameToken().setExcludeInterfaces(Arrays.asList(
+                null,
+                "   ",
+                "\t",
+                "  " + OpenCallbackService.class.getName() + "  ",
+                "*Service"
+        ));
+        DubboPropertiesHolder.set(properties);
+
+        assertThat(properties.getSameToken().getExcludeInterfaces())
+                .containsExactly(OpenCallbackService.class.getName(), "*Service");
+        assertThatThrownBy(() -> properties.getSameToken().getExcludeInterfaces().add("hack"))
+                .isInstanceOf(UnsupportedOperationException.class);
+
+        // 无法解析真实接口名时 Fail-Closed，绝不因回退名称匹配 "*Service" 绕过零信任校验
+        Invoker<?> unknownInvoker = mock(Invoker.class);
+        when(unknownInvoker.getUrl()).thenReturn(null);
+        when(unknownInvoker.getInterface()).thenReturn(null);
+
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("blindCall");
+
+        assertThatThrownBy(() -> filter.invoke(unknownInvoker, invocation))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(CommonResultCode.UNAUTHORIZED.getCode()));
+
+        // URL 缺失 serviceInterface 时同样 Fail-Closed
+        Invoker<?> blankServiceUrlInvoker = mock(Invoker.class);
+        URL blankServiceUrl = URL.valueOf("tri://127.0.0.1:50051?side=provider");
+        when(blankServiceUrlInvoker.getUrl()).thenReturn(blankServiceUrl);
+        when(blankServiceUrlInvoker.getInterface()).thenReturn(null);
+
+        assertThatThrownBy(() -> filter.invoke(blankServiceUrlInvoker, invocation))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(CommonResultCode.UNAUTHORIZED.getCode()));
+    }
+
+    @Test
+    @DisplayName("服务端入站: GenericService 泛化提供者优先依据 URL serviceInterface 匹配白名单")
+    void testProviderExcludeInterfacesGenericServiceUsesUrlServiceInterface() {
+        AtengDubboProperties properties = new AtengDubboProperties();
+        properties.getSameToken().setEnabled(true);
+        properties.getSameToken().setCheck(true);
+        properties.getSameToken().setExcludeInterfaces(List.of(OpenCallbackService.class.getName()));
+        DubboPropertiesHolder.set(properties);
+
+        Invoker<?> genericInvoker = mock(Invoker.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/" + OpenCallbackService.class.getName() + "?side=provider");
+        when(genericInvoker.getUrl()).thenReturn(url);
+        when(genericInvoker.getInterface()).thenReturn((Class) GenericService.class);
+        when(genericInvoker.invoke(any())).thenReturn(new AppResponse("generic-pass"));
+
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("$invoke");
+
+        Result result = filter.invoke(genericInvoker, invocation);
+        assertThat(result.getValue()).isEqualTo("generic-pass");
+    }
+
     interface DemoService {
+    }
+
+    interface OpenCallbackService {
     }
 }
