@@ -78,6 +78,18 @@ log_error() {
   printf "%b[ERROR]%b %s\n" "${COLOR_RED}" "${COLOR_RESET}" "$1"
 }
 
+# 远端网络操作超时上限 (秒)
+REMOTE_TIMEOUT_SECONDS=5
+
+# 辅助函数：带超时防假死守卫执行远端 Git 网络操作 (HTTP 传参 + 低速断流 + SSH 连接与保活读超时)
+run_remote_git() {
+  local default_ssh_cmd="ssh -o ConnectTimeout=${REMOTE_TIMEOUT_SECONDS} -o ServerAliveInterval=${REMOTE_TIMEOUT_SECONDS} -o ServerAliveCountMax=1"
+  env GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-$default_ssh_cmd}" \
+    git -c http.timeout="$REMOTE_TIMEOUT_SECONDS" \
+        -c http.lowSpeedLimit=1 \
+        -c http.lowSpeedTime="$REMOTE_TIMEOUT_SECONDS" "$@"
+}
+
 # 参数解析
 DRY_RUN=false
 TARGET_VERSION=""
@@ -170,9 +182,10 @@ fi
 log_success "工作区状态检查通过: 干净无未提交代码"
 
 # 1.5 校验与远端仓库同步状态 (防漏拉远端代码与超前提交检测)
-log_info "正在拉取远端最新状态 (git fetch origin)..."
+log_info "正在拉取远端最新状态 (git fetch origin，超时上限 ${REMOTE_TIMEOUT_SECONDS}s)..."
 AHEAD_COUNT=0
-if git fetch origin >/dev/null 2>&1; then
+FETCH_OUT=""
+if FETCH_OUT=$(run_remote_git fetch origin 2>&1); then
   BEHIND_COUNT=$(git rev-list "HEAD..origin/$CURRENT_BRANCH" --count 2>/dev/null || echo "0")
   if [ "$BEHIND_COUNT" -gt 0 ]; then
     log_error "本地分支落后于远端 origin/$CURRENT_BRANCH ($BEHIND_COUNT 个提交未合并)！"
@@ -186,7 +199,15 @@ if git fetch origin >/dev/null 2>&1; then
     log_success "与远程分支状态同步: 本地主干与远端完全一致"
   fi
 else
-  log_warn "无法连接远程仓库进行同步校验（可能处于离线环境），跳过远端拉取校验。"
+  if [ "$DRY_RUN" = true ]; then
+    log_warn "无法连接远程仓库进行同步校验（超时或处于离线环境），演练模式下继续检查。"
+  else
+    log_error "无法连接远程仓库 origin（超时上限 ${REMOTE_TIMEOUT_SECONDS}s、离线或鉴权失败），正式发版必须先完成远端同步校验！"
+    if [ -n "$FETCH_OUT" ]; then
+      printf "  %s\n" "$FETCH_OUT"
+    fi
+    exit 1
+  fi
 fi
 
 # 1.6 多模块代码可编译性预检 (防带编译错误代码发版打脏标签)
@@ -302,8 +323,19 @@ if git rev-parse -q --verify "refs/tags/$TARGET_VERSION" >/dev/null 2>&1; then
   exit 1
 fi
 
-if git ls-remote --tags origin "refs/tags/$TARGET_VERSION" 2>/dev/null | grep -q "$TARGET_VERSION"; then
-  log_error "远程仓库已存在相同标签 [$TARGET_VERSION]，禁止重复发版！"
+REMOTE_TAGS_OUT=""
+if REMOTE_TAGS_OUT=$(run_remote_git ls-remote --tags origin "refs/tags/$TARGET_VERSION" 2>&1); then
+  if printf '%s' "$REMOTE_TAGS_OUT" | grep -Fq -- "$TARGET_VERSION"; then
+    log_error "远程仓库已存在相同标签 [$TARGET_VERSION]，禁止重复发版！"
+    exit 1
+  fi
+elif [ "$DRY_RUN" = true ]; then
+  log_warn "无法查询远端标签唯一性（超时或离线），演练模式下跳过远端标签查重。"
+else
+  log_error "查询远端标签唯一性失败（超时上限 ${REMOTE_TIMEOUT_SECONDS}s 或网络异常），为防冲突已安全中止发版！"
+  if [ -n "$REMOTE_TAGS_OUT" ]; then
+    printf "  %s\n" "$REMOTE_TAGS_OUT"
+  fi
   exit 1
 fi
 log_success "标签唯一性检查通过: $TARGET_VERSION 未曾被使用"
@@ -382,7 +414,7 @@ git tag -a "$TARGET_VERSION" -m "Release $TARGET_VERSION"
 
 if [ "$NEED_PUSH_BRANCH" = true ]; then
   log_info "正在原子推送主干变更与版本标签 (git push origin $CURRENT_BRANCH $TARGET_VERSION)..."
-  if ! git push origin "$CURRENT_BRANCH" "$TARGET_VERSION"; then
+  if ! run_remote_git push origin "$CURRENT_BRANCH" "$TARGET_VERSION"; then
     log_error "原子推送分支与标签到远程仓库失败！"
     log_warn "正在自动回滚本地标签，以防本地脏 Tag 阻塞后续发版..."
     git tag -d "$TARGET_VERSION" >/dev/null 2>&1 || true
@@ -392,7 +424,7 @@ if [ "$NEED_PUSH_BRANCH" = true ]; then
   log_success "主干变更与版本标签已原子同步至远端。"
 else
   log_info "正在推送标签到远程仓库 (git push origin $TARGET_VERSION)..."
-  if ! git push origin "$TARGET_VERSION"; then
+  if ! run_remote_git push origin "$TARGET_VERSION"; then
     log_error "推送标签 $TARGET_VERSION 到远程仓库失败！"
     log_warn "正在自动回滚本地标签，以防本地脏 Tag 阻塞后续发版..."
     git tag -d "$TARGET_VERSION" >/dev/null 2>&1 || true
