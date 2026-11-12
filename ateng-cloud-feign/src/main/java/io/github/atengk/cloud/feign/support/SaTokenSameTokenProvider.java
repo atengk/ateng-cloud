@@ -15,4 +15,12 @@ public class SaTokenSameTokenProvider implements SameTokenProvider {
     public String getSameToken() {
         return SaSameUtil.getToken();
     }
+
+    @Override
+    public boolean isValidSameToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+        return SaSameUtil.isValid(token.trim());
+    }
 }

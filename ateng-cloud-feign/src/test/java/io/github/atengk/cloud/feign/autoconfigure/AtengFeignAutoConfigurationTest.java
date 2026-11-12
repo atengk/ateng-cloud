@@ -2,6 +2,9 @@ package io.github.atengk.cloud.feign.autoconfigure;
 
 import feign.Logger;
 import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
+import io.github.atengk.cloud.feign.filter.FeignContextWebFilter;
+import io.github.atengk.cloud.feign.interceptor.FeignContextPropagationInterceptor;
+import io.github.atengk.cloud.feign.properties.AtengFeignContextProperties;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
 import org.junit.jupiter.api.DisplayName;
@@ -10,12 +13,15 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.http.HttpMessageConvertersAutoConfiguration;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.cloud.openfeign.FeignAutoConfiguration;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.FeignClientProperties;
 import org.springframework.cloud.openfeign.clientconfig.HttpClient5FeignConfiguration;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.web.bind.annotation.GetMapping;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -190,5 +196,48 @@ public class AtengFeignAutoConfigurationTest {
                     assertThat(nativeConfig.getConnectTimeout()).isEqualTo(400);
                     assertThat(nativeConfig.getLoggerLevel()).isEqualTo(Logger.Level.FULL);
                 });
+    }
+
+    @Test
+    @DisplayName("验证 Servlet Web 环境下 FeignContextWebFilter 的条件装配与顺序注册")
+    void testServletInboundFilterAutoConfiguration() {
+        WebApplicationContextRunner webRunner = new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(AtengFeignAutoConfiguration.class));
+
+        // 1. 默认开启入站还原，注册 FilterRegistrationBean 且优先级为 HIGHEST_PRECEDENCE + 100
+        webRunner.run(context -> {
+            assertThat(context).hasBean("feignContextWebFilter");
+            FilterRegistrationBean<?> bean = context.getBean("feignContextWebFilter", FilterRegistrationBean.class);
+            assertThat(bean.getOrder()).isEqualTo(Ordered.HIGHEST_PRECEDENCE + 100);
+        });
+
+        // 2. context.enabled=false 时同时关闭入站过滤器与出站拦截器装配
+        webRunner.withPropertyValues("ateng.cloud.feign.context.enabled=false")
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean("feignContextWebFilter");
+                    assertThat(context).doesNotHaveBean(FeignContextPropagationInterceptor.class);
+                });
+
+        // 3. inbound-enabled=false 且未开启 check-same-token 时不装配
+        webRunner.withPropertyValues("ateng.cloud.feign.context.inbound-enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean("feignContextWebFilter"));
+
+        // 4. inbound-enabled=false 但显式开启 check-same-token=true 时仍装配以保障零信任拦截
+        webRunner.withPropertyValues(
+                        "ateng.cloud.feign.context.inbound-enabled=false",
+                        "ateng.cloud.feign.context.check-same-token=true"
+                )
+                .run(context -> assertThat(context).hasBean("feignContextWebFilter"));
+
+        // 5. 业务侧自定义注册 FeignContextWebFilter Bean 时自动装配平滑退让，防止过滤器重复执行
+        webRunner.withBean("customFeignFilter", FeignContextWebFilter.class,
+                        () -> new FeignContextWebFilter(new AtengFeignContextProperties(), null, null))
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean("feignContextWebFilter");
+                    assertThat(context).hasSingleBean(FeignContextWebFilter.class);
+                });
+
+        // 6. 非 Web 环境不装配 Servlet 过滤器
+        contextRunner.run(context -> assertThat(context).doesNotHaveBean("feignContextWebFilter"));
     }
 }

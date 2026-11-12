@@ -6,6 +6,9 @@ import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.cloud.feign.constant.FeignHeaderConstants;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
+import io.github.atengk.cloud.traffic.context.TrafficContext;
+import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
+import org.apache.seata.core.context.RootContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +31,10 @@ class FeignContextPropagationInterceptorTest {
     @AfterEach
     void tearDown() {
         // 铁律：测试结束后彻底清理上下文，防止线程污染
+        if (RootContext.inGlobalTransaction()) {
+            RootContext.unbind();
+        }
+        TrafficContextHolder.clear();
         MDC.clear();
         UserContextHolder.clear();
         TenantContextHolder.clear();
@@ -116,6 +123,72 @@ class FeignContextPropagationInterceptorTest {
         assertThat(interceptor).isInstanceOf(org.springframework.core.Ordered.class);
         assertThat(((org.springframework.core.Ordered) interceptor).getOrder())
                 .isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE);
+    }
+
+    @Test
+    @DisplayName("测试通过零依赖反射桥接从 TrafficContextHolder 与 Seata RootContext 注入灰度泳道三元组与 TX_XID")
+    void testPropagateTrafficContextHolderAndSeataXid() {
+        TrafficContextHolder.setContext(TrafficContext.of("gray-v3", "payment-lane", "rule-999"));
+        RootContext.bind("192.168.1.100:8091:123456789");
+
+        FeignContextPropagationInterceptor interceptor = new FeignContextPropagationInterceptor(null);
+        RequestTemplate template = new RequestTemplate();
+        template.method(Request.HttpMethod.POST);
+        template.target("http://payment-service/pay");
+
+        interceptor.apply(template);
+
+        assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_TAG)).isEqualTo("gray-v3");
+        assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_LANE)).isEqualTo("payment-lane");
+        assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_RULE)).isEqualTo("rule-999");
+        assertThat(getHeader(template, FeignHeaderConstants.TX_XID)).isEqualTo("192.168.1.100:8091:123456789");
+    }
+
+    @Test
+    @DisplayName("测试 TrafficContextHolder 与 RootContext 为空时平滑回退读取 MDC，且脏 null 清洗先于注入")
+    void testMdcFallbackForLaneRuleXidAndSanitizeBeforeInject() {
+        MDC.put(FeignHeaderConstants.TRAFFIC_TAG, "canary-mdc");
+        MDC.put(FeignHeaderConstants.TRAFFIC_LANE, "lane-mdc");
+        MDC.put(FeignHeaderConstants.TRAFFIC_RULE, "rule-mdc");
+        MDC.put(FeignHeaderConstants.MDC_XID, "10.0.0.8:8091:998877");
+        UserContextHolder.setUserId("user-recovered");
+
+        FeignContextPropagationInterceptor interceptor = new FeignContextPropagationInterceptor(null);
+        RequestTemplate template = new RequestTemplate();
+        template.method(Request.HttpMethod.GET);
+        template.target("http://demo-service/test");
+        // 预先写入脏 "null" 应被清洗，随后再写入真实 userId；显式小写 tx_xid 有效值应被保留不被覆盖
+        template.header(FeignHeaderConstants.USER_ID, "null");
+        template.header("tx_xid", "explicit-xid");
+
+        interceptor.apply(template);
+
+        assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_TAG)).isEqualTo("canary-mdc");
+        assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_LANE)).isEqualTo("lane-mdc");
+        assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_RULE)).isEqualTo("rule-mdc");
+        assertThat(getHeader(template, FeignHeaderConstants.USER_ID)).isEqualTo("user-recovered");
+        assertThat(getHeader(template, "tx_xid")).isEqualTo("explicit-xid");
+    }
+
+    @Test
+    @DisplayName("测试 apply(null) 安全空转且预置纯空白脏标头会被清洗后允许真实上下文注入")
+    void testSanitizesWhitespaceHeadersAndHandlesNullTemplate() {
+        UserContextHolder.setUserId("user-clean");
+        TenantContextHolder.setTenantId("tenant-clean");
+
+        FeignContextPropagationInterceptor interceptor = new FeignContextPropagationInterceptor(null);
+        interceptor.apply(null);
+
+        RequestTemplate template = new RequestTemplate();
+        template.method(Request.HttpMethod.POST);
+        template.target("http://demo-service/clean");
+        template.header(FeignHeaderConstants.USER_ID, "   ");
+        template.header(FeignHeaderConstants.TENANT_ID, "");
+
+        interceptor.apply(template);
+
+        assertThat(getHeader(template, FeignHeaderConstants.USER_ID)).isEqualTo("user-clean");
+        assertThat(getHeader(template, FeignHeaderConstants.TENANT_ID)).isEqualTo("tenant-clean");
     }
 
     private String getHeader(RequestTemplate template, String headerName) {

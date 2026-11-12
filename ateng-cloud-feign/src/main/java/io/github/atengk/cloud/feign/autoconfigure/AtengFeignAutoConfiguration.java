@@ -15,10 +15,12 @@ import feign.querymap.BeanQueryMapEncoder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.feign.decoder.AtengFeignDecoder;
 import io.github.atengk.cloud.feign.decoder.AtengFeignErrorDecoder;
+import io.github.atengk.cloud.feign.filter.FeignContextWebFilter;
 import io.github.atengk.cloud.feign.interceptor.FeignContextPropagationInterceptor;
 import io.github.atengk.cloud.feign.logger.AtengFeignLoggerFactory;
 import io.github.atengk.cloud.feign.preheat.AtengFeignPreheatListener;
 import io.github.atengk.cloud.feign.properties.AtengFeignClientProperties;
+import io.github.atengk.cloud.feign.properties.AtengFeignContextProperties;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.retry.AtengFeignRetryer;
 import io.github.atengk.cloud.feign.spi.SameTokenProvider;
@@ -35,12 +37,15 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
+import org.springframework.boot.autoconfigure.condition.AnyNestedCondition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.cloud.openfeign.FeignAutoConfiguration;
 import org.springframework.cloud.openfeign.FeignBuilderCustomizer;
 import org.springframework.cloud.openfeign.FeignClientFactoryBean;
@@ -54,6 +59,8 @@ import org.springframework.cloud.openfeign.support.ResponseEntityDecoder;
 import org.springframework.cloud.openfeign.support.SpringDecoder;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.util.StringUtils;
 
 import java.lang.reflect.InvocationHandler;
@@ -360,5 +367,53 @@ public class AtengFeignAutoConfiguration {
     @ConditionalOnProperty(prefix = "ateng.cloud.feign.compression", name = "request-enabled", havingValue = "true")
     public AtengFeignContentGzipEncodingInterceptor atengFeignContentGzipEncodingInterceptor(AtengFeignProperties properties) {
         return new AtengFeignContentGzipEncodingInterceptor(properties.getCompression());
+    }
+
+    /**
+     * Servlet Web 环境下 Feign 入站上下文对称还原与零信任校验过滤器自动装配
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+    @ConditionalOnClass(name = {
+            "jakarta.servlet.Filter",
+            "org.springframework.boot.web.servlet.FilterRegistrationBean"
+    })
+    @ConditionalOnProperty(prefix = "ateng.cloud.feign.context", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @Conditional(OnFeignContextWebFilterEnabledCondition.class)
+    static class FeignServletInboundContextConfiguration {
+
+        @Bean(name = "feignContextWebFilter")
+        @ConditionalOnMissingBean(value = FeignContextWebFilter.class, parameterizedContainer = FilterRegistrationBean.class)
+        public FilterRegistrationBean<FeignContextWebFilter> feignContextWebFilter(
+                AtengFeignProperties properties,
+                ObjectProvider<SameTokenProvider> sameTokenProvider,
+                ObjectProvider<ObjectMapper> objectMapperProvider) {
+            AtengFeignContextProperties contextProps = properties.getContext() != null
+                    ? properties.getContext() : new AtengFeignContextProperties();
+            FeignContextWebFilter filter = new FeignContextWebFilter(
+                    contextProps,
+                    sameTokenProvider.getIfAvailable(),
+                    objectMapperProvider.getIfAvailable(ObjectMapper::new)
+            );
+            FilterRegistrationBean<FeignContextWebFilter> registration = new FilterRegistrationBean<>(filter);
+            registration.setOrder(contextProps.getFilterOrder());
+            registration.addUrlPatterns("/*");
+            return registration;
+        }
+    }
+
+    static class OnFeignContextWebFilterEnabledCondition extends AnyNestedCondition {
+
+        OnFeignContextWebFilterEnabledCondition() {
+            super(ConfigurationPhase.REGISTER_BEAN);
+        }
+
+        @ConditionalOnProperty(prefix = "ateng.cloud.feign.context", name = "inbound-enabled", havingValue = "true", matchIfMissing = true)
+        static class InboundEnabled {
+        }
+
+        @ConditionalOnProperty(prefix = "ateng.cloud.feign.context", name = "check-same-token", havingValue = "true")
+        static class CheckSameTokenEnabled {
+        }
     }
 }
