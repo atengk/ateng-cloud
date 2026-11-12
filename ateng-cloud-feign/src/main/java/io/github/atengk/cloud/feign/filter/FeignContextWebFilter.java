@@ -295,19 +295,23 @@ public class FeignContextWebFilter extends OncePerRequestFilter {
             if (prevTag != null) {
                 String effectiveLane = trafficLane != null ? trafficLane : prevLane;
                 String effectiveRule = trafficRule != null ? trafficRule : prevRule;
+                FeignTrafficPropagationSupport.TrafficSnapshot effectiveSnapshot =
+                        new FeignTrafficPropagationSupport.TrafficSnapshot(prevTag, effectiveLane, effectiveRule);
                 if (trafficLane != null || trafficRule != null) {
-                    FeignTrafficPropagationSupport.restore(prevTag, effectiveLane, effectiveRule);
+                    FeignTrafficPropagationSupport.restore(effectiveSnapshot);
                 } else {
-                    FeignTrafficPropagationSupport.syncMdc(prevTag, effectiveLane, effectiveRule);
+                    FeignTrafficPropagationSupport.syncMdc(effectiveSnapshot);
                 }
             }
         } else if (trafficTag != null) {
             // 入站请求显式携带新 X-Traffic-Tag 时完整以入站头为准，绝不混入入站前线程残留的旧泳道/规则
-            FeignTrafficPropagationSupport.restore(trafficTag, trafficLane, trafficRule);
+            FeignTrafficPropagationSupport.restore(
+                    new FeignTrafficPropagationSupport.TrafficSnapshot(trafficTag, trafficLane, trafficRule));
         } else if (trafficLane != null || trafficRule != null) {
             String effectiveLane = trafficLane != null ? trafficLane : prevLane;
             String effectiveRule = trafficRule != null ? trafficRule : prevRule;
-            FeignTrafficPropagationSupport.restore(prevTag, effectiveLane, effectiveRule);
+            FeignTrafficPropagationSupport.restore(
+                    new FeignTrafficPropagationSupport.TrafficSnapshot(prevTag, effectiveLane, effectiveRule));
         }
     }
 

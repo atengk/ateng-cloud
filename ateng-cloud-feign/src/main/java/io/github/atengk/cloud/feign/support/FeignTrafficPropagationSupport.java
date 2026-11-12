@@ -241,6 +241,19 @@ public final class FeignTrafficPropagationSupport {
     }
 
     /**
+     * 按流量快照对象同步流量元数据至 MDC
+     *
+     * @param snapshot 流量上下文快照
+     */
+    public static void syncMdc(TrafficSnapshot snapshot) {
+        if (snapshot == null) {
+            syncMdc((String) null, null, null);
+        } else {
+            syncMdc(snapshot.tag(), snapshot.laneName(), snapshot.matchedRule());
+        }
+    }
+
+    /**
      * 同步指定流量元数据至 MDC，并在某字段为 {@code null} 时显式清理对应历史残留键，防止新旧混合污染
      *
      * @param tag         流量染色标签

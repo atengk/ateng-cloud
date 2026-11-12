@@ -266,4 +266,42 @@ class AtengFeignLoggerTest {
             classLogger.setLevel(originalLevel);
         }
     }
+
+    @Test
+    @DisplayName("测试 Response 缺失 @FeignClient 注解类型元数据时，Factory 传入的 clientType contextId 仍优先于目标服务名")
+    void testContextIdTakesPrecedenceOverTargetNameWhenResponseLacksAnnotatedType() throws Exception {
+        AtengFeignProperties properties = new AtengFeignProperties();
+        properties.setSlowCallThreshold(Duration.ofSeconds(5));
+
+        AtengFeignClientProperties serviceProps = new AtengFeignClientProperties();
+        serviceProps.setSlowCallThreshold(Duration.ofMillis(800));
+        properties.getClients().put("shared-slow-service", serviceProps);
+
+        AtengFeignClientProperties fastProps = new AtengFeignClientProperties();
+        fastProps.setSlowCallThreshold(Duration.ofMillis(200));
+        properties.getClients().put("fastOrderClient", fastProps);
+
+        Logger classLogger = (Logger) LoggerFactory.getLogger("test.slow.precedence." + System.nanoTime());
+        Level originalLevel = classLogger.getLevel();
+        classLogger.setLevel(Level.INFO);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        classLogger.addAppender(appender);
+
+        try {
+            AtengFeignLogger feignLogger = new AtengFeignLogger(classLogger, FastOrderClient.class, properties);
+            Response responseWithoutAnnotatedType = createResponse(Object.class, "shared-slow-service", 200, Collections.emptyMap());
+
+            feignLogger.logAndRebufferResponse("FastOrderClient#query()", feign.Logger.Level.BASIC, responseWithoutAnnotatedType, 250L);
+            assertThat(appender.list).hasSize(1);
+            assertThat(appender.list.get(0).getLevel()).isEqualTo(Level.WARN);
+            assertThat(appender.list.get(0).getFormattedMessage())
+                    .contains("fastOrderClient")
+                    .contains("250ms")
+                    .contains("200ms");
+        } finally {
+            classLogger.detachAppender(appender);
+            classLogger.setLevel(originalLevel);
+        }
+    }
 }

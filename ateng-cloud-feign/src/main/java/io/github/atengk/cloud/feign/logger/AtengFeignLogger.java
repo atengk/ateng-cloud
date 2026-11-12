@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.feign.logger;
 
 import feign.Logger;
+import feign.RequestTemplate;
 import feign.Response;
 import io.github.atengk.cloud.feign.properties.AtengFeignProperties;
 import io.github.atengk.cloud.feign.support.FeignTargetSupport;
@@ -9,7 +10,6 @@ import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -111,20 +111,18 @@ public class AtengFeignLogger extends Logger {
     }
 
     private List<String> resolveCandidateNames(Response response) {
-        List<String> responseNames = FeignTargetSupport.resolveCandidateNames(response);
-        if (clientType == null) {
-            return responseNames;
-        }
-        List<String> typeNames = FeignTargetSupport.resolveCandidateNames(clientType, null, null);
-        if (responseNames.isEmpty()) {
-            return typeNames;
-        }
-        if (typeNames.isEmpty()) {
-            return responseNames;
-        }
-        Set<String> merged = new LinkedHashSet<>(responseNames);
-        merged.addAll(typeNames);
-        return List.copyOf(merged);
+        RequestTemplate template = response != null && response.request() != null
+                ? response.request().requestTemplate()
+                : null;
+        Class<?> responseTargetType = FeignTargetSupport.resolveTargetType(template);
+        Class<?> effectiveType = (responseTargetType != null
+                && !FeignTargetSupport.resolveCandidateNames(responseTargetType, null, null).isEmpty())
+                ? responseTargetType
+                : (clientType != null ? clientType : responseTargetType);
+        String targetName = template != null && template.feignTarget() != null
+                ? template.feignTarget().name()
+                : null;
+        return FeignTargetSupport.resolveCandidateNames(effectiveType, null, targetName);
     }
 
     @Override

@@ -91,11 +91,10 @@ public class FeignContextPropagationInterceptor implements RequestInterceptor, O
     }
 
     private String resolveTraceId() {
-        String traceId = MDC.get(FeignHeaderConstants.MDC_TRACE_ID);
-        if (!StringUtils.hasText(traceId)) {
-            traceId = MDC.get(FeignHeaderConstants.TRACE_ID);
-        }
-        return traceId;
+        return FeignContextHeaderSupport.firstValidMdcValue(
+                FeignHeaderConstants.MDC_TRACE_ID,
+                FeignHeaderConstants.TRACE_ID
+        );
     }
 
     private void addHeaderIfValid(RequestTemplate template, String headerName, String headerValue) {
