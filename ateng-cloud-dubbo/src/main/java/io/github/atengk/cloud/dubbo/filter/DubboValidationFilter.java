@@ -3,6 +3,7 @@ package io.github.atengk.cloud.dubbo.filter;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.util.ValidatorUtil;
+import io.github.atengk.cloud.dubbo.support.DubboAttachmentSupport;
 import io.github.atengk.cloud.dubbo.support.DubboExceptionUtils;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import jakarta.validation.ConstraintViolation;
@@ -15,12 +16,17 @@ import org.apache.dubbo.rpc.Filter;
 import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
-import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.temporal.TemporalAccessor;
+import java.util.Collections;
+import java.util.Date;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Dubbo 服务端 JSR-303 参数格式快速失败防卫与转译过滤器
@@ -38,6 +44,8 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
 
     private static final Logger log = LoggerFactory.getLogger(DubboValidationFilter.class);
 
+    private static final int MAX_VALIDATION_DEPTH = 16;
+
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
@@ -46,27 +54,24 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
             return invoker.invoke(invocation);
         }
 
-        // 仅在 Provider 端入站时执行参数格式校验防卫
-        if (!isConsumerSide(invoker)) {
-            Object[] arguments = invocation.getArguments();
+        // 仅在 Provider 端入站时执行参数格式校验防卫（含批量集合、Map 值与对象数组级联遍历）
+        if (!DubboAttachmentSupport.isConsumerSide(invoker)) {
+            Object[] arguments = invocation != null ? invocation.getArguments() : null;
             if (arguments != null && arguments.length > 0) {
                 for (Object arg : arguments) {
-                    if (arg != null && !isSkippableParameterType(arg.getClass())) {
-                        try {
-                            Set<ConstraintViolation<Object>> violations = ValidatorUtil.validateResult(arg);
-                            if (violations != null && !violations.isEmpty()) {
-                                String errorMsg = DubboExceptionUtils.formatConstraintViolations(violations);
-                                log.warn("[DUBBO-VALIDATION] Provider 入参校验拦截: service={}, method={}, error={}",
-                                        invoker.getInterface().getName(), invocation.getMethodName(), errorMsg);
-                                BusinessException businessException = new BusinessException(
-                                        CommonResultCode.BAD_REQUEST.getCode(),
-                                        errorMsg
-                                );
-                                return AsyncRpcResult.newDefaultAsyncResult(businessException, invocation);
-                            }
-                        } catch (Throwable t) {
-                            log.debug("[DUBBO-VALIDATION] 执行参数校验异常: {}", t.getMessage());
-                        }
+                    String errorMsg = validateArgumentTree(arg, "", 0, null);
+                    if (errorMsg != null) {
+                        String serviceName = invoker != null && invoker.getInterface() != null
+                                ? invoker.getInterface().getName()
+                                : "unknown";
+                        String methodName = invocation.getMethodName();
+                        log.warn("[DUBBO-VALIDATION] Provider 入参校验拦截: service={}, method={}, error={}",
+                                serviceName, methodName, errorMsg);
+                        BusinessException businessException = new BusinessException(
+                                CommonResultCode.BAD_REQUEST.getCode(),
+                                errorMsg
+                        );
+                        return AsyncRpcResult.newDefaultAsyncResult(businessException, invocation);
                     }
                 }
             }
@@ -75,8 +80,97 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
         return invoker.invoke(invocation);
     }
 
-    private boolean isSkippableParameterType(Class<?> clazz) {
+    private String validateArgumentTree(Object target, String pathPrefix, int depth, Set<Object> visited) {
+        if (target == null || depth >= MAX_VALIDATION_DEPTH) {
+            return null;
+        }
+        Class<?> clazz = target.getClass();
+        if (DubboExceptionUtils.isStreamObserver(clazz)) {
+            return null;
+        }
+
+        if (target instanceof Iterable<?> iterable) {
+            return visitContainerWithCycleGuard(target, visited, activeVisited -> {
+                int index = 0;
+                for (Object element : iterable) {
+                    String failure = validateArgumentTree(element, pathPrefix + "[" + index + "]", depth + 1, activeVisited);
+                    if (failure != null) {
+                        return failure;
+                    }
+                    index++;
+                }
+                return null;
+            });
+        }
+
+        if (target instanceof Map<?, ?> map) {
+            return visitContainerWithCycleGuard(target, visited, activeVisited -> {
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    String keyLabel = entry.getKey() != null ? String.valueOf(entry.getKey()) : "null";
+                    String failure = validateArgumentTree(entry.getValue(), pathPrefix + "[" + keyLabel + "]", depth + 1, activeVisited);
+                    if (failure != null) {
+                        return failure;
+                    }
+                }
+                return null;
+            });
+        }
+
+        if (clazz.isArray()) {
+            if (clazz.getComponentType().isPrimitive()) {
+                return null;
+            }
+            Object[] array = (Object[]) target;
+            return visitContainerWithCycleGuard(target, visited, activeVisited -> {
+                for (int i = 0; i < array.length; i++) {
+                    String failure = validateArgumentTree(array[i], pathPrefix + "[" + i + "]", depth + 1, activeVisited);
+                    if (failure != null) {
+                        return failure;
+                    }
+                }
+                return null;
+            });
+        }
+
+        if (isSkippableScalarType(clazz)) {
+            return null;
+        }
+        return validateSingleBean(target, pathPrefix);
+    }
+
+    private String visitContainerWithCycleGuard(Object container, Set<Object> visited, Function<Set<Object>, String> walker) {
+        Set<Object> activeVisited = visited != null ? visited : Collections.newSetFromMap(new IdentityHashMap<>());
+        if (!activeVisited.add(container)) {
+            return null;
+        }
+        try {
+            return walker.apply(activeVisited);
+        } finally {
+            activeVisited.remove(container);
+        }
+    }
+
+    private String validateSingleBean(Object target, String pathPrefix) {
+        try {
+            Set<ConstraintViolation<Object>> violations = ValidatorUtil.validateResult(target);
+            if (violations != null && !violations.isEmpty()) {
+                return DubboExceptionUtils.formatConstraintViolations(violations, pathPrefix);
+            }
+        } catch (Throwable t) {
+            log.debug("[DUBBO-VALIDATION] 执行参数校验异常: {}", t.getMessage());
+        }
+        return null;
+    }
+
+    private boolean isSkippableScalarType(Class<?> clazz) {
         return clazz.isPrimitive()
+                || clazz.isEnum()
+                || CharSequence.class.isAssignableFrom(clazz)
+                || Number.class.isAssignableFrom(clazz)
+                || Boolean.class == clazz
+                || Character.class == clazz
+                || TemporalAccessor.class.isAssignableFrom(clazz)
+                || Date.class.isAssignableFrom(clazz)
                 || clazz.getName().startsWith("java.lang.")
                 || clazz.getName().startsWith("java.util.")
                 || DubboExceptionUtils.isStreamObserver(clazz);
@@ -113,18 +207,5 @@ public class DubboValidationFilter implements Filter, BaseFilter.Listener {
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
         // 异常由 onResponse 与基础异常过滤器统一调度
-    }
-
-    private boolean isConsumerSide(Invoker<?> invoker) {
-        if (invoker != null && invoker.getUrl() != null) {
-            String side = invoker.getUrl().getParameter(CommonConstants.SIDE_KEY);
-            if (CommonConstants.CONSUMER_SIDE.equalsIgnoreCase(side)) {
-                return true;
-            }
-            if (CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(side)) {
-                return false;
-            }
-        }
-        return RpcContext.getContext().isConsumerSide();
     }
 }

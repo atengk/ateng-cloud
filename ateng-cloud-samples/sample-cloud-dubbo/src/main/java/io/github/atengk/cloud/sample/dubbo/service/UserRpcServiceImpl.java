@@ -16,7 +16,11 @@ import org.apache.dubbo.common.stream.StreamObserver;
 import org.apache.dubbo.config.annotation.DubboService;
 import org.slf4j.MDC;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -146,5 +150,31 @@ public class UserRpcServiceImpl implements UserRpcService {
             }
         }
         return "slow-ok:" + sleepMillis;
+    }
+
+    @Override
+    public List<UserVO> batchCreateUsers(List<UserCreateRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<UserVO> result = new ArrayList<>(requests.size());
+        long baseId = 100L;
+        for (int i = 0; i < requests.size(); i++) {
+            UserCreateRequest request = requests.get(i);
+            if (request == null) {
+                continue;
+            }
+            String username = request.getUsername();
+            result.add(new UserVO(baseId + i + 1, username, username + "@example.com"));
+        }
+        return result;
+    }
+
+    @Override
+    public List<UserVO> batchCreateUsersArray(UserCreateRequest[] requests) {
+        if (requests == null || requests.length == 0) {
+            return Collections.emptyList();
+        }
+        return batchCreateUsers(Arrays.asList(requests));
     }
 }

@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import org.apache.dubbo.common.stream.StreamObserver;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -102,5 +103,15 @@ public class UserRpcServiceMock implements UserRpcService {
     @Override
     public String slowEcho(long sleepMillis) {
         return MOCK_TAG + " slow-fallback:" + sleepMillis;
+    }
+
+    @Override
+    public List<UserVO> batchCreateUsers(List<UserCreateRequest> requests) {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public List<UserVO> batchCreateUsersArray(UserCreateRequest[] requests) {
+        return Collections.emptyList();
     }
 }

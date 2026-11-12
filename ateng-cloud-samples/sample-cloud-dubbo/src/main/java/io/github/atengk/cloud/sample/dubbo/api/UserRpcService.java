@@ -8,6 +8,8 @@ import io.github.atengk.cloud.sample.dubbo.model.UserVO;
 import jakarta.validation.Valid;
 import org.apache.dubbo.common.stream.StreamObserver;
 
+import java.util.List;
+
 /**
  * 用户 RPC 服务契约接口
  *
@@ -117,5 +119,21 @@ public interface UserRpcService {
      * @return 响应标识
      */
     String slowEcho(long sleepMillis);
+
+    /**
+     * 批量创建用户（集合入参契约，验证 DubboValidationFilter 对 List/ValidList 的元素级联校验）
+     *
+     * @param requests 批量创建用户请求集合
+     * @return 批量创建的用户视图列表
+     */
+    List<UserVO> batchCreateUsers(List<UserCreateRequest> requests);
+
+    /**
+     * 批量创建用户（对象数组入参契约，验证 DubboValidationFilter 对 Object[] 数组的元素级联校验）
+     *
+     * @param requests 批量创建用户请求数组
+     * @return 批量创建的用户视图列表
+     */
+    List<UserVO> batchCreateUsersArray(UserCreateRequest[] requests);
 }
 

@@ -2,6 +2,7 @@ package io.github.atengk.cloud.sample.dubbo;
 
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.validation.ValidList;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadHandler;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadListener;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadThreadPool;
@@ -21,6 +22,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.TestSocketUtils;
 
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -95,6 +97,71 @@ public class ValidationAndOverloadDubboRpcTest {
         assertEquals(CommonResultCode.BAD_REQUEST.getCode(), ex.getCode(), "错误码必须精确为 400 (BAD_REQUEST)");
         assertTrue(ex.getMessage().contains("年龄必须大于0") || ex.getMessage().contains("age"),
                 "错误描述必须清晰指出年龄违规");
+    }
+
+    @Test
+    @DisplayName("批量集合与数组入参合法时（List/ValidList/UserCreateRequest[]）正常穿透执行并返回结果")
+    void testBatchUserValidationSuccess() {
+        assertNotNull(userRpcService, "UserRpcService 引用不可为空");
+
+        List<UserVO> listResult = userRpcService.batchCreateUsers(List.of(
+                new UserCreateRequest("batch-list-1", 22),
+                new UserCreateRequest("batch-list-2", 28)
+        ));
+        assertEquals(2, listResult.size());
+        assertEquals("batch-list-1", listResult.get(0).getUsername());
+
+        ValidList<UserCreateRequest> validList = ValidList.of(
+                new UserCreateRequest("batch-validlist-1", 25)
+        );
+        List<UserVO> validListResult = userRpcService.batchCreateUsers(validList);
+        assertEquals(1, validListResult.size());
+        assertEquals("batch-validlist-1", validListResult.get(0).getUsername());
+
+        UserCreateRequest[] arrayReq = new UserCreateRequest[]{
+                new UserCreateRequest("batch-array-1", 31),
+                new UserCreateRequest("batch-array-2", 35)
+        };
+        List<UserVO> arrayResult = userRpcService.batchCreateUsersArray(arrayReq);
+        assertEquals(2, arrayResult.size());
+        assertEquals("batch-array-2", arrayResult.get(1).getUsername());
+    }
+
+    @Test
+    @DisplayName("List/ValidList/对象数组任一元素违反 JSR-303 约束时，RPC 边界短路拦截并返回 400 BusinessException")
+    void testBatchUserValidationFailureFailFast() {
+        assertNotNull(userRpcService, "UserRpcService 引用不可为空");
+
+        List<UserCreateRequest> invalidList = List.of(
+                new UserCreateRequest("ok-user", 20),
+                new UserCreateRequest("", 25)
+        );
+        BusinessException listEx = assertThrows(BusinessException.class,
+                () -> userRpcService.batchCreateUsers(invalidList),
+                "List 内非法元素必须被 DubboValidationFilter 短路拦截");
+        assertEquals(CommonResultCode.BAD_REQUEST.getCode(), listEx.getCode());
+        assertTrue(listEx.getMessage().contains("参数校验失败") && listEx.getMessage().contains("[1]"),
+                "异常消息应包含违规元素索引路径 [1]");
+
+        ValidList<UserCreateRequest> invalidValidList = ValidList.of(
+                new UserCreateRequest("ok-user", 20),
+                new UserCreateRequest("bad-age", 0)
+        );
+        BusinessException validListEx = assertThrows(BusinessException.class,
+                () -> userRpcService.batchCreateUsers(invalidValidList),
+                "ValidList 内非法元素必须被 DubboValidationFilter 短路拦截");
+        assertEquals(CommonResultCode.BAD_REQUEST.getCode(), validListEx.getCode());
+        assertTrue(validListEx.getMessage().contains("[1]") && validListEx.getMessage().contains("age"));
+
+        UserCreateRequest[] invalidArray = new UserCreateRequest[]{
+                new UserCreateRequest("ok-user", 20),
+                new UserCreateRequest(" ", 25)
+        };
+        BusinessException arrayEx = assertThrows(BusinessException.class,
+                () -> userRpcService.batchCreateUsersArray(invalidArray),
+                "对象数组内非法元素必须被 DubboValidationFilter 短路拦截");
+        assertEquals(CommonResultCode.BAD_REQUEST.getCode(), arrayEx.getCode());
+        assertTrue(arrayEx.getMessage().contains("[1]") && arrayEx.getMessage().contains("username"));
     }
 
     @Test

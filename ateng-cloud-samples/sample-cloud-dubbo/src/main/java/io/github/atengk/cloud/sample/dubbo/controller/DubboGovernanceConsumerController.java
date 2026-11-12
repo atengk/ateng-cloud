@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.sample.dubbo.controller;
 
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.boot.core.validation.ValidList;
 import io.github.atengk.cloud.dubbo.filter.DubboSameTokenFilter;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
@@ -15,6 +16,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 微服务生产治理容灾 Web 接入消费控制器
@@ -55,6 +58,18 @@ public class DubboGovernanceConsumerController {
     public Result<UserVO> validateUserRpcDirect(@RequestBody UserCreateRequest request) {
         UserVO vo = userRpcService.createUser(request);
         return Result.success(vo);
+    }
+
+    /**
+     * RPC 协议边界批量集合参数校验快速失败防卫（绕过 Web 层校验直达 Provider 边界，由 DubboValidationFilter 执行级联校验）
+     *
+     * @param requests 批量创建用户入参集合
+     * @return 批量创建的用户详情列表
+     */
+    @PostMapping("/validation/batch")
+    public Result<List<UserVO>> validateUsersBatch(@RequestBody ValidList<UserCreateRequest> requests) {
+        List<UserVO> list = userRpcService.batchCreateUsers(requests);
+        return Result.success(list);
     }
 
     /**

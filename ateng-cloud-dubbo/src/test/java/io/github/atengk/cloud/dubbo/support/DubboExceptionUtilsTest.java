@@ -90,6 +90,11 @@ class DubboExceptionUtilsTest {
         assertThat(formatted).contains("参数校验失败: ");
         assertThat(formatted).contains("username 不能为空");
         assertThat(formatted).contains("age 必须大于等于 18");
+
+        String prefixed = DubboExceptionUtils.formatConstraintViolations(violations, "[2]");
+        assertThat(prefixed).contains("参数校验失败: ");
+        assertThat(prefixed).contains("[2].username 不能为空");
+        assertThat(prefixed).contains("[2].age 必须大于等于 18");
     }
 
     @Test

@@ -237,15 +237,30 @@ public final class DubboExceptionUtils {
      * @return 格式化后的错误描述
      */
     public static String formatConstraintViolations(Set<? extends ConstraintViolation<?>> violations) {
+        return formatConstraintViolations(violations, null);
+    }
+
+    /**
+     * 格式化 JSR-303 参数校验违规集合为结构化文本（支持前置集合/数组索引或 Map 键路径）
+     *
+     * @param violations 校验违规集合
+     * @param pathPrefix 所属容器元素路径前缀（如 {@code "[1]"} 或 {@code "[vip]"}，可为空）
+     * @return 格式化后的错误描述
+     */
+    public static String formatConstraintViolations(Set<? extends ConstraintViolation<?>> violations, String pathPrefix) {
         if (violations == null || violations.isEmpty()) {
             return "参数校验失败";
         }
+        String normalizedPrefix = StringUtils.hasText(pathPrefix) ? pathPrefix.trim() : "";
         return violations.stream()
                 .map(v -> {
                     String path = v.getPropertyPath() != null ? v.getPropertyPath().toString() : "";
                     int dotIdx = path.lastIndexOf('.');
                     String field = dotIdx >= 0 ? path.substring(dotIdx + 1) : path;
-                    return field + " " + v.getMessage();
+                    String fullPath = normalizedPrefix.isEmpty()
+                            ? field
+                            : (StringUtils.hasText(field) ? normalizedPrefix + "." + field : normalizedPrefix);
+                    return fullPath + " " + v.getMessage();
                 })
                 .collect(Collectors.joining("; ", "参数校验失败: ", ""));
     }

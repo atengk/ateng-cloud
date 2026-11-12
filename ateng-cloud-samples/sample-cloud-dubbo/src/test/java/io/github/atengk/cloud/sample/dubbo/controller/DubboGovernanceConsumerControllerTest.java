@@ -116,6 +116,57 @@ public class DubboGovernanceConsumerControllerTest {
     }
 
     @Test
+    @DisplayName("验证 POST /validation/batch 传入合法批量用户集合时放行并成功创建全部用户")
+    void testValidationBatch_Success() throws Exception {
+        String validBatchJson = """
+                [
+                    {
+                        "username": "batch-user-1",
+                        "age": 22
+                    },
+                    {
+                        "username": "batch-user-2",
+                        "age": 30
+                    }
+                ]
+                """;
+
+        mockMvc.perform(post("/sample/cloud/dubbo/governance/validation/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validBatchJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(200)))
+                .andExpect(jsonPath("$.data.length()", is(2)))
+                .andExpect(jsonPath("$.data[0].username", is("batch-user-1")))
+                .andExpect(jsonPath("$.data[1].username", is("batch-user-2")));
+    }
+
+    @Test
+    @DisplayName("验证 POST /validation/batch 当集合内任一元素非法时，由 DubboValidationFilter 级联拦截转译为 400")
+    void testValidationBatch_ElementFailure() throws Exception {
+        String invalidBatchJson = """
+                [
+                    {
+                        "username": "batch-user-valid",
+                        "age": 25
+                    },
+                    {
+                        "username": "",
+                        "age": 0
+                    }
+                ]
+                """;
+
+        mockMvc.perform(post("/sample/cloud/dubbo/governance/validation/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidBatchJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code", is(400)))
+                .andExpect(jsonPath("$.msg", containsString("参数校验失败")))
+                .andExpect(jsonPath("$.msg", containsString("[1]")));
+    }
+
+    @Test
     @DisplayName("验证 GET /business-exception 服务端抛出 BusinessException 时白名单放行并 100% 因果保真还原 404")
     void testBusinessException_CausalPreservation() throws Exception {
         mockMvc.perform(get("/sample/cloud/dubbo/governance/business-exception"))
