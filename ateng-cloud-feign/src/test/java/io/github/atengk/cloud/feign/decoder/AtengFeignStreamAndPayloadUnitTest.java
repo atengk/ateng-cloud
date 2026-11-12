@@ -21,12 +21,17 @@ import org.springframework.core.io.Resource;
 import org.springframework.util.unit.DataSize;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -264,5 +269,183 @@ public class AtengFeignStreamAndPayloadUnitTest {
         AtengFeignDecoder invalidDecoder = new AtengFeignDecoder(mockDelegate, invalidProps, objectMapper);
         assertThrows(IllegalArgumentException.class,
                 () -> invalidDecoder.decode(createClientResponse(NormalReportClient.class, "report-service", payload512, null), String.class));
+    }
+
+    record GzipSampleUser(Long id, String name) {
+    }
+
+    @Test
+    @DisplayName("8. 验证 GZIP 响应流透明解压与 Adaptive Unwrap（兼容 HC5 已解压响应与 GZIP 魔数兜底及逐字节流）")
+    void testGzipResponseTransparentDecompressionAndAdaptiveUnwrap() throws Exception {
+        AtengFeignProperties properties = new AtengFeignProperties();
+        Decoder mockDelegate = (resp, type) -> {
+            byte[] bytes = resp.body().asInputStream().readAllBytes();
+            return objectMapper.readValue(bytes, objectMapper.getTypeFactory().constructType(type));
+        };
+        AtengFeignDecoder decoder = new AtengFeignDecoder(mockDelegate, properties, objectMapper);
+
+        String rawResultJson = "{\"code\":200,\"msg\":\"成功\",\"data\":{\"id\":42,\"name\":\"gzip-ok\"}}";
+        byte[] gzipBytes = gzipCompress(rawResultJson.getBytes(StandardCharsets.UTF_8));
+
+        // 8.1 携带 Content-Encoding: gzip 的标准压缩响应 -> 透明解压并完成 Adaptive Unwrap
+        Response gzipWithHeader = createMockResponse(gzipBytes, Map.of("Content-Encoding", List.of("gzip")));
+        GzipSampleUser user1 = (GzipSampleUser) decoder.decode(gzipWithHeader, GzipSampleUser.class);
+        assertEquals(42L, user1.id());
+        assertEquals("gzip-ok", user1.name());
+
+        // 8.2 模拟 HC5 已自动解压（仍保留 Content-Encoding: gzip 标头但响应体已是明文 JSON）-> 不触发 ZipException
+        Response hc5AlreadyDecompressed = createMockResponse(
+                rawResultJson.getBytes(StandardCharsets.UTF_8),
+                Map.of("Content-Encoding", List.of("gzip"))
+        );
+        GzipSampleUser user2 = (GzipSampleUser) decoder.decode(hc5AlreadyDecompressed, GzipSampleUser.class);
+        assertEquals(42L, user2.id());
+        assertEquals("gzip-ok", user2.name());
+
+        // 8.3 缺失 Content-Encoding 标头但流首部含 0x1f8b 魔数，且底层流每次仅返回 1 字节 -> 仍能识别并完整解压
+        Request request = Request.create(Request.HttpMethod.GET, "/test", Collections.emptyMap(), null, new RequestTemplate());
+        Response trickleGzipNoHeader = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.emptyMap())
+                .body(new OneByteAtATimeInputStream(new ByteArrayInputStream(gzipBytes)), gzipBytes.length)
+                .build();
+        GzipSampleUser user3 = (GzipSampleUser) decoder.decode(trickleGzipNoHeader, GzipSampleUser.class);
+        assertEquals(42L, user3.id());
+        assertEquals("gzip-ok", user3.name());
+
+        // 8.4 禁用解包（@AdaptiveUnwrap(false)）客户端收到 GZIP 响应时，传给 delegate 的 bufferedResponse 已为解压明文
+        byte[] rawThirdParty = "{\"id\":88,\"name\":\"raw-gzip\"}".getBytes(StandardCharsets.UTF_8);
+        Response rawClientGzip = createClientResponse(
+                RawThirdPartyReportClient.class,
+                "report-service",
+                gzipCompress(rawThirdParty),
+                Map.of("Content-Encoding", List.of("gzip"))
+        );
+        GzipSampleUser rawUser = (GzipSampleUser) decoder.decode(rawClientGzip, GzipSampleUser.class);
+        assertEquals(88L, rawUser.id());
+        assertEquals("raw-gzip", rawUser.name());
+    }
+
+    @Test
+    @DisplayName("9. 验证 GZIP 解压炸弹按解压后真实字节数拦截抛出 PAYLOAD_TOO_LARGE，并遵循单客户端隔离与资源释放")
+    void testGzipDecompressionBombEnforcesMaxResponseSizeAndResourceClose() throws Exception {
+        // 构造 64KB 高重复 JSON，GZIP 压缩后体积仅约 100+ 字节（远小于 1KB 阈值）
+        String bombJson = "{\"code\":200,\"data\":\"" + "A".repeat(64 * 1024) + "\"}";
+        byte[] compressedBomb = gzipCompress(bombJson.getBytes(StandardCharsets.UTF_8));
+        assertTrue(compressedBomb.length < 512, "测试夹具压缩后体积必须远小于防爆阈值以模拟解压炸弹");
+
+        AtengFeignProperties properties = new AtengFeignProperties();
+        properties.getPayload().setMaxResponseSize(DataSize.ofKilobytes(1)); // 1KB
+        AtengFeignDecoder decoder = new AtengFeignDecoder((resp, type) -> null, properties, objectMapper);
+
+        AtomicBoolean closed = new AtomicBoolean(false);
+        InputStream trackedStream = new FilterInputStream(new ByteArrayInputStream(compressedBomb)) {
+            @Override
+            public void close() throws IOException {
+                closed.set(true);
+                super.close();
+            }
+        };
+        Request request = Request.create(Request.HttpMethod.GET, "/bomb", Collections.emptyMap(), null, new RequestTemplate());
+        Response bombResponse = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Map.of(
+                        "Content-Encoding", List.of("gzip"),
+                        "Content-Length", List.of(String.valueOf(compressedBomb.length))
+                ))
+                .body(trackedStream, compressedBomb.length)
+                .build();
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> decoder.decode(bombResponse, String.class));
+        assertEquals(CommonResultCode.PAYLOAD_TOO_LARGE.getCode(), ex.getCode());
+        assertTrue(closed.get(), "GZIP 解压炸弹触发熔断后必须确定性关闭底层响应流");
+
+        // 验证单客户端 maxResponseSize 覆盖同样作用于 GZIP 解压后字节数
+        String smallJson = "{\"code\":200,\"data\":\"" + "B".repeat(1024) + "\"}";
+        byte[] compressedSmall = gzipCompress(smallJson.getBytes(StandardCharsets.UTF_8));
+
+        AtengFeignProperties perClientProps = new AtengFeignProperties();
+        AtengFeignClientProperties serviceProps = new AtengFeignClientProperties();
+        serviceProps.setMaxResponseSize(DataSize.ofKilobytes(4));
+        perClientProps.getClients().put("report-service", serviceProps);
+        AtengFeignClientProperties ctxProps = new AtengFeignClientProperties();
+        ctxProps.setMaxResponseSize(DataSize.ofBytes(256));
+        perClientProps.getClients().put("smallLimitReportClient", ctxProps);
+
+        AtengFeignDecoder perClientDecoder = new AtengFeignDecoder((resp, type) -> "ok", perClientProps, objectMapper);
+
+        BusinessException ctxBombEx = assertThrows(BusinessException.class, () -> perClientDecoder.decode(
+                createClientResponse(SmallLimitReportClient.class, "report-service", compressedSmall,
+                        Map.of("Content-Encoding", List.of("gzip"))),
+                String.class
+        ));
+        assertEquals(CommonResultCode.PAYLOAD_TOO_LARGE.getCode(), ctxBombEx.getCode());
+
+        String normalData = (String) perClientDecoder.decode(
+                createClientResponse(NormalReportClient.class, "report-service", compressedSmall,
+                        Map.of("Content-Encoding", List.of("gzip"))),
+                String.class
+        );
+        assertEquals(1024, normalData.length());
+    }
+
+    @Test
+    @DisplayName("10. 验证 GZIP 响应透传 Result 时刷新 Content-Length/移除 Content-Encoding，并透传业务错误码")
+    void testGzipResponseUpdatesBufferedHeadersAndPropagatesBusinessError() throws Exception {
+        byte[] rawResultBytes = "{\"code\":200,\"msg\":\"ok\",\"data\":{\"id\":99,\"name\":\"hdr\"}}"
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] compressedResult = gzipCompress(rawResultBytes);
+
+        AtomicBoolean verifiedHeaders = new AtomicBoolean(false);
+        Decoder headerCheckingDelegate = (resp, type) -> {
+            assertFalse(resp.headers().containsKey("Content-Encoding"),
+                    "解压后透传给底层解码器的响应不应再保留 Content-Encoding");
+            assertEquals(List.of(String.valueOf(rawResultBytes.length)),
+                    List.copyOf(resp.headers().get("Content-Length")),
+                    "解压后透传给底层解码器的 Content-Length 应更新为明文长度");
+            verifiedHeaders.set(true);
+            return objectMapper.readValue(resp.body().asInputStream().readAllBytes(),
+                    objectMapper.getTypeFactory().constructType(type));
+        };
+
+        AtengFeignDecoder decoder = new AtengFeignDecoder(headerCheckingDelegate, new AtengFeignProperties(), objectMapper);
+        Response gzipResultResponse = createMockResponse(compressedResult, Map.of(
+                "Content-Encoding", List.of("gzip"),
+                "Content-Length", List.of(String.valueOf(compressedResult.length))
+        ));
+        Object decoded = decoder.decode(gzipResultResponse, Result.class);
+        assertTrue(decoded instanceof Result<?>);
+        assertTrue(verifiedHeaders.get());
+
+        // 验证 GZIP 压缩的业务失败报文仍能解压并触发 BusinessException
+        byte[] errorBytes = "{\"code\":6001,\"msg\":\"库存不足\"}".getBytes(StandardCharsets.UTF_8);
+        Response gzipErrorResponse = createMockResponse(gzipCompress(errorBytes), Map.of("Content-Encoding", List.of("gzip")));
+        BusinessException be = assertThrows(BusinessException.class,
+                () -> decoder.decode(gzipErrorResponse, GzipSampleUser.class));
+        assertEquals(6001, be.getCode());
+        assertEquals("库存不足", be.getMsg());
+    }
+
+    private static byte[] gzipCompress(byte[] raw) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (GZIPOutputStream gzipOut = new GZIPOutputStream(baos)) {
+            gzipOut.write(raw);
+        }
+        return baos.toByteArray();
+    }
+
+    private static final class OneByteAtATimeInputStream extends FilterInputStream {
+        private OneByteAtATimeInputStream(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            return super.read(b, off, Math.min(1, len));
+        }
     }
 }

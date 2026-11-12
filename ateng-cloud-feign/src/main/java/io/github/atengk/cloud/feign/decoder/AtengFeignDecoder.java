@@ -20,12 +20,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PushbackInputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
 
 /**
  * Feign 双模自适应契约解码引擎
@@ -39,6 +43,12 @@ import java.util.Map;
  * @since 2026-10-28
  */
 public class AtengFeignDecoder implements Decoder {
+
+    private static final int GZIP_MAGIC_BYTE_1 = 0x1F;
+    private static final int GZIP_MAGIC_BYTE_2 = 0x8B;
+    private static final String GZIP_ENCODING = "gzip";
+    private static final String X_GZIP_ENCODING = "x-gzip";
+    private static final String IDENTITY_ENCODING = "identity";
 
     private final Decoder delegate;
     private final AtengFeignProperties properties;
@@ -67,10 +77,13 @@ public class AtengFeignDecoder implements Decoder {
         validateContentLengthHeader(response, maxBytes);
 
         byte[] bodyBytes;
-        try (InputStream is = response.body().asInputStream()) {
-            bodyBytes = readBoundedBody(is, maxBytes);
+        boolean decompressed;
+        try (InputStream rawStream = response.body().asInputStream();
+             InputStream effectiveStream = openDecompressingStreamIfGzip(response, rawStream)) {
+            decompressed = effectiveStream instanceof GZIPInputStream;
+            bodyBytes = readBoundedBody(effectiveStream, maxBytes);
         }
-        Response bufferedResponse = response.toBuilder().body(bodyBytes).build();
+        Response bufferedResponse = buildBufferedResponse(response, bodyBytes, decompressed);
 
         // 3. 如果方法声明返回类型本身就是 Result，原样交由底层解码器透传不剥壳
         if (isResultType(type)) {
@@ -159,12 +172,89 @@ public class AtengFeignDecoder implements Decoder {
         return result;
     }
 
+    private InputStream openDecompressingStreamIfGzip(Response response, InputStream rawStream) throws IOException {
+        if (hasUnsupportedContentEncoding(response)) {
+            return rawStream;
+        }
+        byte[] header = new byte[2];
+        int read = rawStream.readNBytes(header, 0, 2);
+        PushbackInputStream pushbackStream = new PushbackInputStream(rawStream, 2);
+        if (read > 0) {
+            pushbackStream.unread(header, 0, read);
+        }
+        if (read == 2
+                && (header[0] & 0xFF) == GZIP_MAGIC_BYTE_1
+                && (header[1] & 0xFF) == GZIP_MAGIC_BYTE_2) {
+            return new GZIPInputStream(pushbackStream);
+        }
+        return pushbackStream;
+    }
+
+    private boolean hasUnsupportedContentEncoding(Response response) {
+        if (response.headers() == null || response.headers().isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, Collection<String>> entry : response.headers().entrySet()) {
+            if (!HttpHeaders.CONTENT_ENCODING.equalsIgnoreCase(entry.getKey()) || entry.getValue() == null) {
+                continue;
+            }
+            for (String rawValue : entry.getValue()) {
+                if (rawValue == null || rawValue.isBlank()) {
+                    continue;
+                }
+                for (String token : rawValue.split(",")) {
+                    String normalized = token.trim().toLowerCase(Locale.ROOT);
+                    if (normalized.isEmpty()) {
+                        continue;
+                    }
+                    if (!GZIP_ENCODING.equals(normalized)
+                            && !X_GZIP_ENCODING.equals(normalized)
+                            && !IDENTITY_ENCODING.equals(normalized)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private Response buildBufferedResponse(Response response, byte[] bodyBytes, boolean decompressed) {
+        if (!decompressed || response.headers() == null || response.headers().isEmpty()) {
+            return response.toBuilder().body(bodyBytes).build();
+        }
+        Map<String, Collection<String>> updatedHeaders = new LinkedHashMap<>();
+        boolean hadContentLength = false;
+        for (Map.Entry<String, Collection<String>> entry : response.headers().entrySet()) {
+            String key = entry.getKey();
+            if (HttpHeaders.CONTENT_ENCODING.equalsIgnoreCase(key)) {
+                continue;
+            }
+            if (HttpHeaders.CONTENT_LENGTH.equalsIgnoreCase(key)) {
+                hadContentLength = true;
+                continue;
+            }
+            updatedHeaders.put(key, entry.getValue());
+        }
+        if (hadContentLength) {
+            updatedHeaders.put(HttpHeaders.CONTENT_LENGTH, List.of(String.valueOf(bodyBytes.length)));
+        }
+        return response.toBuilder()
+                .headers(updatedHeaders)
+                .body(bodyBytes)
+                .build();
+    }
+
     private byte[] readBoundedBody(InputStream is, long maxBytes) throws IOException {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             long total = 0;
-            int len;
-            while ((len = is.read(buffer)) != -1) {
+            while (true) {
+                long remaining = maxBytes - total;
+                int toRead = remaining < buffer.length ? (int) (remaining + 1) : buffer.length;
+                int len = is.read(buffer, 0, toRead);
+                if (len == -1) {
+                    break;
+                }
                 total += len;
                 if (total > maxBytes) {
                     throw new BusinessException(CommonResultCode.PAYLOAD_TOO_LARGE,
