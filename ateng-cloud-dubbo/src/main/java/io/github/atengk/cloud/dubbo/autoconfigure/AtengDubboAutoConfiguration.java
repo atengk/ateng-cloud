@@ -3,6 +3,7 @@ package io.github.atengk.cloud.dubbo.autoconfigure;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadMetrics;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
+import io.github.atengk.cloud.dubbo.support.DubboSlowCallMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.dubbo.common.utils.SerializeSecurityManager;
 import org.apache.dubbo.config.AbstractConfig;
@@ -16,6 +17,7 @@ import org.apache.dubbo.rpc.model.FrameworkModel;
 import org.apache.dubbo.spring.boot.autoconfigure.DubboAutoConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
@@ -24,6 +26,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.util.StringUtils;
 
@@ -163,6 +166,35 @@ public class AtengDubboAutoConfiguration {
     @ConditionalOnProperty(prefix = "ateng.cloud.dubbo.overload", name = "metrics-enabled", havingValue = "true", matchIfMissing = true)
     public DubboOverloadMetrics dubboOverloadMetrics() {
         return new DubboOverloadMetrics();
+    }
+
+    /**
+     * Dubbo RPC 慢调用 Micrometer 指标装配（按 {@link MeterRegistry} 类存在性与配置开关条件激活）
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(MeterRegistry.class)
+    static class SlowCallMetricsConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean
+        @ConditionalOnProperty(prefix = "ateng.cloud.dubbo.slow-call", name = "enabled", havingValue = "true", matchIfMissing = true)
+        public DubboSlowCallMetrics dubboSlowCallMetrics() {
+            return new DubboSlowCallMetrics();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean(name = "atengDubboSlowCallMetricsInitializer")
+        public SmartInitializingSingleton atengDubboSlowCallMetricsInitializer(
+                ObjectProvider<DubboSlowCallMetrics> slowCallMetricsProvider,
+                ObjectProvider<MeterRegistry> meterRegistryProvider) {
+            return () -> {
+                DubboSlowCallMetrics metrics = slowCallMetricsProvider.getIfAvailable();
+                MeterRegistry registry = meterRegistryProvider.getIfAvailable();
+                if (metrics != null && registry != null) {
+                    metrics.bindTo(registry);
+                }
+            };
+        }
     }
 
     /**

@@ -3,5 +3,6 @@ contractAssert=io.github.atengk.cloud.dubbo.filter.DubboContractAssertFilter
 contextPropagation=io.github.atengk.cloud.dubbo.filter.DubboContextPropagationFilter
 sameToken=io.github.atengk.cloud.dubbo.filter.DubboSameTokenFilter
 trafficTag=io.github.atengk.cloud.dubbo.filter.DubboTrafficTagFilter
+slowCall=io.github.atengk.cloud.dubbo.filter.DubboSlowCallFilter
 dubboValidation=io.github.atengk.cloud.dubbo.filter.DubboValidationFilter
 overload=io.github.atengk.cloud.dubbo.overload.DubboOverloadFilter

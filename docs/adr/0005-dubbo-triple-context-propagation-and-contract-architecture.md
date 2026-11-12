@@ -21,20 +21,21 @@
    - 保持对经典高性能 TCP `dubbo` 协议（端口 `20880`）的无缝兼容与多协议共存支持。
 
 2. **双模契约与结果守卫机制 (Dual-Mode RPC Contract)**：
-   - **模式 1（原生强类型实体返回）**：RPC 接口直接声明返回强类型业务对象 `T`。业务正常执行直接返回数据；业务错误时 Provider 抛出受管 `BusinessException(code, message)`，通过定制 Filter 原生透传；
-   - **模式 2（显式 Result<T> 强契约防呆）**：当 RPC 接口声明返回 `Result<T>` 时，Consumer 端 Filter 自动后置拦截出参：若 `!result.isSuccess()`，自动剥壳转译为 `BusinessException(code, message)` 抛出；确保调用端只要正常接收到返回值，业务就必定成功，彻底消除漏判隐患。
+   - **模式 1（原生强类型实体返回与防拆箱 NPE 守卫）**：RPC 接口直接声明返回强类型业务对象 `T` 或 Java 基本类型。业务正常直接返回数据；若基本类型（非 `void`）接口返回 `null`，Consumer Filter 在动态代理拆箱前 Fail-Fast 拦截并转译为受管 `BusinessException`，彻底杜绝消费端裸 `NullPointerException`；
+   - **模式 2（显式 Result<T> 强契约与空壳守卫）**：当 RPC 接口声明返回 `Result<T>` 时，Consumer 端 Filter 自动后置拦截出参：若 `!result.isSuccess()` 或响应体为 `null`（由 `contract.assert-non-null-result` 控制），自动剥壳转译为 `BusinessException(code, message)` 抛出，彻底消除漏判隐患。
 
 3. **全链路四维上下文透传、Seata 事务与零信任防穿透 (4D Context, Seata XID & Same-Token Guard)**：
    - 实现 `DubboContextPropagationFilter`（双向出入栈拦截）：
      - **Consumer 出站**：从当前线程提取 `X-Trace-Id`、`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant` 及 `X-Traffic-Tag`，压入 `RpcContext.getClientAttachment()`；平滑探测 Seata `RootContext`，若存在活跃 XID 则自动注入 `TX_XID`；
      - **Provider 入站**：从 `RpcContext.getServerAttachment()` 还原至 MDC、`UserContextHolder`、`TenantContextHolder` 及 `TrafficContextHolder`；若存在 `TX_XID` 则执行 `RootContext.bind(xid)`；
      - **确定性生命周期清理**：在 `finally` 块中强制执行 `clear()`，并在且仅在入站执行过 bind 时执行 `RootContext.unbind()`，杜绝 Netty 线程池脏读与事务悬挂；
-   - **零信任内网防穿透**：平滑条件探测 Sa-Token。当微服务开启 `sa-token.same-token.check=true` 时，Consumer 自动附加 `Same-Token`，Provider 强制执行合法性校验，缺失或无效凭据直接 Fail-Fast 401 阻断。
+   - **零信任内网防穿透**：平滑条件探测 Sa-Token。当微服务开启 `same-token.check=true` 时，Consumer 自动附加 `Same-Token`，Provider 强制执行合法性校验，缺失或无效凭据直接 Fail-Fast 401 阻断；支持 `injvm` 本地短路调用豁免与 `same-token.exclude-interfaces` 接口白名单精确/通配豁免。
 
 4. **因果异常保真与反序列化防御 (Causal Exception Defense)**：
    - 实现定制 `AtengDubboExceptionFilter`（接管 Dubbo 原生 ExceptionFilter）：
      - 对 `BusinessException`、JSR-303 参数校验异常及 JDK 标准异常实施白名单放行，100% 完整保留原始错误码、错误信息及因果链；
-     - 对客户端类路径可能缺失的底层未知系统崩溃异常，在 Provider 端安全包装为 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，彻底防御 Consumer 端 `ClassNotFoundException`。
+     - 对客户端类路径可能缺失的底层未知系统崩溃异常，在 Provider 端安全包装为 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，彻底防御 Consumer 端 `ClassNotFoundException`；
+   - **消费端底层 `RpcException` 按需因果转译**：提供 `DubboConsumerExceptionClusterFilter`（`exception.translate-consumer-rpc-exception=true` 时生效且主动让路已配置原生 `mock` 的调用），将超时、网络断连/无可用提供者等底层 `RpcException` 安全转译为保留原始 `cause` 的受管 `BusinessException`（504/503/500）。
 
 5. **防重试雪崩安全生产基线 (Retry Storm Defense)**：
    - 遵循“写请求绝对禁止重试不变量”，全局配置基线默认强制收敛为 `dubbo.consumer.retries=0`、`dubbo.provider.retries=0`；
@@ -46,16 +47,20 @@
    - 默认配置 `dubbo.tagforce=false`，若灰度实例全部下线，自动弹性平滑降级至基线（无标签）实例，杜绝全网 503 故障。
 
 7. **服务端线程池过载保护与参数校验统一转译 (Overload Protection & Validation Guard)**：
-   - 默认装配 `fixed` 200 线程池，定制拒绝执行处理器，线程池打满时记录关键过载日志并优雅抛出 `BusinessException(CommonResultCode.TOO_MANY_REQUESTS)`；联动 Micrometer 采集线程池指标；
-   - 整合 Dubbo `ValidationFilter`，将 JSR-303 参数格式校验失败异常统一转译为 `BusinessException(CommonResultCode.BAD_REQUEST, ...)`。
+   - 默认装配 `overload` 线程池（默认 `threads=200`、`queues=0`，零队列快速失败，可由 `ateng.cloud.dubbo.overload.threads/queues` 调整），定制拒绝执行处理器 `DubboOverloadHandler`，线程池打满时记录关键过载日志并优雅抛出 `BusinessException(CommonResultCode.TOO_MANY_REQUESTS)`；联动 Micrometer 采集 `dubbo.threadpool.reject` 与线程池指标；
+   - 整合定制 `DubboValidationFilter`，支持单体 Bean 与集合/`Map`/对象数组容器级联元素的 JSR-303 递归校验，并格式化输出含 `[index]` / `[key]` 路径前缀的结构化 `BusinessException(CommonResultCode.BAD_REQUEST, ...)`。
 
 8. **应用级服务发现与优雅停机联动 (Application Discovery & Zero-Downtime)**：
    - 默认推行纯应用级服务发现（`dubbo.application.register-mode=instance`），与 Nacos 1:1 对齐并彻底消灭注册表膨胀；
    - 停机时协同 `ateng-cloud-nacos` 无损下线状态机，先注销注册表 -> 排空在途请求（`dubbo.application.shut-down.wait=15000`）-> 释放物理资源。
 
-9. **100% 离线自洽白盒单测与 1:1 场景工程矩阵 (Hermetic Unit Tests & Sample Alignment)**：
-   - 在 `ateng-cloud-dubbo/src/test` 建立全维离线自洽白盒单测（包括自动装配条件测试、Filter 链隔离对抗测试、工具类边界与后置处理器测试），保障 `mvn test -pl ateng-cloud-dubbo` 秒级极速准出；
-   - 在 `ateng-cloud-samples/sample-cloud-dubbo` 配套专属沙箱，声明 `dubbo.registry.address=N/A` 点对点直连，全真覆盖 Triple 协议、双模契约、四维上下文透传、Seata XID 跨进程穿透、Traffic 泳道元数据联动、Same-Token 拦截、异常保真与流式通信。
+9. **RPC 慢调用主动监测与可观测性 (Slow Call Detection)**：
+   - 实现双向 `DubboSlowCallFilter`（`order = -9200`），通过 `ateng.cloud.dubbo.slow-call.*`（默认 `enabled=true`、`threshold=3000ms`、`include-consumer=true`、`include-provider=true`）精准统计单次 Unary RPC 同步与异步耗时；
+   - 自动豁免 `injvm` 本地短路调用与 `StreamObserver` 长连接流式通信；单次耗时达到或超过阈值时输出含 `side`、`service`、`method`、`elapsedMs`、`thresholdMs`、`traceId` 的结构化 `WARN` 日志，并经由 `DubboSlowCallMetrics` 累加 Micrometer 计数器 `dubbo.rpc.slow.calls`。
+
+10. **100% 离线自洽白盒单测与 1:1 场景工程矩阵 (Hermetic Unit Tests & Sample Alignment)**：
+    - 在 `ateng-cloud-dubbo/src/test` 建立全维离线自洽白盒单测（包括自动装配条件测试、Filter 链顺序与隔离对抗测试、Slow Call / Overload / Validation / SameToken / Contract / Exception 等边界测试），保障 `mvn test -pl ateng-cloud-dubbo` 秒级极速准出；
+    - 在 `ateng-cloud-samples/sample-cloud-dubbo` 配套专属沙箱，声明 `dubbo.registry.address=N/A` 点对点直连，全真覆盖 Triple 协议、双模契约、四维上下文透传、Seata XID 跨进程穿透、Traffic 泳道元数据联动、Same-Token 拦截、级联参数校验、慢调用监测、异常保真与流式通信。
 
 ## Consequences
 

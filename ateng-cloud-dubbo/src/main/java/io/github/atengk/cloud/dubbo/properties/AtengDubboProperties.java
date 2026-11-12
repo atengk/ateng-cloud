@@ -95,6 +95,12 @@ public class AtengDubboProperties {
     @NestedConfigurationProperty
     private AtengDubboSecurityProperties security = new AtengDubboSecurityProperties();
 
+    /**
+     * Dubbo RPC 慢调用监测与告警配置
+     */
+    @NestedConfigurationProperty
+    private AtengDubboSlowCallProperties slowCall = new AtengDubboSlowCallProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -215,5 +221,13 @@ public class AtengDubboProperties {
 
     public void setSecurity(AtengDubboSecurityProperties security) {
         this.security = security;
+    }
+
+    public AtengDubboSlowCallProperties getSlowCall() {
+        return slowCall;
+    }
+
+    public void setSlowCall(AtengDubboSlowCallProperties slowCall) {
+        this.slowCall = slowCall;
     }
 }

@@ -148,4 +148,16 @@ public class DubboGovernanceConsumerController {
             RpcContext.removeClientAttachment();
         }
     }
+
+    /**
+     * RPC 慢调用主动监测与可观测指标演示（当耗时达到配置阈值时输出 WARN 告警并累加 {@code dubbo.rpc.slow.calls}）
+     *
+     * @param sleepMillis 模拟远端处理耗时（毫秒，默认 3200ms，范围 0 ~ 10000ms）
+     * @return 远端响应结果
+     */
+    @GetMapping("/slow-call")
+    public Result<String> testSlowCall(@RequestParam(defaultValue = "3200") long sleepMillis) {
+        long boundedSleepMillis = Math.max(0L, Math.min(sleepMillis, 10_000L));
+        return Result.success(userRpcService.slowEcho(boundedSleepMillis));
+    }
 }

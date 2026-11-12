@@ -3,6 +3,7 @@ package io.github.atengk.cloud.dubbo.autoconfigure;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadMetrics;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
+import io.github.atengk.cloud.dubbo.support.DubboSlowCallMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.dubbo.config.ApplicationConfig;
@@ -38,6 +39,7 @@ class AtengDubboAutoConfigurationTest {
 
     @AfterEach
     void tearDown() {
+        DubboSlowCallMetrics.reset();
         DubboPropertiesHolder.reset();
     }
 
@@ -50,6 +52,7 @@ class AtengDubboAutoConfigurationTest {
                     assertThat(context).hasSingleBean(AtengDubboAutoConfiguration.class);
                     assertThat(context).hasSingleBean(AtengDubboAutoConfiguration.AtengDubboConfigBeanCustomizer.class);
                     assertThat(context).hasSingleBean(DubboOverloadMetrics.class);
+                    assertThat(context).hasSingleBean(DubboSlowCallMetrics.class);
                     assertThat(context).hasBean("atengDubboApplicationConfigCustomizer");
 
                     AtengDubboProperties properties = context.getBean(AtengDubboProperties.class);
@@ -62,11 +65,15 @@ class AtengDubboAutoConfigurationTest {
                     assertThat(properties.getSameToken().getExcludeInterfaces()).isEmpty();
                     assertThat(properties.getContract().isAssertNonNullResult()).isTrue();
                     assertThat(properties.getException().isTranslateConsumerRpcException()).isFalse();
+                    assertThat(properties.getSlowCall().isEnabled()).isTrue();
+                    assertThat(properties.getSlowCall().getThreshold()).isEqualTo(Duration.ofMillis(3000));
+                    assertThat(properties.getSlowCall().isIncludeConsumer()).isTrue();
+                    assertThat(properties.getSlowCall().isIncludeProvider()).isTrue();
                 });
     }
 
     @Test
-    @DisplayName("支持强类型绑定 same-token.exclude-interfaces、overload.threads/queues、contract 与 exception 开关")
+    @DisplayName("支持强类型绑定 same-token.exclude-interfaces、overload.threads/queues、contract、exception 与 slow-call 开关")
     void testExtendedPropertiesBinding() {
         contextRunner
                 .withPropertyValues(
@@ -75,7 +82,10 @@ class AtengDubboAutoConfigurationTest {
                         "ateng.cloud.dubbo.overload.threads=300",
                         "ateng.cloud.dubbo.overload.queues=64",
                         "ateng.cloud.dubbo.contract.assert-non-null-result=false",
-                        "ateng.cloud.dubbo.exception.translate-consumer-rpc-exception=true"
+                        "ateng.cloud.dubbo.exception.translate-consumer-rpc-exception=true",
+                        "ateng.cloud.dubbo.slow-call.threshold=1500ms",
+                        "ateng.cloud.dubbo.slow-call.include-consumer=false",
+                        "ateng.cloud.dubbo.slow-call.include-provider=true"
                 )
                 .run(context -> {
                     AtengDubboProperties properties = context.getBean(AtengDubboProperties.class);
@@ -85,7 +95,19 @@ class AtengDubboAutoConfigurationTest {
                     assertThat(properties.getOverload().getQueues()).isEqualTo(64);
                     assertThat(properties.getContract().isAssertNonNullResult()).isFalse();
                     assertThat(properties.getException().isTranslateConsumerRpcException()).isTrue();
+                    assertThat(properties.getSlowCall().getThreshold()).isEqualTo(Duration.ofMillis(1500));
+                    assertThat(properties.getSlowCall().isIncludeConsumer()).isFalse();
+                    assertThat(properties.getSlowCall().isIncludeProvider()).isTrue();
                 });
+    }
+
+    @Test
+    @DisplayName("配置 ateng.cloud.dubbo.enabled=false 或 slow-call.enabled=false 时按条件装配 DubboSlowCallMetrics")
+    void testDisabledSlowCallMetrics() {
+        contextRunner
+                .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+                .withPropertyValues("ateng.cloud.dubbo.slow-call.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(DubboSlowCallMetrics.class));
     }
 
     @Test

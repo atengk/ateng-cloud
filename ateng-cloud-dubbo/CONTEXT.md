@@ -13,7 +13,7 @@ _Avoid_: gRPC协议, HTTP2 RPC, Dubbo3新协议
 _Avoid_: 上下文拦截器, 隐式传参过滤器, RpcContext透传器
 
 **Same-Token RPC Guard**:
-在 Dubbo 传输边界协同 Sa-Token 校验内部受信凭证并拦截非法直连流量的零信任防线。
+在 Dubbo 传输边界协同 Sa-Token 校验内部受信凭证并拦截非法直连流量的零信任防线（支持 `injvm` 豁免与 `exclude-interfaces` 通配白名单）。
 _Avoid_: 内网Token拦截器, RPC鉴权过滤器, Dubbo安全拦截
 
 **Causal Exception Filter**:
@@ -21,7 +21,7 @@ _Avoid_: 内网Token拦截器, RPC鉴权过滤器, Dubbo安全拦截
 _Avoid_: Dubbo异常包装器, 异常转换器, 错误捕获过滤器
 
 **Dual-Mode RPC Contract**:
-同时兼容返回原生业务 POJO 与返回显式 `Result<T>` 并实施业务结果自动断言防呆的双模契约机制。
+同时兼容返回原生业务 POJO 与返回显式 `Result<T>` 的双模契约机制；自动断言业务状态并在代理拆箱前防卫基本类型与空壳 `Result<T>` 返回值，彻底消除消费端裸 NPE。
 _Avoid_: 强契约封装, 结果自动解包, RPC统一返回
 
 **Retry Storm Defense**:
@@ -41,8 +41,12 @@ _Avoid_: 接口级注册, Dubbo2服务发现, 细粒度注册
 _Avoid_: 标签路由过滤器, 灰度路由拦截器, 金丝雀降级机制
 
 **RPC Validation Guard**:
-在 RPC 接口方法入参边界执行 JSR-303 Fail-Fast 格式校验，并自动转译为框架标准受管参数异常的防卫组件。
+在 RPC 接口方法入参边界对单体 Bean 与集合/Map/数组容器执行递归级联 JSR-303 Fail-Fast 格式校验，并格式化容器索引/键路径后转译为框架标准受管参数异常的防卫组件。
 _Avoid_: 参数校验切面, Dubbo参数拦截器, JSR校验器
+
+**Slow Call Detection**:
+基于 Dubbo Filter 在 Unary RPC 调用完成时精准计时的主动可观测性防线；自动豁免 `injvm` 本地短路调用与 `Stream Passthrough` 流式通信，耗时达到阈值时输出含全维字段的 `WARN` 日志并累加 Micrometer `dubbo.rpc.slow.calls` 指标。
+_Avoid_: 慢查询拦截器, 超时日志切面, Dubbo 延迟告警器
 
 **Stream Passthrough**:
 对 Triple 原生流式调用（`StreamObserver`）执行上下文预注入且不触碰单体业务解包的流式传输机制。

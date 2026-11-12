@@ -2,7 +2,7 @@
 
 面向企业级高可用分布式生产环境的 Apache Dubbo 3.3 高性能 RPC 通信与微服务生产治理 Starter，单向依赖消费已发布的 `ateng-boot-bom`，专注于打造垂直正交、开箱即用、无侵入的双模微服务通信与治理底座。
 
-全面拥抱现代原生 **Triple 协议** (基于 HTTP/2 与 gRPC 工业级标准)，标配 **Fastjson2 JSONB** 超高速二进制序列化引擎与应用级服务发现模式 (`register-mode: instance`)；深度融合微服务专属治理铁律：双模自适应契约校验与结果断言、因果异常保真与反序列化防御、全链路四维上下文透明透传、零信任 Same-Token 内网防穿透、Seata 分布式事务 XID 状态对称穿透、TrafficContext 全域流量染色与泳道元数据联动、客户端原生 Mock 服务降级、金丝雀灰度发布标签路由平滑降级、服务端线程池过载保护与 Micrometer 监控、JSR-303 参数防卫、Triple Server Stream 原生流式通信、16MB 报文载荷硬防爆以及 15 秒优雅停机无损上下线。
+全面拥抱现代原生 **Triple 协议** (基于 HTTP/2 与 gRPC 工业级标准)，标配 **Fastjson2 JSONB** 超高速二进制序列化引擎与应用级服务发现模式 (`register-mode: instance`)；深度融合微服务专属治理铁律：双模自适应契约校验与结果断言、因果异常保真与反序列化防御、全链路四维上下文透明透传、零信任 Same-Token 内网防穿透、Seata 分布式事务 XID 状态对称穿透、TrafficContext 全域流量染色与泳道元数据联动、客户端原生 Mock 服务降级、金丝雀灰度发布标签路由平滑降级、服务端线程池过载保护与 Micrometer 监控、JSR-303 单体与容器级联参数防卫、Unary RPC 慢调用主动监测与打点、Triple Server Stream 原生流式通信、16MB 报文载荷硬防爆以及 15 秒优雅停机无损上下线。
 
 ---
 
@@ -25,18 +25,23 @@
 | `AtengDubboValidationProperties` | 参数校验配置属性类 | JSR-303 参数格式快速失败防卫与结构化转译开关 | 默认 `true` 开启 |
 | `AtengDubboSecurityProperties` | 生产安全配置属性类 | Dubbo 生产级安全防护配置入口，挂载反序列化安全配置 | 默认初始化安全子配置 |
 | `AtengDubboSerializeProperties` | 序列化安全配置属性类 | 声明反序列化受信任的业务包路径前缀集合 (`allowPackages`) | 配合 `SerializeSecurityManager` 注册安全白名单 |
+| `AtengDubboSlowCallProperties` | 慢调用监测配置属性类 | 配置 RPC 慢调用监测开关、耗时阈值及 Consumer/Provider 监测范围 | 默认开启 (`threshold=3000ms`, `include-consumer=true`, `include-provider=true`) |
 | `AtengDubboEnvironmentPostProcessor` | 环境后置处理器 | 向 Spring 环境预设优雅停机安全基线默认属性 | 预设停机 15s 硬兜底，支持用户 application.yml 优先无缝接管 |
 | `DubboContextPropagationFilter` | RPC 过滤器 | 全链路四维上下文、Seata XID、Traffic 泳道透传与 Netty 线程池确定性清理 | 双向激活 (`order = -10000`)，`finally` 块绝对清理杜绝污染 |
-| `DubboSameTokenFilter` | RPC 过滤器 | 零信任 Same-Token 校验拦截器（防公网绕过网关穿透） | 双向激活 (`order = -9500`)，内部调用自动双向校验并清理 |
-| `DubboValidationFilter` | RPC 过滤器 | Provider 边界 JSR-303 参数校验拦截与结构化转译 | 双向激活 (`order = -9000`)，Fail-Fast 抛出 400 业务异常 |
+| `DubboSameTokenFilter` | RPC 过滤器 | 零信任 Same-Token 校验拦截器（防公网绕过网关穿透） | 双向激活 (`order = -9800`)，豁免 `injvm` 与白名单接口 |
+| `DubboOverloadFilter` | RPC 过滤器 | 捕获线程池打满拒绝异常并转译为标准 429 限流异常 | 双向激活 (`order = -9500`) |
+| `DubboConsumerExceptionClusterFilter` | 集群过滤器 | 消费端按需将底层 `RpcException` 转译为保真因果的 `BusinessException`（504/503/500） | Consumer 端激活 (`order = -9500`)，让路原生 `mock` 降级 |
+| `DubboSlowCallFilter` | RPC 过滤器 | Unary RPC 同步/异步慢调用计时告警与 Micrometer 指标打点 | 双向激活 (`order = -9200`)，豁免 `injvm` 与 `StreamObserver` |
+| `DubboValidationFilter` | RPC 过滤器 | Provider 边界单体与集合/Map/数组级联 JSR-303 参数校验拦截与转译 | Provider 端激活 (`order = -9000`)，Fail-Fast 抛出 400 业务异常 |
 | `DubboTrafficTagFilter` | RPC 过滤器 | 出站提取流量染色标记并压入 Dubbo 标签路由 | Consumer 端激活 (`order = -8500`)，支持强隔离与平滑降级 |
-| `DubboContractAssertFilter` | RPC 过滤器 | 对端返回 `Result<T>` 时自动断言业务成功，失败自动转译 | Consumer 端激活 (`order = 1000`, SPI `contractAssert`)，豁免流式通信 |
+| `DubboContractAssertFilter` | RPC 过滤器 | 对端返回非 `void` 基本类型 `null` 或非 200 `Result<T>` 时自动断言转译 | Consumer 端激活 (`order = 1000`, SPI `contractAssert`)，豁免流式通信 |
 | `AtengDubboExceptionFilter` | RPC 过滤器 | 接管默认异常过滤器，白名单放行业务异常并转译未知私有异常 | Provider 端激活，防御客户端 `ClassNotFoundException` |
-| `DubboOverloadFilter` | RPC 过滤器 | 捕获线程池打满拒绝异常并转译为标准 429 限流异常 | Provider 端激活 (`order = -9800`) |
 | `DubboOverloadHandler` | 拒绝执行处理器 | Dubbo 线程池耗尽拒绝策略实现，记录过载诊断并递增计数 | 绑定 Dubbo 扩展机制 `threadpool` |
 | `DubboOverloadThreadPool` | 线程池扩展 SPI | 挂载 `DubboOverloadHandler` 拒绝策略的生产级线程池实现 | 注册于 Dubbo `ThreadPool` SPI (`threadpool=overload`) |
 | `DubboOverloadListener` | 线程池耗尽监听器 | 监听 Dubbo 线程池耗尽事件并提供全局静态累计计数器 | SPI 注册于 `ThreadPoolExhaustedListener` |
-| `DubboOverloadMetrics` | 性能指标采集器 | 自动采集 Dubbo 核心线程池状态指标与拒绝计数至 Micrometer | 标配 `@ConditionalOnMissingBean`，支持 Prometheus 监控 |
+| `DubboOverloadMetrics` | 性能指标采集器 | 自动采集 Dubbo 核心线程池状态指标与拒绝计数至 Micrometer | 标配 `@ConditionalOnMissingBean`，导出 `dubbo.threadpool.reject` |
+| `DubboSlowCallMetrics` | 慢调用指标采集器 | 绑定 `MeterRegistry` 并导出按 `side/service/method` 维度的慢调用计数器 | 标配 `@ConditionalOnMissingBean`，导出 `dubbo.rpc.slow.calls` |
+| `DubboAttachmentSupport` | 附件对齐公共工具类 | 对称清理与对齐 Consumer 出站受管附件，防御跨调用附件残留与 `injvm` 判定 | 无状态静态辅助工具 |
 | `DubboSeataPropagationSupport` | 分布式事务适配桥梁 | Seata 全局事务 XID 条件探测、双向透传与状态对称绑定/释放 | 缺失 Seata 时自动静默短路，局部持有判定杜绝误释放 |
 | `DubboTrafficPropagationSupport` | 流量治理适配桥梁 | `TrafficContextHolder` 泳道与规则元数据探测、穿透与确定性清理 | 缺失 Traffic 模块时平滑降级至 MDC 模式，入站出口 `finally` 幂等清理 |
 | `DubboExceptionUtils` | 异常研判公共工具类 | 线程池过载判断、`ConstraintViolationException` 链路提取与流式调用判定 | 统一异常判定收敛，消除重复代码 |
@@ -74,13 +79,22 @@
 | `ateng.cloud.dubbo.context.enabled` | `boolean` | `true` | 是否开启全链路四维上下文透传与 Netty 线程池确定性清理 |
 | `ateng.cloud.dubbo.same-token.enabled` | `boolean` | `true` | 是否开启内部微服务零信任 Same-Token 防穿透隔离校验 |
 | `ateng.cloud.dubbo.same-token.check` | `boolean` | `true` | Provider 端是否强制校验 Same-Token（未携带或非法直接 401 快速失败） |
+| `ateng.cloud.dubbo.same-token.exclude-interfaces` | `List<String>` | `[]` | 豁免 Same-Token 入站强校验的 RPC 接口全限定名或通配符列表（如 `*OpenRpcService`） |
 | `ateng.cloud.dubbo.exception.enabled` | `boolean` | `true` | 是否开启因果异常保真与第三方未知未受检异常转译 |
+| `ateng.cloud.dubbo.exception.translate-consumer-rpc-exception` | `boolean` | `false` | 消费端无原生 `mock` 时是否将底层 `RpcException` 按需因果转译为受管 `BusinessException` (504/503/500) |
 | `ateng.cloud.dubbo.contract.enabled` | `boolean` | `true` | 是否开启双模契约校验与非 200 业务结果自动断言转译 |
+| `ateng.cloud.dubbo.contract.assert-non-null-result` | `boolean` | `true` | 当接口声明返回 `Result<T>` 且对端返回 `null` 空壳响应时是否断言失败并抛出 `BusinessException` |
 | `ateng.cloud.dubbo.traffic.enabled` | `boolean` | `true` | 是否开启金丝雀灰度流量染色与标签路由支持 |
 | `ateng.cloud.dubbo.traffic.tag-force` | `boolean` | `false` | 标签路由是否强制隔离（`false` 平滑降级至基线实例；`true` 严格强隔离） |
 | `ateng.cloud.dubbo.overload.enabled` | `boolean` | `true` | 是否开启服务端线程池过载保护与异常受管转译 |
 | `ateng.cloud.dubbo.overload.metrics-enabled` | `boolean` | `true` | 是否自动将 Dubbo 核心线程池状态与拒绝指标导出至 Micrometer |
-| `ateng.cloud.dubbo.validation.enabled` | `boolean` | `true` | 是否在 Provider 边界开启 JSR-303 参数格式快速失败防卫 |
+| `ateng.cloud.dubbo.overload.threads` | `Integer` | `200` | 服务端 `overload` 定长业务线程池工作线程数 |
+| `ateng.cloud.dubbo.overload.queues` | `Integer` | `0` | 服务端 `overload` 线程池队列容量（默认 `0` 零队列快速失败） |
+| `ateng.cloud.dubbo.validation.enabled` | `boolean` | `true` | 是否在 Provider 边界开启 JSR-303 参数格式快速失败防卫（含集合/Map/数组级联校验） |
+| `ateng.cloud.dubbo.slow-call.enabled` | `boolean` | `true` | 是否开启 Dubbo Unary RPC 慢调用主动监测、WARN 告警与 Micrometer 打点 |
+| `ateng.cloud.dubbo.slow-call.threshold` | `Duration` | `3000ms` | 慢调用判定耗时阈值，达到或超过该值触发告警并计数（`0` 或负数关闭） |
+| `ateng.cloud.dubbo.slow-call.include-consumer` | `boolean` | `true` | 是否在 Consumer 端执行慢调用耗时监测 |
+| `ateng.cloud.dubbo.slow-call.include-provider` | `boolean` | `true` | 是否在 Provider 端执行慢调用耗时监测 |
 | `ateng.cloud.dubbo.security.serialize.allow-packages` | `List<String>` | `[]` | 允许反序列化的业务包路径前缀白名单列表（自动注册至 Dubbo 3 序列化安全校验器） |
 
 ---
@@ -132,10 +146,11 @@ flowchart TD
         GC["DubboGovernanceConsumerController<br>(/sample/cloud/dubbo/governance/*)"]
         
         subgraph ConsumerFilters["Consumer 拦截过滤器链"]
-            F_SAME_OUT["DubboSameTokenFilter<br>(出站凭据注入)"]
             F_CTX_OUT["DubboContextPropagationFilter<br>(4D上下文/Seata/Traffic注入)"]
+            F_SAME_OUT["DubboSameTokenFilter<br>(出站凭据注入)"]
+            F_SLOW_OUT["DubboSlowCallFilter<br>(慢调用监测 -9200)"]
             F_TAG_OUT["DubboTrafficTagFilter<br>(标签路由染色)"]
-            F_ASSERT["DubboContractAssertFilter<br>(Result 业务状态自动断言)"]
+            F_ASSERT["DubboContractAssertFilter<br>(Result/基本类型契约断言)"]
         end
     end
 
@@ -145,10 +160,11 @@ flowchart TD
 
     subgraph ProviderLayer["Dubbo 服务提供端 (RPC 执行层)"]
         subgraph ProviderFilters["Provider 拦截过滤器链"]
+            F_CTX_IN["DubboContextPropagationFilter<br>(上下文还原与 finally 清理)"]
             F_SAME_IN["DubboSameTokenFilter<br>(零信任 401 校验阻断)"]
             F_OVERLOAD["DubboOverloadFilter<br>(429 线程池过载限流)"]
-            F_VALID["DubboValidationFilter<br>(JSR-303 参数防卫)"]
-            F_CTX_IN["DubboContextPropagationFilter<br>(上下文还原 & finally 对称清理)"]
+            F_SLOW_IN["DubboSlowCallFilter<br>(慢调用监测 -9200)"]
+            F_VALID["DubboValidationFilter<br>(JSR-303 单体与容器级联防卫)"]
             F_EXC["AtengDubboExceptionFilter<br>(因果保真 & 底层异常转译)"]
         end
         
@@ -158,10 +174,10 @@ flowchart TD
 
     GW --> TC
     GW --> GC
-    TC --> F_ASSERT --> F_TAG_OUT --> F_CTX_OUT --> F_SAME_OUT
-    GC --> F_TAG_OUT --> F_CTX_OUT --> F_SAME_OUT
-    F_SAME_OUT --> TRI
-    TRI --> F_SAME_IN --> F_OVERLOAD --> F_VALID --> F_CTX_IN --> F_EXC
+    TC --> F_CTX_OUT --> F_SAME_OUT --> F_SLOW_OUT --> F_TAG_OUT --> F_ASSERT
+    GC --> F_CTX_OUT
+    F_ASSERT --> TRI
+    TRI --> F_CTX_IN --> F_SAME_IN --> F_OVERLOAD --> F_SLOW_IN --> F_VALID --> F_EXC
     F_EXC --> TS
     F_EXC --> US
 ```
@@ -524,7 +540,7 @@ ateng:
 
 ---
 
-## 6. 服务端线程池过载保护与参数校验统一防卫
+## 6. 服务端过载保护、参数校验、异常保真与慢调用观测
 
 ### 6.1 服务端线程池过载 429 保护与 Micrometer 指标监控
 
@@ -589,11 +605,14 @@ ateng:
 package io.github.atengk.cloud.sample.dubbo.controller;
 
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.boot.core.validation.ValidList;
 import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.model.UserCreateRequest;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/sample/cloud/dubbo/governance")
@@ -619,11 +638,20 @@ public class DubboGovernanceConsumerController {
         UserVO vo = userRpcService.createUser(request);
         return Result.success(vo);
     }
+
+    /**
+     * RPC 协议边界批量集合参数校验快速失败防卫（绕过 Web 层校验直达 Provider 边界，由 DubboValidationFilter 执行级联校验）
+     */
+    @PostMapping("/validation/batch")
+    public Result<List<UserVO>> validateUsersBatch(@RequestBody ValidList<UserCreateRequest> requests) {
+        List<UserVO> list = userRpcService.batchCreateUsers(requests);
+        return Result.success(list);
+    }
 }
 ```
 
 **核心机制与容灾边界**：
-- **Defense-in-Depth 双防体系**：第一道防线在 Web Controller 边界拦截非法请求；第二道防线在 RPC 服务端入口处拦截，自动提取 `ConstraintViolationException` 并结构化转译为统一业务异常 `BusinessException(400, "参数校验失败: ...")`。
+- **Defense-in-Depth 双防体系**：第一道防线在 Web Controller 边界拦截非法请求；第二道防线在 RPC 服务端入口处拦截，递归校验单体 Bean 与 `Collection`/`Map`/数组容器元素，自动提取 `ConstraintViolationException` 并附带 `[index]` / `[key]` 路径前缀结构化转译为 `BusinessException(400, "参数校验失败: ...")`。
 
 ---
 
@@ -635,7 +663,8 @@ ateng:
   cloud:
     dubbo:
       exception:
-        enabled: true # 启用因果异常保真与未知异常防反序列化崩溃转译
+        enabled: true                            # 启用因果异常保真与未知异常防反序列化崩溃转译
+        translate-consumer-rpc-exception: false  # 消费端无原生 mock 时按需将底层 RpcException 转译为 504/503/500
 ```
 
 治理控制器异常场景验证：
@@ -675,7 +704,54 @@ public class DubboGovernanceConsumerController {
 
 **核心机制与容灾边界**：
 - **业务异常 100% 因果保真**：受管 `BusinessException` 列入白名单放行，错误码与多语言消息完全无损穿透；
-- **防御 ClassNotFoundException 崩溃**：对端抛出未声明的底层非 JDK 私有异常（如驱动层死锁异常），由 `AtengDubboExceptionFilter` 安全转译为通用 `BusinessException(500, "系统执行异常: ...")`，杜绝消费端因缺少私有异常类导致的二次反序列化瘫痪。
+- **防御 ClassNotFoundException 崩溃**：对端抛出未声明的底层非 JDK 私有异常（如驱动层死锁异常），由 `AtengDubboExceptionFilter` 安全转译为通用 `BusinessException(500, "系统执行异常: ...")`，杜绝消费端因缺少私有异常类导致的二次反序列化瘫痪；
+- **消费端底层 `RpcException` 按需因果转译**：开启 `translate-consumer-rpc-exception=true` 且方法未配置原生 `mock` 时，`DubboConsumerExceptionClusterFilter` 将超时、网络异常等转译为保留原始 `cause` 的受管 `BusinessException`（504/503/500）。
+
+---
+
+### 6.4 RPC 慢调用主动监测与 Micrometer 可观测性
+
+```yaml
+# 本节专属 YAML 配置 (application.yml)
+ateng:
+  cloud:
+    dubbo:
+      slow-call:
+        enabled: true          # 开启慢调用主动监测与指标统计
+        threshold: 3000ms      # 慢调用判定耗时阈值（设为 0 或负数时关闭）
+        include-consumer: true # 是否在 Consumer 端执行监测
+        include-provider: true # 是否在 Provider 端执行监测
+```
+
+从样本工程提取的慢调用观测接口实现：
+
+```java
+package io.github.atengk.cloud.sample.dubbo.controller;
+
+import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sample/cloud/dubbo/governance")
+public class DubboGovernanceConsumerController {
+
+    private UserRpcService userRpcService;
+
+    /**
+     * RPC 慢调用主动监测与可观测指标演示（当耗时达到配置阈值时输出 WARN 告警并累加 dubbo.rpc.slow.calls）
+     */
+    @GetMapping("/slow-call")
+    public Result<String> testSlowCall(@RequestParam(defaultValue = "3200") long sleepMillis) {
+        long boundedSleepMillis = Math.max(0L, Math.min(sleepMillis, 10_000L));
+        return Result.success(userRpcService.slowEcho(boundedSleepMillis));
+    }
+}
+```
+
+**核心机制与可观测边界**：
+- **精准双向异步计时与防误报**：`DubboSlowCallFilter`（`order = -9200`）覆盖同步执行与 `onResponse` / `onError` 异步回调，自动豁免 `injvm` 本地短路调用与 `StreamObserver` 长连接流式通信；
+- **结构化告警日志与 Micrometer 指标闭环**：单次 Unary RPC 耗时达到或超过 `threshold` 时，输出包含 `side`、`service`、`method`、`elapsedMs`、`thresholdMs`、`traceId` 的结构化 `WARN` 日志，并通过 `DubboSlowCallMetrics` 累加打标计数器 `dubbo.rpc.slow.calls`；未引入 `micrometer-core` 时自动静默降级为纯日志告警。
 
 ---
 
@@ -950,14 +1026,17 @@ ateng:
       same-token:
         enabled: true
         check: true
+        exclude-interfaces: []
 
       # 因果异常保真与私有异常转译
       exception:
         enabled: true
+        translate-consumer-rpc-exception: false
 
       # 双模契约校验与结果自动断言
       contract:
         enabled: true
+        assert-non-null-result: true
 
       # 金丝雀灰度流量染色与标签路由
       traffic:
@@ -968,10 +1047,19 @@ ateng:
       overload:
         enabled: true
         metrics-enabled: true
+        threads: 200
+        queues: 0
 
-      # Provider 边界 JSR-303 参数防卫
+      # Provider 边界 JSR-303 参数防卫（含集合/Map/数组级联校验）
       validation:
         enabled: true
+
+      # RPC 慢调用主动监测与指标统计
+      slow-call:
+        enabled: true
+        threshold: 3000ms
+        include-consumer: true
+        include-provider: true
 
       # 反序列化安全白名单
       security:
@@ -1004,6 +1092,11 @@ ateng:
 #### Q5: Triple 流式通信发生中断或阻塞？
 - **原因**：流式调用处理未正确闭环，缺少 `onCompleted()` 或被同步阻塞；
 - **排查与解决**：确保在 `onError` 或 `onCompleted` 中调用 `latch.countDown()`，并且流式传输中不要在 `onNext` 执行耗时过长阻塞操作。
+
+#### Q6: 如何排查微服务间的 RPC 慢调用并导出 Prometheus 监控指标？
+
+- **原因**：部分 Unary RPC 调用耗时偏高接近超时线，需要定位是消费端网络耗时还是提供端处理缓慢；
+- **排查与解决**：按环境调整 `ateng.cloud.dubbo.slow-call.threshold`（默认 `3000ms`），查看 `[DUBBO-SLOW-CALL]` `WARN` 日志中的 `side`、`elapsedMs` 与 `traceId` 字段，并在 Prometheus / Actuator 采集 `dubbo.rpc.slow.calls` 计数器（按 `side`、`service`、`method` 标签聚合分析）。
 
 ---
 

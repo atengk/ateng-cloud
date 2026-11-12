@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DubboFilterChainOrderTest {
 
     @Test
-    @DisplayName("Provider 端入站过滤器链顺序: Context -> SameToken -> Overload -> Validation")
+    @DisplayName("Provider 端入站过滤器链顺序: Context -> SameToken -> Overload -> SlowCall -> Validation")
     void testProviderFilterChainOrder() {
         List<Class<?>> activeFilterClasses = getActiveFilterClasses(CommonConstants.PROVIDER);
 
@@ -31,12 +31,13 @@ class DubboFilterChainOrderTest {
                 DubboContextPropagationFilter.class,
                 DubboSameTokenFilter.class,
                 DubboOverloadFilter.class,
+                DubboSlowCallFilter.class,
                 DubboValidationFilter.class
         );
     }
 
     @Test
-    @DisplayName("Consumer 端出站过滤器链顺序: Context -> SameToken -> Overload -> TrafficTag -> ContractAssert")
+    @DisplayName("Consumer 端出站过滤器链顺序: Context -> SameToken -> Overload -> SlowCall -> TrafficTag -> ContractAssert")
     void testConsumerFilterChainOrder() {
         List<Class<?>> activeFilterClasses = getActiveFilterClasses(CommonConstants.CONSUMER);
 
@@ -44,6 +45,7 @@ class DubboFilterChainOrderTest {
                 DubboContextPropagationFilter.class,
                 DubboSameTokenFilter.class,
                 DubboOverloadFilter.class,
+                DubboSlowCallFilter.class,
                 DubboTrafficTagFilter.class,
                 DubboContractAssertFilter.class
         );

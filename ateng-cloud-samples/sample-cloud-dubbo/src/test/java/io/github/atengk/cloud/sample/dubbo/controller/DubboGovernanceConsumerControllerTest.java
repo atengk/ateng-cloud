@@ -1,11 +1,21 @@
 package io.github.atengk.cloud.sample.dubbo.controller;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.cloud.dubbo.filter.DubboSlowCallFilter;
+import io.github.atengk.cloud.dubbo.support.DubboSlowCallMetrics;
+import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.dubbo.rpc.RpcContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -48,10 +58,15 @@ public class DubboGovernanceConsumerControllerTest {
         registry.add("ateng.cloud.dubbo.overload.enabled", () -> "true");
         registry.add("ateng.cloud.dubbo.same-token.enabled", () -> "true");
         registry.add("ateng.cloud.dubbo.same-token.check", () -> "true");
+        registry.add("ateng.cloud.dubbo.slow-call.enabled", () -> "true");
+        registry.add("ateng.cloud.dubbo.slow-call.threshold", () -> "100ms");
     }
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired(required = false)
+    private MeterRegistry meterRegistry;
 
     @AfterEach
     void tearDown() {
@@ -243,5 +258,83 @@ public class DubboGovernanceConsumerControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", is(401)))
                 .andExpect(jsonPath("$.msg", containsString("Same-Token")));
+    }
+
+    @Test
+    @DisplayName("验证 GET /slow-call 触发慢调用 WARN 与 dubbo.rpc.slow.calls 计数，正常耗时与流式调用豁免不误报")
+    void testSlowCall_TriggerFastNoOpAndStreamExemption() throws Exception {
+        Logger filterLogger = (Logger) LoggerFactory.getLogger(DubboSlowCallFilter.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        filterLogger.addAppender(appender);
+        try {
+            double beforeSlowCount = getSlowEchoCount();
+
+            // 1. 超过 100ms 阈值：触发慢调用 WARN 与 Micrometer 计数（Consumer 与 Provider 透传同一真实 W3C traceId）
+            mockMvc.perform(get("/sample/cloud/dubbo/governance/slow-call")
+                            .param("sleepMillis", "180"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code", is(200)))
+                    .andExpect(jsonPath("$.data", is("slow-ok:180")));
+
+            long slowWarnsAfterTrigger = countSlowWarnLogs(appender, "slowEcho");
+            org.assertj.core.api.Assertions.assertThat(slowWarnsAfterTrigger).isGreaterThanOrEqualTo(1L);
+            org.assertj.core.api.Assertions.assertThat(appender.list)
+                    .anySatisfy(event -> org.assertj.core.api.Assertions.assertThat(event.getFormattedMessage())
+                            .contains("service=" + UserRpcService.class.getName())
+                            .contains("method=slowEcho")
+                            .contains("elapsedMs=")
+                            .contains("thresholdMs=100")
+                            .contains("traceId=")
+                            .doesNotContain("traceId=N/A"));
+
+            double afterSlowCount = getSlowEchoCount();
+            org.assertj.core.api.Assertions.assertThat(afterSlowCount).isGreaterThan(beforeSlowCount);
+
+            // 2. 正常低耗时：不增加慢调用日志与计数
+            appender.list.clear();
+            mockMvc.perform(get("/sample/cloud/dubbo/governance/slow-call")
+                            .param("sleepMillis", "5"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code", is(200)))
+                    .andExpect(jsonPath("$.data", is("slow-ok:5")));
+
+            org.assertj.core.api.Assertions.assertThat(countSlowWarnLogs(appender, "slowEcho")).isZero();
+            org.assertj.core.api.Assertions.assertThat(getSlowEchoCount()).isEqualTo(afterSlowCount);
+
+            // 3. StreamObserver 流式通信：强制豁免慢调用监测
+            appender.list.clear();
+            mockMvc.perform(get("/sample/cloud/dubbo/trade/stream/bills")
+                            .param("accountId", "10001")
+                            .param("limit", "3"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code", is(200)));
+
+            org.assertj.core.api.Assertions.assertThat(countSlowWarnLogs(appender, "stream")).isZero();
+        } finally {
+            filterLogger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    private double getSlowEchoCount() {
+        if (meterRegistry == null) {
+            return 0.0d;
+        }
+        return meterRegistry.find(DubboSlowCallMetrics.METRIC_SLOW_CALLS)
+                .tag("service", UserRpcService.class.getName())
+                .tag("method", "slowEcho")
+                .counters()
+                .stream()
+                .mapToDouble(Counter::count)
+                .sum();
+    }
+
+    private long countSlowWarnLogs(ListAppender<ILoggingEvent> appender, String methodKeyword) {
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(msg -> msg.contains("method=" + methodKeyword) || msg.contains(methodKeyword))
+                .count();
     }
 }
