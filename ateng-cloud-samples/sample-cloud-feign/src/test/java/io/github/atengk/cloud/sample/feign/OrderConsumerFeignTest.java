@@ -14,18 +14,26 @@ import io.github.atengk.cloud.sample.feign.model.OrderCreateDTO;
 import io.github.atengk.cloud.sample.feign.model.OrderDetailVO;
 import io.github.atengk.cloud.sample.feign.model.ProductDetailVO;
 import io.github.atengk.cloud.sample.feign.model.ProductQueryDTO;
+import io.github.atengk.cloud.sample.feign.model.ToleranceResultVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.TestSocketUtils;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import java.net.ServerSocket;
 import java.math.BigDecimal;
@@ -79,6 +87,9 @@ public class OrderConsumerFeignTest {
 
     @Autowired
     private FeignOrderConsumerController feignOrderConsumerController;
+
+    @Autowired
+    private TestRestTemplate restTemplate;
 
     @AfterEach
     void tearDown() {
@@ -289,5 +300,121 @@ public class OrderConsumerFeignTest {
         Result<OrderDetailVO> createResult = feignOrderConsumerController.createOrder(createDTO);
         assertTrue(createResult.isSuccess());
         assertEquals(2, createResult.getData().getQuantity());
+    }
+
+    @Test
+    @DisplayName("19. 验证 FeignOrderConsumerController 全量新增体验端点与真实 HTTP 1:1 可达性（含对称上下文还原）")
+    void testAllOrderControllerDocumentedHttpRoutes() {
+        // 1. 白名单与注解豁免/强制解包控制器方法直调验证
+        Result<ProductDetailVO> excludedRes = feignOrderConsumerController.getExcludedClientProduct(1L);
+        assertTrue(excludedRes.isSuccess());
+        assertEquals("THIRD-PARTY-SKU", excludedRes.getData().getSkuCode());
+
+        Result<ProductDetailVO> classExcludedRes = feignOrderConsumerController.getClassLevelExcludedProduct(2L);
+        assertTrue(classExcludedRes.isSuccess());
+        assertEquals("THIRD-PARTY-SKU", classExcludedRes.getData().getSkuCode());
+
+        Result<ProductDetailVO> methodExcludedRes = feignOrderConsumerController.getMethodExcludedProduct(3L);
+        assertTrue(methodExcludedRes.isSuccess());
+        assertEquals("THIRD-PARTY-SKU", methodExcludedRes.getData().getSkuCode());
+
+        Result<ProductDetailVO> forcedRes = feignOrderConsumerController.getForcedUnwrapProduct(1L);
+        assertTrue(forcedRes.isSuccess());
+        assertEquals("SKU-1", forcedRes.getData().getSkuCode());
+
+        Result<ToleranceResultVO> primitiveGuardRes = feignOrderConsumerController.testPrimitiveNullGuard();
+        assertTrue(primitiveGuardRes.isSuccess());
+        assertEquals(500, primitiveGuardRes.getData().getErrorCode());
+
+        Result<Long> wrapperNullRes = feignOrderConsumerController.getWrapperNullData();
+        assertTrue(wrapperNullRes.isSuccess());
+        assertNull(wrapperNullRes.getData());
+
+        Result<String> voidRes = feignOrderConsumerController.testVoidSuccess();
+        assertTrue(voidRes.isSuccess());
+
+        // 2. 真实 HTTP 协议 1:1 路由可达性与端到端对称上下文还原验证
+        ResponseEntity<String> unwrapHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/unwrap/1", String.class);
+        assertEquals(HttpStatus.OK, unwrapHttp.getStatusCode());
+        assertTrue(unwrapHttp.getBody() != null && unwrapHttp.getBody().contains("SKU-1"));
+
+        ResponseEntity<String> rawHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/raw/2", String.class);
+        assertEquals(HttpStatus.OK, rawHttp.getStatusCode());
+        assertTrue(rawHttp.getBody() != null && rawHttp.getBody().contains("RAW-SKU-2"));
+
+        ResponseEntity<String> excludedHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/excluded-unwrap/1", String.class);
+        assertEquals(HttpStatus.OK, excludedHttp.getStatusCode());
+        assertTrue(excludedHttp.getBody() != null && excludedHttp.getBody().contains("THIRD-PARTY-SKU"));
+
+        ResponseEntity<String> classExcludedHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/class-excluded/1", String.class);
+        assertEquals(HttpStatus.OK, classExcludedHttp.getStatusCode());
+        assertTrue(classExcludedHttp.getBody() != null && classExcludedHttp.getBody().contains("THIRD-PARTY-SKU"));
+
+        ResponseEntity<String> methodExcludedHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/method-excluded/1", String.class);
+        assertEquals(HttpStatus.OK, methodExcludedHttp.getStatusCode());
+        assertTrue(methodExcludedHttp.getBody() != null && methodExcludedHttp.getBody().contains("THIRD-PARTY-SKU"));
+
+        ResponseEntity<String> forcedHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/forced-unwrap/1", String.class);
+        assertEquals(HttpStatus.OK, forcedHttp.getStatusCode());
+        assertTrue(forcedHttp.getBody() != null && forcedHttp.getBody().contains("SKU-1"));
+
+        ResponseEntity<String> queryHttp = restTemplate.getForEntity(
+                "/sample/cloud/feign/order/product/query?keyword=手机&category=数码&minPrice=1000&pageNum=1&pageSize=10",
+                String.class);
+        assertEquals(HttpStatus.OK, queryHttp.getStatusCode());
+        assertTrue(queryHttp.getBody() != null && queryHttp.getBody().contains("手机"));
+
+        ResponseEntity<byte[]> downloadHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/invoice/download", byte[].class);
+        assertEquals(HttpStatus.OK, downloadHttp.getStatusCode());
+        assertNotNull(downloadHttp.getBody());
+        assertTrue(new String(downloadHttp.getBody(), StandardCharsets.UTF_8).contains("INVOICE-PDF-BINARY-DATA-SAMPLE-2026"));
+
+        HttpHeaders multipartHeaders = new HttpHeaders();
+        multipartHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
+        MultiValueMap<String, Object> multipartBody = new LinkedMultiValueMap<>();
+        multipartBody.add("file", new ByteArrayResource("hello-attachment".getBytes(StandardCharsets.UTF_8)) {
+            @Override
+            public String getFilename() {
+                return "proof.txt";
+            }
+        });
+        multipartBody.add("description", "体验上传");
+        ResponseEntity<String> uploadHttp = restTemplate.postForEntity(
+                "/sample/cloud/feign/order/product/attachment/upload",
+                new HttpEntity<>(multipartBody, multipartHeaders),
+                String.class);
+        assertEquals(HttpStatus.OK, uploadHttp.getStatusCode());
+        assertTrue(uploadHttp.getBody() != null && uploadHttp.getBody().contains("filename=proof.txt"));
+
+        // 通过 HTTP Header 入站，由 FeignContextWebFilter 对称还原至 Provider 上下文（不直接读 Header）
+        HttpHeaders orderHeaders = new HttpHeaders();
+        orderHeaders.setContentType(MediaType.APPLICATION_JSON);
+        orderHeaders.add("x-trace-id", "trace-http-sym-100");
+        orderHeaders.add("x-user-id", "user-http-007");
+        orderHeaders.add("x-tenant-id", "tenant-http-999");
+        orderHeaders.add("X-Traffic-Tag", "canary-v2");
+        OrderCreateDTO httpDto = new OrderCreateDTO(100L, 2, "北京市海淀区中关村南大街1号", "HTTP 端到端验证");
+        ResponseEntity<String> createHttp = restTemplate.postForEntity(
+                "/sample/cloud/feign/order/create",
+                new HttpEntity<>(httpDto, orderHeaders),
+                String.class);
+        assertEquals(HttpStatus.OK, createHttp.getStatusCode());
+        assertNotNull(createHttp.getBody());
+        assertTrue(createHttp.getBody().contains("trace-http-sym-100"));
+        assertTrue(createHttp.getBody().contains("user-http-007"));
+        assertTrue(createHttp.getBody().contains("tenant-http-999"));
+        assertTrue(createHttp.getBody().contains("canary-v2"));
+
+        ResponseEntity<String> primitiveGuardHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/primitive-null-guard", String.class);
+        assertEquals(HttpStatus.OK, primitiveGuardHttp.getStatusCode());
+        assertTrue(primitiveGuardHttp.getBody() != null && primitiveGuardHttp.getBody().contains("Primitive-Return-Null-FailFast"));
+
+        ResponseEntity<String> wrapperNullHttp = restTemplate.getForEntity("/sample/cloud/feign/order/product/wrapper-null", String.class);
+        assertEquals(HttpStatus.OK, wrapperNullHttp.getStatusCode());
+        assertTrue(wrapperNullHttp.getBody() != null && wrapperNullHttp.getBody().contains("\"code\":200"));
+
+        ResponseEntity<String> voidHttp = restTemplate.postForEntity("/sample/cloud/feign/order/product/void-success", null, String.class);
+        assertEquals(HttpStatus.OK, voidHttp.getStatusCode());
+        assertTrue(voidHttp.getBody() != null && voidHttp.getBody().contains("\"code\":200"));
     }
 }

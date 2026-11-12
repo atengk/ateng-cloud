@@ -1,5 +1,10 @@
 package io.github.atengk.cloud.sample.feign.controller;
 
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.cloud.feign.constant.FeignHeaderConstants;
+import io.github.atengk.cloud.feign.support.FeignTrafficPropagationSupport;
+import org.slf4j.MDC;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.feign.model.OrderCreateDTO;
 import io.github.atengk.cloud.sample.feign.model.OrderDetailVO;
@@ -90,11 +95,12 @@ public class RemoteProductProviderController {
     @PostMapping("/create")
     public Result<OrderDetailVO> createOrder(HttpServletRequest request,
                                             @RequestBody OrderCreateDTO dto) {
-        String traceId = request.getHeader("x-trace-id");
-        String userId = request.getHeader("x-user-id");
-        String tenantId = request.getHeader("x-tenant-id");
-        String trafficTag = request.getHeader("x-traffic-tag");
-        String sameToken = request.getHeader("same-token");
+        String traceId = MDC.get(FeignHeaderConstants.MDC_TRACE_ID);
+        String userId = UserContextHolder.getUserId();
+        String tenantId = TenantContextHolder.getTenantId();
+        FeignTrafficPropagationSupport.TrafficSnapshot trafficSnapshot = FeignTrafficPropagationSupport.getSnapshot();
+        String trafficTag = trafficSnapshot != null ? trafficSnapshot.tag() : MDC.get(FeignHeaderConstants.TRAFFIC_TAG);
+        String sameToken = request.getHeader(FeignHeaderConstants.SAME_TOKEN);
 
         ProductDetailVO product = new ProductDetailVO(
                 dto.getProductId(),

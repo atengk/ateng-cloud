@@ -4,7 +4,9 @@ import feign.RetryableException;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.feign.client.CustomRetryFeignClient;
+import io.github.atengk.cloud.sample.feign.client.IsolatedTimeoutFeignClient;
 import io.github.atengk.cloud.sample.feign.client.OrderRemoteFeignClient;
+import io.github.atengk.cloud.sample.feign.client.SlowCallFeignClient;
 import io.github.atengk.cloud.sample.feign.client.UnreachableFeignClient;
 import io.github.atengk.cloud.sample.feign.model.ToleranceResultVO;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,15 +30,21 @@ public class FeignToleranceController {
     private final OrderRemoteFeignClient orderRemoteFeignClient;
     private final UnreachableFeignClient unreachableFeignClient;
     private final CustomRetryFeignClient customRetryFeignClient;
+    private final IsolatedTimeoutFeignClient isolatedTimeoutFeignClient;
+    private final SlowCallFeignClient slowCallFeignClient;
     private final RemoteToleranceProviderController remoteToleranceProviderController;
 
     public FeignToleranceController(OrderRemoteFeignClient orderRemoteFeignClient,
                                     UnreachableFeignClient unreachableFeignClient,
                                     CustomRetryFeignClient customRetryFeignClient,
+                                    IsolatedTimeoutFeignClient isolatedTimeoutFeignClient,
+                                    SlowCallFeignClient slowCallFeignClient,
                                     RemoteToleranceProviderController remoteToleranceProviderController) {
         this.orderRemoteFeignClient = orderRemoteFeignClient;
         this.unreachableFeignClient = unreachableFeignClient;
         this.customRetryFeignClient = customRetryFeignClient;
+        this.isolatedTimeoutFeignClient = isolatedTimeoutFeignClient;
+        this.slowCallFeignClient = slowCallFeignClient;
         this.remoteToleranceProviderController = remoteToleranceProviderController;
     }
 
@@ -186,10 +194,121 @@ public class FeignToleranceController {
 
     /**
      * 6. 出站标头透传回显
+     *
+     * @return 下游收到的透传请求头映射
      */
     @GetMapping("/headers")
     public Result<Map<String, String>> testHeaders() {
         Map<String, String> headers = orderRemoteFeignClient.echoHeaders();
         return Result.success(headers);
+    }
+
+    /**
+     * 7. 验证 GET 只读请求读取超时绝不重试铁律（防下游慢服务雪崩）
+     *
+     * @return 调用次数与阻断摘要
+     */
+    @GetMapping("/get-timeout")
+    public Result<ToleranceResultVO> testGetTimeout() {
+        remoteToleranceProviderController.reset();
+        long start = System.currentTimeMillis();
+        String rootCause = null;
+        int status = 200;
+        try {
+            orderRemoteFeignClient.getTimeout();
+        } catch (RetryableException | BusinessException ex) {
+            rootCause = ex.getClass().getSimpleName();
+            status = 504;
+        }
+        int attempts = remoteToleranceProviderController.getGetSlowCallCount();
+        long duration = System.currentTimeMillis() - start;
+
+        return Result.success(new ToleranceResultVO(
+                "GET-Read-Timeout-No-Retry",
+                attempts,
+                duration,
+                status,
+                "GET 读超时已按防雪崩纪律零重试阻断，对端实际仅收到 " + attempts + " 次请求",
+                rootCause
+        ));
+    }
+
+    /**
+     * 8. 验证单 Client 独立超时隔离生效（isolated-timeout-client 300ms 读超时调用 800ms 慢接口）
+     *
+     * @return 隔离熔断结果摘要
+     */
+    @GetMapping("/isolated-timeout")
+    public Result<ToleranceResultVO> testIsolatedTimeout() {
+        long start = System.currentTimeMillis();
+        String rootCause = null;
+        int status = 200;
+        try {
+            isolatedTimeoutFeignClient.slow();
+        } catch (RetryableException | BusinessException ex) {
+            rootCause = ex.getClass().getSimpleName();
+            status = 504;
+        }
+        long duration = System.currentTimeMillis() - start;
+
+        return Result.success(new ToleranceResultVO(
+                "Per-Client-Timeout-Isolation",
+                1,
+                duration,
+                status,
+                "单 Client 300ms 短读超时物理隔离生效，已快速失败保护主线程池",
+                rootCause
+        ));
+    }
+
+    /**
+     * 9. 验证下游 HTTP 500 崩溃异常因果转译与 root cause 链完整保留
+     *
+     * @return 异常因果转译结果摘要
+     */
+    @GetMapping("/http-500")
+    public Result<ToleranceResultVO> testHttp500() {
+        long start = System.currentTimeMillis();
+        int errorCode = 200;
+        String message = null;
+        String rootCause = null;
+        try {
+            orderRemoteFeignClient.getRaw500();
+        } catch (BusinessException ex) {
+            errorCode = ex.getCode();
+            message = ex.getMsg();
+            rootCause = ex.getCause() != null ? ex.getCause().getClass().getSimpleName() : ex.getClass().getSimpleName();
+        }
+        long duration = System.currentTimeMillis() - start;
+
+        return Result.success(new ToleranceResultVO(
+                "HTTP-500-Causal-Translation",
+                1,
+                duration,
+                errorCode,
+                "下游 HTTP 500 已被转译为受管 BusinessException 且保留原始 cause: " + message,
+                rootCause
+        ));
+    }
+
+    /**
+     * 10. 验证慢调用主动探测告警（slow-call-client 独立阈值 100ms，调用 180ms 接口输出 WARN 结构化告警）
+     *
+     * @return 慢调用探测成功摘要
+     */
+    @GetMapping("/slow-call")
+    public Result<ToleranceResultVO> testSlowCall() {
+        long start = System.currentTimeMillis();
+        String payload = slowCallFeignClient.slowOk();
+        long duration = System.currentTimeMillis() - start;
+
+        return Result.success(new ToleranceResultVO(
+                "Slow-Call-Threshold-Detection",
+                1,
+                duration,
+                200,
+                "成功返回且耗时达到 slow-call-threshold(100ms)，已输出结构化 WARN 慢调用告警: " + payload,
+                null
+        ));
     }
 }

@@ -59,7 +59,16 @@ public class RemoteToleranceProviderController {
     }
 
     /**
-     * 4. 模拟下游返回业务错误码 6001
+     * 4. 模拟耗时 180ms（小于 5s 读超时但超过客户端 100ms 慢调用阈值）的正常接口，用于验证慢调用 WARN 告警
+     */
+    @GetMapping("/slow-ok")
+    public Result<String> slowOk() throws InterruptedException {
+        Thread.sleep(180);
+        return Result.success("slow-ok completed");
+    }
+
+    /**
+     * 5. 模拟下游返回业务错误码 6001
      */
     @GetMapping("/business-error")
     public Result<String> businessError() {
@@ -67,7 +76,7 @@ public class RemoteToleranceProviderController {
     }
 
     /**
-     * 5. 模拟下游崩溃返回 HTTP 500
+     * 6. 模拟下游崩溃返回 HTTP 500
      */
     @GetMapping("/raw-500")
     public ResponseEntity<Result<String>> raw500() {
@@ -76,7 +85,7 @@ public class RemoteToleranceProviderController {
     }
 
     /**
-     * 6. 模拟下游返回 11MB 超大响应体，用于触发客户端 10MB 响应载荷防爆熔断
+     * 7. 模拟下游返回 11MB 超大响应体，用于触发客户端 10MB 响应载荷防爆熔断
      */
     @GetMapping("/large-payload")
     public String largePayload() {
@@ -85,7 +94,7 @@ public class RemoteToleranceProviderController {
     }
 
     /**
-     * 7. 回显调用端注入的出站标头，用于验证四维上下文与 Same-Token 透传
+     * 8. 回显调用端注入的出站标头，用于验证四维上下文与 Same-Token 透传
      */
     @GetMapping("/echo-headers")
     public Result<Map<String, String>> echoHeaders(HttpServletRequest request) {

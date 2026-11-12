@@ -37,6 +37,10 @@ ateng:
     feign:
       enabled: true
       logger-level: HEADERS
+      adaptive-unwrap:
+        enabled: true
+        exclude-clients:
+          - excluded-client
       httpclient:
         max-connections: 200
         max-connections-per-route: 50
@@ -48,6 +52,7 @@ ateng:
         socket-timeout: 5000ms
       retry:
         enabled: true
+        # 样例工程缩短退避窗口以加速单测执行（Starter 生产默认基线：100ms / 1s）
         period: 50ms
         max-period: 200ms
         max-attempts: 2
@@ -58,6 +63,8 @@ ateng:
         isolated-timeout-client:
           socket-timeout: 300ms
           connect-timeout: 300ms
+        slow-call-client:
+          slow-call-threshold: 100ms
         custom-retry-client:
           retry:
             enabled: true

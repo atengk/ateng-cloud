@@ -16,6 +16,7 @@ import io.github.atengk.cloud.sample.feign.client.CustomRetryFeignClient;
 import io.github.atengk.cloud.sample.feign.client.IsolatedTimeoutFeignClient;
 import io.github.atengk.cloud.sample.feign.client.OrderRemoteFeignClient;
 import io.github.atengk.cloud.sample.feign.client.ProductFeignClient;
+import io.github.atengk.cloud.sample.feign.client.SlowCallFeignClient;
 import io.github.atengk.cloud.sample.feign.client.UnreachableFeignClient;
 import io.github.atengk.cloud.sample.feign.controller.FeignToleranceController;
 import io.github.atengk.cloud.sample.feign.controller.RemoteToleranceProviderController;
@@ -30,12 +31,14 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.TestSocketUtils;
 
 import java.net.ServerSocket;
 import java.util.Map;
@@ -114,6 +117,9 @@ public class ToleranceFeignTest {
 
     @Autowired
     private FeignToleranceController feignToleranceController;
+
+    @Autowired
+    private TestRestTemplate restTemplate;
 
     @BeforeEach
     void setUp() {
@@ -290,5 +296,82 @@ public class ToleranceFeignTest {
         // 标头透传
         Result<Map<String, String>> headersResult = feignToleranceController.testHeaders();
         assertTrue(headersResult.isSuccess());
+    }
+
+    @Test
+    @DisplayName("11. 验证新增容灾体验端点与真实 HTTP 1:1 路由可达性（含慢调用主动告警）")
+    void testAllToleranceDocumentedHttpRoutes() {
+        // 1. 控制器新增体验端点直调断言
+        Result<ToleranceResultVO> getTimeoutRes = feignToleranceController.testGetTimeout();
+        assertTrue(getTimeoutRes.isSuccess());
+        assertEquals(1, getTimeoutRes.getData().getAttempts());
+        assertEquals(504, getTimeoutRes.getData().getErrorCode());
+
+        Result<ToleranceResultVO> isolatedRes = feignToleranceController.testIsolatedTimeout();
+        assertTrue(isolatedRes.isSuccess());
+        assertEquals(504, isolatedRes.getData().getErrorCode());
+        assertTrue(isolatedRes.getData().getDurationMs() < 700, "单 Client 300ms 超时隔离必须显著快于对端 800ms 耗时");
+
+        Result<ToleranceResultVO> http500Res = feignToleranceController.testHttp500();
+        assertTrue(http500Res.isSuccess());
+        assertEquals(500, http500Res.getData().getErrorCode());
+        assertNotNull(http500Res.getData().getRootCause());
+
+        Logger slowLogger = (Logger) LoggerFactory.getLogger(SlowCallFeignClient.class);
+        ListAppender<ILoggingEvent> slowAppender = new ListAppender<>();
+        slowAppender.start();
+        slowLogger.addAppender(slowAppender);
+        try {
+            Result<ToleranceResultVO> slowCallRes = feignToleranceController.testSlowCall();
+            assertTrue(slowCallRes.isSuccess());
+            assertEquals(200, slowCallRes.getData().getErrorCode());
+            boolean slowWarnLogged = slowAppender.list.stream()
+                    .anyMatch(event -> event.getLevel() == Level.WARN
+                            && event.getFormattedMessage().contains("Feign 慢调用告警: client=slow-call-client"));
+            assertTrue(slowWarnLogged, "调用耗时超过 100ms 阈值时必须输出结构化慢调用 WARN 告警");
+        } finally {
+            slowLogger.detachAppender(slowAppender);
+        }
+
+        // 2. 全量容灾体验 HTTP 路由 1:1 可达性验证
+        ResponseEntity<String> writeHttp = restTemplate.postForEntity("/sample/cloud/feign/tolerance/write-timeout", null, String.class);
+        assertEquals(HttpStatus.OK, writeHttp.getStatusCode());
+        assertTrue(writeHttp.getBody() != null && writeHttp.getBody().contains("POST-Write-Timeout-Defense"));
+
+        ResponseEntity<String> getTimeoutHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/get-timeout", String.class);
+        assertEquals(HttpStatus.OK, getTimeoutHttp.getStatusCode());
+        assertTrue(getTimeoutHttp.getBody() != null && getTimeoutHttp.getBody().contains("GET-Read-Timeout-No-Retry"));
+
+        ResponseEntity<String> connectHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/connect-timeout", String.class);
+        assertEquals(HttpStatus.OK, connectHttp.getStatusCode());
+        assertTrue(connectHttp.getBody() != null && connectHttp.getBody().contains("Connect-Timeout-FullJitter-Retry"));
+
+        ResponseEntity<String> customRetryHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/custom-retry", String.class);
+        assertEquals(HttpStatus.OK, customRetryHttp.getStatusCode());
+        assertTrue(customRetryHttp.getBody() != null && customRetryHttp.getBody().contains("Per-Client-Custom-Retry-Override"));
+
+        ResponseEntity<String> isolatedHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/isolated-timeout", String.class);
+        assertEquals(HttpStatus.OK, isolatedHttp.getStatusCode());
+        assertTrue(isolatedHttp.getBody() != null && isolatedHttp.getBody().contains("Per-Client-Timeout-Isolation"));
+
+        ResponseEntity<String> bizErrorHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/business-error", String.class);
+        assertEquals(HttpStatus.OK, bizErrorHttp.getStatusCode());
+        assertTrue(bizErrorHttp.getBody() != null && bizErrorHttp.getBody().contains("Causal-Business-Error-Decoding"));
+
+        ResponseEntity<String> http500 = restTemplate.getForEntity("/sample/cloud/feign/tolerance/http-500", String.class);
+        assertEquals(HttpStatus.OK, http500.getStatusCode());
+        assertTrue(http500.getBody() != null && http500.getBody().contains("HTTP-500-Causal-Translation"));
+
+        ResponseEntity<String> payloadHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/payload-overflow", String.class);
+        assertEquals(HttpStatus.OK, payloadHttp.getStatusCode());
+        assertTrue(payloadHttp.getBody() != null && payloadHttp.getBody().contains("Payload-Guard-10MB-Overflow"));
+
+        ResponseEntity<String> slowCallHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/slow-call", String.class);
+        assertEquals(HttpStatus.OK, slowCallHttp.getStatusCode());
+        assertTrue(slowCallHttp.getBody() != null && slowCallHttp.getBody().contains("Slow-Call-Threshold-Detection"));
+
+        ResponseEntity<String> headersHttp = restTemplate.getForEntity("/sample/cloud/feign/tolerance/headers", String.class);
+        assertEquals(HttpStatus.OK, headersHttp.getStatusCode());
+        assertTrue(headersHttp.getBody() != null && headersHttp.getBody().contains("same-token"));
     }
 }
