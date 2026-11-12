@@ -66,7 +66,12 @@ public class GatewaySignGuardFilter implements GlobalFilter, Ordered {
     public GatewaySignGuardFilter(AtengGatewaySignProperties properties,
                                   SignSecretProvider secretProvider,
                                   ObjectMapper objectMapper) {
-        this(properties, secretProvider, new io.github.atengk.cloud.gateway.provider.InMemoryGatewayNonceValidator(), objectMapper);
+        this(properties, secretProvider,
+                new io.github.atengk.cloud.gateway.provider.InMemoryGatewayNonceValidator(
+                        properties != null
+                                ? properties.getNonceMaxCapacity()
+                                : io.github.atengk.cloud.gateway.provider.InMemoryGatewayNonceValidator.DEFAULT_MAX_CAPACITY),
+                objectMapper);
     }
 
     public GatewaySignGuardFilter(AtengGatewaySignProperties properties,

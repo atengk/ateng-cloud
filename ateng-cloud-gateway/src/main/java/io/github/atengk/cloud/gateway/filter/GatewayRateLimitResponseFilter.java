@@ -11,6 +11,7 @@ import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -18,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.server.reactive.ServerHttpResponseDecorator;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
@@ -67,13 +69,35 @@ public class GatewayRateLimitResponseFilter implements GlobalFilter, Ordered {
             @Override
             public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
                 if (isTooManyRequests(getStatusCode())) {
-                    return writeRateLimitPayload(this, exchange);
+                    Flux<? extends DataBuffer> buffers = body != null ? Flux.from(body) : Flux.empty();
+                    return releaseAndWriteRateLimit(this, exchange, buffers);
                 }
                 return super.writeWith(body);
+            }
+
+            @Override
+            public Mono<Void> writeAndFlushWith(Publisher<? extends Publisher<? extends DataBuffer>> body) {
+                if (isTooManyRequests(getStatusCode())) {
+                    Flux<? extends DataBuffer> buffers = body != null
+                            ? Flux.from(body).flatMap(Flux::from)
+                            : Flux.empty();
+                    return releaseAndWriteRateLimit(this, exchange, buffers);
+                }
+                return super.writeAndFlushWith(body);
             }
         };
 
         return chain.filter(exchange.mutate().response(decoratedResponse).build());
+    }
+
+    private Mono<Void> releaseAndWriteRateLimit(ServerHttpResponseDecorator response,
+                                                ServerWebExchange exchange,
+                                                Flux<? extends DataBuffer> buffers) {
+        // 先排空并释放原始响应流的 Netty DataBuffer，杜绝 429 改写时的堆外内存泄漏
+        return buffers
+                .doOnNext(DataBufferUtils::release)
+                .doOnDiscard(DataBuffer.class, DataBufferUtils::release)
+                .then(Mono.defer(() -> writeRateLimitPayload(response, exchange)));
     }
 
     private boolean isTooManyRequests(HttpStatusCode statusCode) {

@@ -35,6 +35,11 @@ public class AtengGatewaySignProperties {
     private Duration timestampThreshold = Duration.ofMinutes(5);
 
     /**
+     * 内存 Nonce 防重放校验器最大缓存容量上限 (默认 100,000，防止高频随机 Nonce 洪泛攻击引发 OOM)
+     */
+    private int nonceMaxCapacity = 100_000;
+
+    /**
      * 需进行签名校验的目标路径列表 (支持 AntPath，若为空且未配置则默认对全部请求生效)
      */
     private List<String> includePaths = new ArrayList<>();
@@ -74,6 +79,14 @@ public class AtengGatewaySignProperties {
 
     public void setTimestampThreshold(Duration timestampThreshold) {
         this.timestampThreshold = timestampThreshold;
+    }
+
+    public int getNonceMaxCapacity() {
+        return nonceMaxCapacity;
+    }
+
+    public void setNonceMaxCapacity(int nonceMaxCapacity) {
+        this.nonceMaxCapacity = nonceMaxCapacity;
     }
 
     public List<String> getIncludePaths() {

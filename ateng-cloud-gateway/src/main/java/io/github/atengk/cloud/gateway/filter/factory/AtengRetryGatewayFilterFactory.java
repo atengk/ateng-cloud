@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.RetryGatewayFilterFactory;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 
 import java.net.ConnectException;
 
@@ -15,8 +14,8 @@ import java.net.ConnectException;
  * <p>微服务专属架构铁律落地：
  * <ul>
  *     <li><b>写请求绝对禁止重试不变量</b>：对 POST、PUT、PATCH、DELETE 等非幂等写操作，强制执行 0 次重试，坚决杜绝重复落库与资损风险；</li>
- *     <li><b>读请求弹性建连防雪崩</b>：仅对纯读请求 (GET / HEAD) 且发生底层网络建连超时或连接被拒异常时，允许弹性重试 1 次；</li>
- *     <li><b>读超时防风暴</b>：对下游服务已接收并处理中的读取超时 (SocketTimeoutException)，坚决关闭重试，防御下游级联假死与重试风暴。</li>
+ *     <li><b>读请求弹性建连防雪崩</b>：仅对纯读请求 (GET / HEAD) 且发生底层 TCP 建连超时或连接被拒异常时，允许弹性重试 1 次；</li>
+ *     <li><b>读超时与 5xx 绝对防风暴</b>：对下游服务已接收并处理中返回的 HTTP 5xx 状态码或读取超时 (SocketTimeoutException)，坚决关闭重试，防御下游级联雪崩。</li>
  * </ul>
  * </p>
  *
@@ -44,7 +43,9 @@ public class AtengRetryGatewayFilterFactory extends RetryGatewayFilterFactory {
                 ConnectException.class,
                 io.netty.channel.ConnectTimeoutException.class
         );
-        safeReadConfig.setSeries(HttpStatus.Series.SERVER_ERROR);
+        // 严禁对下游已接收处理的 HTTP 5xx 状态码触发重试，显式置空默认 SERVER_ERROR 与状态码集合
+        safeReadConfig.setStatuses();
+        safeReadConfig.setSeries();
         if (config != null && config.getBackoff() != null) {
             safeReadConfig.setBackoff(config.getBackoff());
         }

@@ -208,15 +208,19 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
-     * 注册开放接口 Nonce 防重放校验器默认实现 (基于内存滑动窗口)
+     * 注册开放接口 Nonce 防重放校验器默认实现 (基于有界内存滑动窗口)
      *
+     * @param properties 网关配置属性
      * @return GatewayNonceValidator
      */
     @Bean
     @ConditionalOnMissingBean(GatewayNonceValidator.class)
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
-    public GatewayNonceValidator defaultGatewayNonceValidator() {
-        return new InMemoryGatewayNonceValidator();
+    public GatewayNonceValidator defaultGatewayNonceValidator(AtengGatewayProperties properties) {
+        int maxCapacity = properties != null && properties.getSign() != null
+                ? properties.getSign().getNonceMaxCapacity()
+                : InMemoryGatewayNonceValidator.DEFAULT_MAX_CAPACITY;
+        return new InMemoryGatewayNonceValidator(maxCapacity);
     }
 
     /**

@@ -1,10 +1,14 @@
 package io.github.atengk.cloud.sample.gateway;
 
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
+import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
 import io.github.atengk.cloud.sample.gateway.controller.GatewayResilienceController;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -14,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -41,15 +46,29 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 @AutoConfigureWebTestClient(timeout = "15000")
 public class SampleGatewayTrafficGuardIntegrationTest {
 
+    private static final Logger log = LoggerFactory.getLogger(SampleGatewayTrafficGuardIntegrationTest.class);
+
     @Autowired
     private WebTestClient webTestClient;
 
     @Autowired
     private GatewayResilienceController gatewayResilienceController;
 
+    @Autowired
+    private NacosRouteDefinitionRepository nacosRouteDefinitionRepository;
+
     @BeforeEach
     void setUp() {
         gatewayResilienceController.resetRetryCounters();
+    }
+
+    @AfterEach
+    void tearDown() {
+        try {
+            nacosRouteDefinitionRepository.delete(Mono.just("resilience-downstream-503")).block();
+        } catch (Exception ex) {
+            log.debug("[SampleTest] 清理测试路由忽略未注册状态: {}", ex.getMessage());
+        }
     }
 
     @Test
@@ -135,5 +154,45 @@ public class SampleGatewayTrafficGuardIntegrationTest {
 
         // 强断言：读操作建连异常后重试 1 次成功恢复，总执行次数为 2
         assertEquals(2, gatewayResilienceController.getGetRetryCount(), "读请求建连失败应弹性重试 1 次");
+    }
+
+    @Test
+    @DisplayName("测试防雪崩 5xx 禁重试铁律：GET 请求配置 AtengRetry=1 但下游返回 HTTP 503 时严格零重试 (执行次数=1)")
+    void testReadMethodZeroRetryOnDownstream503() {
+        String routeJson = """
+                [
+                  {
+                    "id": "resilience-downstream-503",
+                    "uri": "forward:/sample/cloud/gateway/resilience/downstream-503",
+                    "predicates": [
+                      {
+                        "name": "Path",
+                        "args": {
+                          "_genkey_0": "/api/resilience/downstream-503"
+                        }
+                      }
+                    ],
+                    "filters": [
+                      {
+                        "name": "AtengRetry",
+                        "args": {
+                          "retries": "1"
+                        }
+                      }
+                    ]
+                  }
+                ]
+                """;
+        nacosRouteDefinitionRepository.updateRoutes(routeJson);
+
+        webTestClient.get()
+                .uri("/api/resilience/downstream-503")
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.SERVICE_UNAVAILABLE)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(503);
+
+        assertEquals(1, gatewayResilienceController.getServerErrorCount(),
+                "下游已建立连接并返回 HTTP 503 时严禁触发重试");
     }
 }

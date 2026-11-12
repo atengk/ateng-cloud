@@ -494,4 +494,45 @@ public class GatewaySignGuardFilterTest {
 
         assertTrue(executed.get(), "未开启 bodyEnabled 时即使报文超过 2MB 也不应在签名层提前被 413 熔断，保持向后兼容");
     }
+
+    @Test
+    @DisplayName("测试 Nonce 缓存达到配置上限 (nonceMaxCapacity) 时以 Fail-Closed 策略拦截并返回 401")
+    void testNonceMaxCapacityFailClosedBlocksWith401() throws Exception {
+        AtengGatewaySignProperties props = new AtengGatewaySignProperties();
+        props.setEnabled(true);
+        props.setNonceMaxCapacity(2);
+
+        InMemorySignSecretProvider provider = new InMemorySignSecretProvider();
+        provider.registerSecret("app-test-01", "my-secret-key-12345");
+
+        GatewaySignGuardFilter filter = new GatewaySignGuardFilter(props, provider, objectMapper);
+        long now = System.currentTimeMillis();
+
+        for (int i = 1; i <= 3; i++) {
+            String nonce = "bounded-nonce-" + i;
+            String canonical = "appId=app-test-01&nonce=" + nonce + "&timestamp=" + now;
+            String signature = calculateHmac(canonical, "my-secret-key-12345");
+
+            MockServerHttpRequest request = MockServerHttpRequest.get("/api/open/data")
+                    .header(GatewayConstants.X_APP_ID, "app-test-01")
+                    .header(GatewayConstants.X_TIMESTAMP, String.valueOf(now))
+                    .header(GatewayConstants.X_NONCE, nonce)
+                    .header(GatewayConstants.X_SIGNATURE, signature)
+                    .build();
+            MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            AtomicBoolean executed = new AtomicBoolean(false);
+            filter.filter(exchange, ex -> {
+                executed.set(true);
+                return Mono.empty();
+            }).block();
+
+            if (i <= 2) {
+                assertTrue(executed.get(), "容量内的第 " + i + " 个请求应正常放行");
+            } else {
+                assertFalse(executed.get(), "超过 nonceMaxCapacity 上限时应 Fail-Closed 拒绝放行");
+                assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+            }
+        }
+    }
 }

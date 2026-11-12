@@ -1,11 +1,13 @@
 package io.github.atengk.cloud.gateway.filter.factory;
 
+import io.netty.channel.ConnectTimeoutException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.factory.RetryGatewayFilterFactory;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -94,6 +96,61 @@ class AtengRetryGatewayFilterFactoryTest {
         assertEquals("Read timed out", getRootCauseMessage(thrown));
         // 读超时坚决不重试，防止下游雪崩
         assertEquals(1, callCount.get());
+    }
+
+    @Test
+    @DisplayName("纯读操作 (GET/HEAD) 下游返回 HTTP 500/502/503/504 时防雪崩零重试 (执行次数=1)")
+    void testReadMethodZeroRetryOnServerErrors() {
+        RetryGatewayFilterFactory.RetryConfig config = new RetryGatewayFilterFactory.RetryConfig();
+        config.setRetries(3);
+        GatewayFilter filter = factory.apply(config);
+
+        HttpStatus[] serverErrors = {
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                HttpStatus.BAD_GATEWAY,
+                HttpStatus.SERVICE_UNAVAILABLE,
+                HttpStatus.GATEWAY_TIMEOUT
+        };
+
+        for (HttpMethod method : new HttpMethod[]{HttpMethod.GET, HttpMethod.HEAD}) {
+            for (HttpStatus status : serverErrors) {
+                AtomicInteger callCount = new AtomicInteger(0);
+                MockServerHttpRequest request = MockServerHttpRequest.method(method, "/api/resource").build();
+                MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+                GatewayFilterChain chain = ex -> Mono.defer(() -> {
+                    callCount.incrementAndGet();
+                    ex.getResponse().setStatusCode(status);
+                    return Mono.empty();
+                });
+
+                filter.filter(exchange, chain).block();
+                assertEquals(status, exchange.getResponse().getStatusCode());
+                assertEquals(1, callCount.get(),
+                        method + " 下游返回 " + status.value() + " 时严禁触发重试，防止级联雪崩");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("纯读操作 (HEAD) 发生 ConnectTimeoutException 时允许弹性重试 1 次 (执行次数=2)")
+    void testHeadMethodRetriesOnceOnConnectTimeoutException() {
+        RetryGatewayFilterFactory.RetryConfig config = new RetryGatewayFilterFactory.RetryConfig();
+        config.setRetries(2);
+        GatewayFilter filter = factory.apply(config);
+
+        AtomicInteger callCount = new AtomicInteger(0);
+        MockServerHttpRequest request = MockServerHttpRequest.method(HttpMethod.HEAD, "/api/resource").build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        GatewayFilterChain chain = ex -> Mono.defer(() -> {
+            callCount.incrementAndGet();
+            return Mono.error(new ConnectTimeoutException("Connection timed out"));
+        });
+
+        Exception thrown = assertThrows(Exception.class, () -> filter.filter(exchange, chain).block());
+        assertEquals("Connection timed out", getRootCauseMessage(thrown));
+        assertEquals(2, callCount.get());
     }
 
     private String getRootCauseMessage(Throwable throwable) {

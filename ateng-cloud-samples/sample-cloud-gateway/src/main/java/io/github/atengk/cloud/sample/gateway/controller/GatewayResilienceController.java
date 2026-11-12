@@ -6,6 +6,7 @@ import io.github.atengk.cloud.sample.gateway.model.InventoryStockVO;
 import io.github.atengk.cloud.sample.gateway.model.RetryStatVO;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,6 +46,7 @@ public class GatewayResilienceController {
 
     private final AtomicInteger getRetryCounter = new AtomicInteger(0);
     private final AtomicInteger postRetryCounter = new AtomicInteger(0);
+    private final AtomicInteger serverErrorCounter = new AtomicInteger(0);
 
     /**
      * 重置弹性重试计数器 (供测试或观测使用)
@@ -52,6 +54,7 @@ public class GatewayResilienceController {
     public void resetRetryCounters() {
         getRetryCounter.set(0);
         postRetryCounter.set(0);
+        serverErrorCounter.set(0);
     }
 
     public int getGetRetryCount() {
@@ -60,6 +63,10 @@ public class GatewayResilienceController {
 
     public int getPostRetryCount() {
         return postRetryCounter.get();
+    }
+
+    public int getServerErrorCount() {
+        return serverErrorCounter.get();
     }
 
     /**
@@ -89,6 +96,18 @@ public class GatewayResilienceController {
     public Mono<Result<RetryStatVO>> createOrder() throws Exception {
         postRetryCounter.incrementAndGet();
         throw new ConnectException("模拟非幂等订单创建底层建连失败，严格禁止重试防雪崩");
+    }
+
+    /**
+     * 下游服务返回 HTTP 503 接口 (验证 GET 读请求已建立连接返回 5xx 时严禁重试)
+     *
+     * @return HTTP 503 响应实体
+     */
+    @GetMapping("/downstream-503")
+    public Mono<ResponseEntity<Result<RetryStatVO>>> downstream503() {
+        int count = serverErrorCounter.incrementAndGet();
+        return Mono.just(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Result.fail(HttpStatus.SERVICE_UNAVAILABLE.value(), "模拟下游服务过载返回 503 (attempt=" + count + ")")));
     }
 
     /**
