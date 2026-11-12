@@ -5,7 +5,7 @@
 ## Language
 
 **Header Sanitization**:
-网关在执行鉴权与路由转发前，强制对外部请求传入的所有内部受信标头（`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant`、`Same-Token` 等）进行物理剥离与清空，仅由网关在校验合法后基于可信上下文重新生成的边界防御机制。
+网关在执行鉴权与路由转发前，强制对外部请求传入的所有内部受信标头（`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant`、`Same-Token`、`SA-SAME-TOKEN`、`TX_XID`、`X-Traffic-Lane`、`X-Traffic-Rule` 等）进行物理剥离与清空，仅由网关在校验合法后基于可信上下文重新生成的边界防御机制。
 _Avoid_: 请求头清理, 标头过滤, 参数重置
 
 **Zero-Trust Same-Token**:
@@ -65,7 +65,7 @@ _Avoid_: 访问日志, 请求耗时统计, 网关日志记录
 _Avoid_: 路径穿越拦截, 路径清洗, URI规范化
 
 **Retry Storm Defense**:
-针对非幂等写请求（POST/PUT 等）无论任何异常坚决实行零重试，仅对纯读请求（GET）在 TCP 握手建连失败时受控重试 1 次的网关级防雪崩重试纪律。
+针对非幂等写请求（POST/PUT/PATCH/DELETE 等）无论任何异常坚决实行零重试，仅对纯读请求（GET/HEAD）在 TCP 握手建连失败（`ConnectException` / `ConnectTimeoutException`）时受控重试 1 次（严禁对下游已接收处理的 HTTP 5xx 状态码或读超时触发重试）的网关级防雪崩重试纪律。
 _Avoid_: 容错重试, 弹性重试机制, 失败轮询
 
 **Security Headers Hardening**:
@@ -127,3 +127,11 @@ _Avoid_: 旁路容错, 审计隔离, 端点无锁
 **In-Memory Forwarding**:
 在样例工程与离线测试中，利用 Spring Cloud Gateway 原生 `forward:/` 协议断言将路由分发至本地 WebFlux 响应式控制器的离线自洽架构机制，在完整覆盖网关过滤器链与谓词断言的同时消除外部进程开销与网络端口冲突。
 _Avoid_: 内部重定向, Controller直调, 本地Mock转发
+
+**Bounded Nonce Replay Guard**:
+网关在内存滑动窗口中校验开放接口请求 Nonce 唯一性时，通过硬容量上限（默认 `100,000`）与过期优先驱逐相结合，并在满载时执行 Fail-Closed 拒绝新请求的防内存打爆机制。
+_Avoid_: Nonce缓存, 内存防重放, 随机数集合
+
+**Pinning-Free Route Synchronization**:
+网关在执行双轨动态路由热绑与快照刷新时，采用 `ReentrantLock` 替代 `synchronized` 守护临界区，并将反向持久化操作卸载至有界弹性调度器，杜绝 JDK 21+ 虚拟线程 Carrier Pinning 与 Netty EventLoop 阻塞的并发控制机制。
+_Avoid_: 路由同步锁, synchronized刷新, 阻塞持久化

@@ -21,13 +21,14 @@
    - 严禁在网关主链路上执行阻塞操作，所有上下文与拦截机制全面契合 Project Reactor 响应式流规范。
 
 2. **外部标头强制清洗与零信任同源防御 (Header Sanitization & Same-Token Guard)**：
-   - 装配最高优先级 `GatewayHeaderSanitizeFilter`：请求入站时无条件物理剥离外部传入的所有内部受信标头（`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant`、`Same-Token` 等）；
+   - 装配高优先级 `GatewayHeaderSanitizeFilter`：请求入站时无条件物理剥离外部传入的所有内部受信与分布式上下文标头（默认覆盖 `X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant`、`Same-Token`、`SA-SAME-TOKEN`、`TX_XID`、`X-Traffic-Lane`、`X-Traffic-Rule`）；
    - 集中挂载 Sa-Token 反应式鉴权过滤器（`SaTokenGatewayFilter`），内置系统白名单并支持 `ateng.cloud.gateway.security.exclude-paths` 属性扩展，网关聚焦全局身份认证与租户信息提取，业务接口细粒度权限校验下放至下游微服务；
-   - 校验合法后由网关从受信登录态动态重注 `X-User-Id` 与 `X-Tenant-Id`，并使用 `SaSameUtil.getToken()` 动态签发内部同源数字凭证 `Same-Token`；未携带合法签名的直连内网流量被微服务直接 401 熔断。
+   - 校验合法后由网关从受信登录态动态重注 `X-User-Id` 与 `X-Tenant-Id`，并在 `ateng.cloud.gateway.security.same-token-enabled=true`（默认开启）时使用 `SaSameUtil.getToken()` 动态签发内部同源数字凭证 `Same-Token`；未携带合法签名的直连内网流量被微服务直接 401 熔断。
 
-3. **Nacos 动态路由双轨持久化、快照容错与冷启兜底 (Dynamic Route Hot-Reload & Snapshot Guard)**：
-   - 实现 `RouteDefinitionRepository` SPI，默认持久化载体为 Nacos `gateway-routes.json`（支持属性自定义扩展）；
-   - **双轨配置无感热更**：既支持独立的 `gateway-routes.json` 专用路由管理，又支持微服务主配置文件中 `spring.cloud.gateway.routes` 发生变更时通过 `NacosConfigRefreshEngine` 自动广播 `RefreshRoutesEvent` 热更，双轨皆可零停机生效；
+3. **Nacos 动态路由双轨持久化、快照容错与防 Pinning 并发控制 (Dynamic Route Hot-Reload & Pinning-Free Lock)**：
+   - 实现 `RouteDefinitionRepository` SPI，默认持久化载体为 Nacos `gateway-routes.json`（支持属性自定义扩展，初始拉取超时默认 `5s`）；
+   - **双轨配置无感热更**：既支持独立的 `gateway-routes.json` 专用路由管理，又支持微服务主配置文件中 `spring.cloud.gateway.routes` 发生变更时通过 `GatewayRouteRefreshListener` 自动广播 `RefreshRoutesEvent` 热更，双轨皆可零停机生效；
+   - **虚拟线程防 Pinning 与非阻塞持久化**：双轨路由刷新临界区统一采用 `ReentrantLock` 替代 `synchronized`（在 `finally` 块中校验 `isHeldByCurrentThread()` 后释放），并将 `save`/`delete` 触发的 Nacos 反向持久化调度至 `Schedulers.boundedElastic()`，杜绝 JDK 21+ 虚拟线程 Carrier Pinning 与 Netty EventLoop 线程阻塞；
    - 内存前置语法语义校验与快照守卫（Keep Last-Known Good Snapshot）：收到 Nacos 推送后若配置格式破损或存在非法断言/过滤器，记录 ERROR 报警日志并坚决保留上一份有效内存路由快照，杜绝误操作导致全网 404；
    - 校验通过后在内存中完成无感原子替换并发布 `RefreshRoutesEvent`，更新全过程零丢包、无需重启网关；
    - 采用多源合并策略：系统启动时加载本地 YAML 静态路由作为兜底（如监控端点），Nacos 动态配置加载后按 `routeId` 合并覆盖。
@@ -85,26 +86,27 @@
 
 16. **网关层写请求绝对禁止重试与建连失败弹性重试 (Gateway Downstream Retry Storm Defense)**：
     - 遵循“写请求绝对禁止重试不变量”：对 POST、PUT、PATCH、DELETE 等非幂等写请求，无论发生读取超时还是任何异常，坚决零重试（Retry = 0）；
-    - 仅对纯读请求（GET、HEAD）且发生 `ConnectTimeoutException`（TCP 握手尚未建立）时，允许在不同服务实例间受控重试 1 次，根除重试风暴与资损风险。
+    - 仅对纯读请求（GET、HEAD）且发生 `ConnectException` / `ConnectTimeoutException`（TCP 握手尚未建立）时，允许在不同服务实例间受控重试 1 次；严禁配置 `SERVER_ERROR` 状态码触发重试，防止下游已接收处理中的慢查询或业务异常引发重试风暴与级联雪崩。
 
 17. **等保三级与 OWASP 安全响应头强化 (Security Headers Hardening)**：
-    - 出站管道默认装配 `GatewaySecurityHeadersFilter`（支持一键开闭与定制）；
+    - 出站管道默认装配 `GatewaySecurityHeadersFilter`（支持一键开闭与定制，配置收敛于顶层 `ateng.cloud.gateway.security-headers.*`）；
     - 自动注入 `X-Content-Type-Options: nosniff`、`X-Frame-Options: SAMEORIGIN`、`X-XSS-Protection: 1; mode=block`、`Strict-Transport-Security` 及 `Referrer-Policy`，满足金融政企等保三级安全合规。
 
-18. **开放接口防篡改签名与防重放攻击防线 SPI (API Sign & Nonce Replay Defense SPI)**：
-    - 提供可选的 `GatewaySignGuardFilter`，针对开放路由实施时间戳（Timestamp）时钟偏差校验、Redis Nonce 唯一性防重放及 HMAC-SHA256 签名防篡改校验；
+18. **开放接口防篡改签名与有界 Nonce 防重放防线 SPI (API Sign & Bounded Nonce Replay Defense SPI)**：
+    - 提供可选的 `GatewaySignGuardFilter`，针对开放路由实施时间戳（Timestamp）时钟偏差校验、Nonce 唯一性防重放及 HMAC-SHA256 签名防篡改校验；
+    - 默认内存实现 `InMemoryGatewayNonceValidator` 内置有界容量护栏（`ateng.cloud.gateway.sign.nonce-max-capacity=100000`），当清理过期条目后仍达硬上限时执行 **Fail-Closed** 拒绝新 Nonce，彻底杜绝恶意高频随机 Nonce 攻击引发堆内存 OOM；
     - 提供 `SignSecretProvider` SPI 支持按 `appId` 动态获取签名私钥。
 
 19. **网关复合负载均衡责任链与金丝雀灰度无损降级 (Gateway Composite LoadBalancing Chain)**：
     - 定制扩展反应式负载均衡提供器 `GrayServiceInstanceListSupplier`：提取请求中的 `X-Traffic-Tag`，精准过滤匹配 Nacos 实例元数据（`metadata.tag`）；
     - 弹性兜底策略：当灰度节点全部下线时，若 `fallback-to-default=true`（默认），平滑降级调度至基线默认实例，杜绝全网 503 故障；未染色普通流量优先锁定基线实例；
-    - **责任链嵌套与拓扑时序不变量（Gray First）**：遵循“业务隔离级别高于物理机房亲和”铁律，装配链严格按 `DiscoveryClient` $\to$ `GrayServiceInstanceListSupplier`（版本池隔离） $\to$ `ZonePreferenceServiceInstanceListSupplier`（可用区就近） $\to$ `Caching` 嵌套；
+    - **责任链嵌套与拓扑时序不变量（Gray First）**：遵循“业务隔离级别高于物理机房亲和”铁律，装配链严格按 `DiscoveryClient` $\to$ `Caching(3s)` $\to$ `GrayServiceInstanceListSupplier`（版本池隔离） $\to$ `ZonePreferenceServiceInstanceListSupplier`（可用区就近） $\to$ `NacosWarmupLoadBalancer` 嵌套；
     - **无损下线缓存时效收敛**：默认将网关 `spring.cloud.loadbalancer.cache.ttl` 压缩至 `3s`，确保实例注销后秒级感知，杜绝 35 秒本地缓存滞后导致调用已下线节点；
     - **流量染色决议扩展点 (TrafficTagResolver SPI)**：标配 `@ConditionalOnMissingBean` 暴露 `TrafficTagResolver`，支持基于登录态、租户 ID 或动态业务规则定制入站打标；
     - **Nacos 智能加权与预热调度无缝协同**：底层实例选择器无缝接入 `NacosWarmupLoadBalancer`，全面支持 Nacos 控制台静态权重（`nacos.weight`）、运维 `0` 权重摘流隔离、基于 Nginx SWRR 算法的 JVM 冷启动平滑预热升权调度，以及通过 `InstanceWeightCalculator` 实现的自适应资源降权。
 
-20. **100% 离线自洽 1:1 场景工程 (Hermetic Sample Sandbox)**：
-    - 在 `ateng-cloud-samples/sample-cloud-gateway` 配套专属响应式沙箱，基于 `WebTestClient` + 内置响应式 Mock 终结点 + 内存动态路由推演，在脱网（`nacos.enabled=false`）环境下秒级跑通全特性回归。
+20. **100% 离线自洽 1:1 场景工程与内部转发机制 (Hermetic Sample Sandbox & In-Memory Forwarding)**：
+    - 在 `ateng-cloud-samples/sample-cloud-gateway` 配套专属响应式沙箱，统一基于 Spring Cloud Gateway 原生 `forward:/` 协议断言将微服务路由分发至本地 WebFlux 响应式控制器，替代启动额外外部进程或物理端口，在脱网（`nacos.enabled=false`）环境下毫秒级跑通全过滤器链与断言回归。
 
 21. **Sentinel 响应式流控降级异常自适应转译协同 (Sentinel Reactive Adapter)**：
     - 坚持网关底座零臃肿（Zero-Bloat Invariant），不强制引入 Sentinel 依赖，采用 `ClassUtils.isPresent` 平滑自适应探测；
@@ -116,7 +118,7 @@
     - 杜绝大报文字符串在内存中多次分配，兼顾极高抗篡改性与 Netty 事件循环内存安全。
 
 23. **网关全景健康与双轨动态路由运维诊断端点 (Gateway Panorama Diagnostics)**：
-    - 暴露非阻塞响应式 Actuator 端点 `@Endpoint(id = "ateng-gateway")`（`/actuator/ateng-gateway`）；
+    - 暴露非阻塞响应式 Actuator 端点 `@Endpoint(id = "atengGateway")`（同时注册兼容别名路由 `/actuator/atengGateway` 与 `/actuator/ateng-gateway`）；
     - 输出四大核心维度的只读聚合报告（`dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard`）；
     - 恪守生产零泄密红线，IP 黑白名单与 AppKey 仅暴露规则总数与运行态健康状态，绝不暴露内部明细拓扑。
 
@@ -129,9 +131,9 @@
     - `GatewayGlobalExceptionHandler` 精准捕获 `PrematureCloseException` 与 `ClosedChannelException`；
     - 转译为统一的 HTTP 502 Bad Gateway（Result 502），明确区分网关自身内部故障（500）与下游微服务滚动重启瞬断（502），赋能前端 Axios 与上游 ALB 弹性重试。
 
-26. **验签中断场景下 Netty 堆外直接内存确定性安全释放 (Deterministic Buffer Release)**：
-    - 在 Body 验签过滤器提前熔断返回 401 时，通过响应式管道流与上下文装饰器确保 DataBuffer 引用计数确定性释放；
-    - 绝不放任缓冲区悬挂，彻底根除高并发恶意攻击下的 Netty DirectMemory 堆外泄漏隐患。
+26. **验签中断与 429 响应改写场景下 Netty 堆外直接内存确定性安全释放 (Deterministic Buffer Release)**：
+    - 在 Body 验签过滤器提前熔断返回 401 时，通过 `ServerWebExchangeUtils.clearCachedRequestBody` 确保 DataBuffer 引用计数确定性释放；
+    - 在 `GatewayRateLimitResponseFilter` 拦截 HTTP 429 并覆写标准 `Result` JSON 响应体前，先对上游传入的 `Publisher<? extends DataBuffer>` 执行 `DataBufferUtils::release` 排空释放，彻底根除高并发恶意攻击下的 Netty DirectMemory 堆外泄漏隐患。
 
 27. **双轨动态路由碰撞冲突仲裁优先级 (Dual-Track Route Precedence)**：
     - 确立“独立动态配置（Nacos `gateway-routes.json`）权威覆盖主配置基线”的规则；
