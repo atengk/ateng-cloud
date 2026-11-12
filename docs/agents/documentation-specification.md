@@ -2,7 +2,7 @@
 
 ## 1. 核心定位与设计哲学 (Mission & Scope)
 
-在 `ateng-cloud` 微服务基础设施框架中，**文档与样例工程（Sample）是连接微服务通用治理能力与业务开发者的第一生命线**。本规范确立 `ateng-cloud` 所有微服务子模块文档（`ateng-cloud-*/README.md`）与配套样例工程（`ateng-cloud-samples/sample-cloud-*`）的工业级标准、Sample-First 双向锚定体系与 **13 项交付前强制自检清单**，作为代码审查（`/code-review`）的一票否决红线（Red Card Block）。
+在 `ateng-cloud` 微服务基础设施框架中，**Starter 文档、根目录门面（`README.md` 与 `llms.txt`）与样例工程（Sample）是连接微服务通用治理能力与业务开发者（及 AI 编程助手）的第一生命线**。本规范确立 `ateng-cloud` 所有微服务子模块文档（`ateng-cloud-*/README.md`）、仓库根目录门面与 AI 索引及配套样例工程（`ateng-cloud-samples/sample-cloud-*`）的工业级标准、Sample-First 双向锚定体系与 **13 项交付前强制自检清单**，作为代码审查（`/code-review`）的一票否决红线（Red Card Block）。
 
 ---
 
@@ -69,6 +69,19 @@
 3. **表格结构严整**：表头与对齐分隔行（`| :--- |`）列数必须严格一致；单元格内严禁直接硬回车换行（多行内容使用 `<br>`），单元格内包含管道符 `|` 时必须转义为 `\|`。
 4. **Mermaid 图表语法安全**：节点文本包含括号 `()`、方括号 `[]`、斜杠 `/`、冒号 `:` 时，**必须使用双引号包裹节点标签**（如 `A["Gateway 网关 (WebFlux)"]`）。
 5. **文档内零绝对路径**：文档间互链 100% 使用相对路径（`./`、`../`），严禁写入 `file:///` 或本地盘符路径。
+
+---
+
+### 2.6 根目录门面文档 (`Root Storefront README.md`) 与 AI 索引 (`llms.txt`) 边界规范
+
+根目录 [`README.md`](../../README.md) 与 [`llms.txt`](../../llms.txt) 是面向分布式架构选型者与外部 AI 编程助手的**“第一入口与机读全景地图”**，严禁堆砌内部流程细节或冗长开发规约：
+
+1. **门面与发版脚本兼容守卫**：根目录 `README.md` 快速起步片段中的 `<artifactId>ateng-cloud-bom</artifactId>` 必须紧邻下一行 `<version>...</version>`，且上游 `ateng-boot-bom` 声明版本与根 `pom.xml` 保持一致，保障 [`scripts/release.sh`](../../scripts/release.sh) 自动升级发版与基线可验证。
+2. **完整模块与 Sample 双向直达**：门面导航须 100% 覆盖全部 `ateng-cloud-*` Starter 与 8 个 `ateng-cloud-samples/sample-cloud-*` 体验沙箱（含 `traffic -> sample-cloud-traffic-gray` 与 `all -> sample-cloud-smoke-test`），并前置 AI 上下文入口表与微服务 `.cursorrules` 提示卡。
+3. **机读 AI 索引 (`llms.txt`) 三铁律**：
+   - **纯仓内相对路径**：遵循 [llmstxt.org](https://llmstxt.org/) 分组规范，100% 使用 `./...` 相对路径，**严禁跨仓库硬编码相对链接（如 `../ateng-boot`）**或绝对盘符路径（生态联动通过文字说明表达）。
+   - **免硬编码版本号**：`llms.txt` 严禁写死 Spring Boot / Cloud / Alibaba / Dubbo / `ateng-boot-bom` 或自身发版版本号，统一引导 AI 从根 [`pom.xml`](../../pom.xml) 与 [`ateng-cloud-bom/README.md`](../../ateng-cloud-bom/README.md) 读取唯一版本真源。
+   - **高危分布式红线前置**：首屏集中声明“网关纯 WebFlux 禁 `ateng-boot-web`”、“Nacos 禁 `@RefreshScope`”、“Feign 写接口禁重试”、“四维上下文 + `X-Traffic-Tag` + `Same-Token` + `XID` 透传与对称清理”等强约束，降低 AI 幻觉率。
 
 ---
 

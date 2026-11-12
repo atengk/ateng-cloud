@@ -21,7 +21,8 @@
 4. **1:1 双模自洽样例工程 (Dual-Mode Sample Gate)**：
    - 在 `ateng-cloud-samples/sample-cloud-<module>` 建立 1:1 独立验证沙箱，严格遵循 [`documentation-specification.md`](./documentation-specification.md) 第 3 章规范（多 Controller 领域暴露、网关 WebFlux 纯净特例、`@Profile("!local")` 离线自洽桩 + `application-local.example.yml` 双模联调）。
 5. **Sample-First 五维文档与体验卡 (5D Documentation Gate)**：
-   - 先跑通 Sample 端到端测试，再按 [`documentation-specification.md`](./documentation-specification.md) 逆向提取生成 Starter 五维 `README.md`（100% 全景速查矩阵、三要素就近闭环、能力大章收敛）与 Sample 四段式体验卡 `README.md`。
+   - 先跑通 Sample 端到端测试，再按 [`documentation-specification.md`](./documentation-specification.md) 逆向提取生成 Starter 五维 `README.md`（100% 全景速查矩阵、三要素就近闭环、能力大章收敛）与 Sample 四段式体验卡 `README.md`；
+   - 同步在根目录 [`README.md`](../../README.md) 与根目录 AI 索引 [`llms.txt`](../../llms.txt) 中补齐新模块及对应 Sample 的一行简洁索引。
 6. **领域词汇表与 ADR 架构记录 (Domain & ADR Gate)**：
    - 按 [`domain.md`](./domain.md) 新建 `ateng-cloud-<module>/CONTEXT.md` 领域词汇表，新增 `docs/adr/NNNN-*.md` 架构决策记录，并同步注册至 [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md) 与 [`docs/adr/README.md`](../adr/README.md)。
 

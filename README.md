@@ -4,6 +4,7 @@
 
 [![Java CI](https://github.com/atengk/ateng-cloud/actions/workflows/ci.yml/badge.svg)](https://github.com/atengk/ateng-cloud/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.atengk/ateng-cloud-bom.svg?style=flat-square&color=blue)](https://central.sonatype.com/artifact/io.github.atengk/ateng-cloud-bom)
+[![AI-Ready](https://img.shields.io/badge/AI--Ready-llms.txt-purple.svg?style=flat-square)](./llms.txt)
 [![JDK](https://img.shields.io/badge/JDK-17%20~%2021+-orange.svg)](https://www.oracle.com/java/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.13-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Spring Cloud](https://img.shields.io/badge/Spring%20Cloud-2023.0.6-blue.svg)](https://spring.io/projects/spring-cloud)
@@ -186,7 +187,47 @@ public class OrderController {
 
 ## 5. 微服务核心开发契约速查 (AI & Developer Best Practices)
 
-为保障分布式体系的高可用与一致性，在基于 `ateng-cloud` 进行业务开发或使用 AI 工具生成代码时，严格遵循以下约定：
+为保障分布式体系的高可用与一致性，在基于 `ateng-cloud` 进行业务开发或使用 AI 编程助手（Cursor / Copilot / Windsurf / Claude Code 等）生成代码时，请先按以下索引定位权威上下文，并严格遵循下述契约：
+
+### 🤖 AI / Agent 上下文导航与 1:1 示例沙箱速查
+
+| 文档 / 入口 | 定位与职责 | 适用时机 |
+| :--- | :--- | :--- |
+| [`llms.txt`](./llms.txt) | 遵循 `llmstxt.org` 的纯相对路径 AI 全局索引与高危架构防线摘要 | Cursor / Windsurf / Claude Code / MCP 检索首跳 |
+| [`CONTEXT-MAP.md`](./CONTEXT-MAP.md) | 全仓 10 个模块的领域限界上下文地图与跨服务协作关系 | 界定模块归属、灰度/网关/事务跨模块交互设计 |
+| [`AGENTS.md`](./AGENTS.md) | 7 项微服务核心不变量、9 道代码成熟度防线与测试准出规范 | 提交前人工或 AI 自动化质量门禁审核 |
+| [`ateng-cloud-bom`](./ateng-cloud-bom/README.md) | Spring Boot / Cloud / Alibaba / Dubbo / `ateng-boot-bom` 版本唯一真源 | 查询纳管依赖版本号与 BOM 引入配置 |
+| [`Nacos 配置指南`](./docs/guides/nacos-configuration-guide.md) | Nacos 动态配置导入、命名空间与安全热更规范 | 配置多环境接入与动态规则下发 |
+
+<details>
+<summary><strong>1:1 示例沙箱快速直达 (ateng-cloud-samples — 支持离线自洽与 local 双模)</strong></summary>
+
+| 映射 Starter | 1:1 示例工程目录 | 核心体验场景与契约校验 | 体验卡直达 |
+| :--- | :--- | :--- | :--- |
+| `ateng-cloud-nacos` | `sample-cloud-nacos` | 服务注册发现、冷启动预热与 `spring.config.import` 配置热更 | [`README.md`](./ateng-cloud-samples/sample-cloud-nacos/README.md) |
+| `ateng-cloud-feign` | `sample-cloud-feign` | 四维上下文穿透、`Result<T>` 自适应剥壳与写接口防重试雪崩 | [`README.md`](./ateng-cloud-samples/sample-cloud-feign/README.md) |
+| `ateng-cloud-dubbo` | `sample-cloud-dubbo` | Apache Dubbo 3.3 Triple/TCP 双核流式调用与上下文透传 | [`README.md`](./ateng-cloud-samples/sample-cloud-dubbo/README.md) |
+| `ateng-cloud-gateway` | `sample-cloud-gateway` | WebFlux 纯响应式网关、标头防伪造、`Same-Token` 与动态路由 | [`README.md`](./ateng-cloud-samples/sample-cloud-gateway/README.md) |
+| `ateng-cloud-sentinel` | `sample-cloud-sentinel` | 秒杀 QPS 限流、路径防爆清洗、受管降级与 Nacos 规则持久化 | [`README.md`](./ateng-cloud-samples/sample-cloud-sentinel/README.md) |
+| `ateng-cloud-traffic` | `sample-cloud-traffic-gray` | `X-Traffic-Tag` 流量染色、三层复合灰度路由链与金丝雀平滑降级 | [`README.md`](./ateng-cloud-samples/sample-cloud-traffic-gray/README.md) |
+| `ateng-cloud-seata` | `sample-cloud-seata` | 跨境电商 AT/TCC 分布式事务、TCC 防悬挂屏障与 `XID` 透传 | [`README.md`](./ateng-cloud-samples/sample-cloud-seata/README.md) |
+| `ateng-cloud-all` | `sample-cloud-smoke-test` | 全反应堆通用骨干协同装配与多 Controller 冒烟自验 | [`README.md`](./ateng-cloud-samples/sample-cloud-smoke-test/README.md) |
+
+</details>
+
+### 📋 可直接复制的微服务 AI 规则配置 (.cursorrules / Agent Prompt)
+
+```markdown
+你正在基于 `ateng-cloud` Spring Boot 3 / Spring Cloud / Dubbo 3.3 套件编写生产代码，请严格遵守：
+1. 生成依赖或配置前，先读取 `./llms.txt`、根 `./pom.xml` 及目标 `ateng-cloud-*/README.md`，严禁臆测依赖版本号或自造配置前缀。
+2. 严禁混用阻塞 Servlet 栈与响应式网关：`ateng-cloud-gateway` 100% 纯 WebFlux/Netty，绝对不能引入 `ateng-boot-web` 或 `spring-boot-starter-web`。
+3. 业务服务统一引入 `ateng-cloud-bom` 后按需引用 Starter（或直接引入 `ateng-cloud-all` + `ateng-boot-web`）；Servlet 控制器显式返回 `Result<T>`，严禁直接接收或返回 ORM Entity。
+4. 跨 Feign / Dubbo / Gateway / Seata / 异步线程池透明透传 <traceId, userId, tenantId, ignoreTenant> 与 `X-Traffic-Tag`；外部入口标头由网关清洗并签发内部 `Same-Token`。
+5. Nacos 动态配置统一采用 `spring.config.import` + `@ConfigurationProperties`，严禁在 `@Service`/`@Component` 上标注 `@RefreshScope`；Feign 写接口超时严禁自动重试。
+6. 超时与容量配置强制使用 `Duration` / `DataSize`；耗时 I/O 临界区同步优先使用 `ReentrantLock`，禁止裸 `Thread` 或 `Executors`。
+```
+
+### 🛡️ 核心分布式开发红线清单
 
 1. **命名与配置坐标**：
    - 基础包名：`io.github.atengk.cloud.*`；

@@ -1,0 +1,45 @@
+# ateng-cloud
+
+> 面向企业级高可用分布式生产环境的 Spring Boot 3、Spring Cloud 与 Apache Dubbo 3.3 双模微服务基础设施套件；单向消费 `ateng-boot-bom` 单体纯净底座，坚持纯原生、零臃肿依赖与全链路四维上下文透明透传设计；涵盖 1 个 BOM、1 个聚合全家桶、7 个正交解耦的微服务治理 Starter 及 8 个自包含（支持离线 `!local` 与真实 `local` 双模切换）示例体验工程。
+
+## AI 编程助手必读约定 (Instructions for AI Agents)
+
+- **版本基线真源**：JDK 17+ / Spring Boot / Spring Cloud / Spring Cloud Alibaba / Apache Dubbo / Seata 及上游 `ateng-boot-bom` 实际版本号不在此硬编码。生成依赖坐标或配置前，一律先读取 [根 POM](./pom.xml) 与 [BOM 物料清单](./ateng-cloud-bom/README.md) 获取唯一版本真源。
+- **依赖引入方式**：常规业务微服务推荐引入 `ateng-cloud-all`（默认传递聚合 `nacos`、`feign`、`dubbo`、`sentinel`、`traffic` 五大通用治理骨架，`ateng-cloud-gateway` 保持 `optional` 隔离，`ateng-cloud-seata` 按需独立引入）并搭配 `ateng-boot-web`；精细裁切时，在 `<dependencyManagement>` 通过 `<type>pom</type><scope>import</scope>` 导入 `ateng-cloud-bom` 后按需引入具体 Starter（免配 `<version>`）。
+- **核心架构约束（严禁幻觉偏离）**：
+  - **Reactive vs Servlet 物理隔离红线**：`ateng-cloud-gateway` 与 `sample-cloud-gateway` 严格运行在 Spring WebFlux / Netty 响应式事件循环栈，**100% 严禁引入 `ateng-boot-web` 或 `spring-boot-starter-web`**（Servlet 阻塞栈）。
+  - **四维上下文与灰度/事务穿透**：跨 Feign、Dubbo、Gateway、Sentinel、Seata 及受管异步线程池调用，统一透传 `<traceId, userId, tenantId, ignoreTenant>` 四维上下文以及流量染色标头 `X-Traffic-Tag`、Seata `XID`，并在边界 `finally` 块 100% 对称清理。
+  - **零信任内部同源网关防线**：网关鉴权前置物理清洗外部伪造的内部受信标头（`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant`、`Same-Token`），鉴权通过后动态签发内部 `Same-Token`；下游服务强校验防内网绕过穿透。
+  - **Feign 防雪崩与自适应解包**：非幂等写接口（POST/PUT/PATCH）发生读取超时严禁自动重试；Feign 接口声明返回业务类型 `T` 时自动校验 `Result<T>`（`code == 200`）并解包（返回原生基本类型为 `null` 时前置 Fail-Fast 抛出 `BusinessException`），声明 `Result<T>` 则原样透传；Gateway 与 RPC 边界严禁直接接收或返回 ORM `Entity`。
+  - **Nacos 配置安全与防虚拟线程 Pinning**：配置热更统一采用 `spring.config.import` 与 `@ConfigurationProperties` 绑定，**严禁在 `@Service`/`@Component` 标注 `@RefreshScope`**；时间与容量配置强制使用 `Duration` 与 `DataSize`；涉及 I/O 或耗时临界区优先使用 `ReentrantLock` 替代 `synchronized`。
+- **代码生成检索顺序**：对接任何微服务模块前，先读取目标模块 `README.md`（第 0 节全景速查矩阵汇总全部公共门面/拦截器/注解/配置）及 `CONTEXT.md` 领域术语表；端到端联调代码优先参照 `ateng-cloud-samples/sample-cloud-*`（Servlet Sample 统一 `/sample/cloud/<module>/<feature>/<action>` 路由并返回 `Result<T>`）。
+
+## 全局索引与工程治理
+
+- [项目门面 README](./README.md): 框架定位、60 秒快速起步与全量能力导航
+- [领域限界上下文地图](./CONTEXT-MAP.md): 全仓库 10 个核心模块与示例沙箱的职责边界及协作拓扑
+- [架构决策记录看板 (ADR)](./docs/adr/README.md): 上游 BOM 消费、版本基线、各中间件核心设计与取舍索引
+- [Agent 开发行为契约](./AGENTS.md): 七大微服务架构不变量、九道成熟度防线与测试准出规范
+- [文档与样例规范](./docs/agents/documentation-specification.md): Starter 5D 文档标准、网关纯净特例、Sample 规范与 13 项自检清单
+- [新模块孵化 SOP](./docs/agents/modular-extensibility.md): 工业级六件套孵化与准出门禁
+- [示例工程矩阵总览](./ateng-cloud-samples/README.md): 8 个自包含、支持离线与 `local` 双模联调的体验工程入口
+- [Nacos 配置管理指南](./docs/guides/nacos-configuration-guide.md): Nacos 配置中心接入、命名空间与平滑热更实践指南
+- [贡献与提交规范](./CONTRIBUTING.md): 分支模型、Conventional Commits 与编码红线
+
+## 依赖管理与全家桶聚合
+
+- [ateng-cloud-bom 文档](./ateng-cloud-bom/README.md) | [上下文词汇表](./ateng-cloud-bom/CONTEXT.md): 纯 `<dependencyManagement>` 物料清单，单向对齐 `ateng-boot-bom` 与 Spring Cloud / Alibaba / Dubbo 基线，集中仲裁并锁定版本
+- [ateng-cloud-all 文档](./ateng-cloud-all/README.md) | [上下文词汇表](./ateng-cloud-all/CONTEXT.md) | [全家桶冒烟示例](./ateng-cloud-samples/sample-cloud-smoke-test/README.md): 标准微服务通用聚合起步包，捆绑 `nacos` / `feign` / `dubbo` / `sentinel` / `traffic` 五大骨架（`gateway` 设为 `optional` 隔离，`seata` 按需引入）
+
+## 服务治理、RPC 通信与网关
+
+- [ateng-cloud-nacos 文档](./ateng-cloud-nacos/README.md) | [上下文词汇表](./ateng-cloud-nacos/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-nacos/README.md): Nacos 服务注册发现、同机房可用区亲和、冷启动平滑预热与动态配置安全热更
+- [ateng-cloud-feign 文档](./ateng-cloud-feign/README.md) | [上下文词汇表](./ateng-cloud-feign/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-feign/README.md): 声明式 OpenFeign HTTP RPC、四维上下文透传、双模自适应剥壳解码与非幂等防重试雪崩
+- [ateng-cloud-dubbo 文档](./ateng-cloud-dubbo/README.md) | [上下文词汇表](./ateng-cloud-dubbo/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-dubbo/README.md): Apache Dubbo 3.3 高性能 RPC、Triple/TCP 双核驱动、四维上下文与 `Same-Token` 透明穿透
+- [ateng-cloud-gateway 文档](./ateng-cloud-gateway/README.md) | [上下文词汇表](./ateng-cloud-gateway/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-gateway/README.md): Spring WebFlux / Netty 纯响应式 API 网关、标头剥离防伪造、`Same-Token` 零信任签发、Nacos 动态路由与 2MB 载荷防爆
+
+## 流量防卫、全链路灰度与分布式事务
+
+- [ateng-cloud-sentinel 文档](./ateng-cloud-sentinel/README.md) | [上下文词汇表](./ateng-cloud-sentinel/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-sentinel/README.md): 入站流量防卫、RESTful 路径防爆清洗（`AtengUrlCleaner`）、受管 `AtengFallbackFactory<T>` 熔断转译与 Nacos 五类规则持久化
+- [ateng-cloud-traffic 文档](./ateng-cloud-traffic/README.md) | [上下文词汇表](./ateng-cloud-traffic/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-traffic-gray/README.md): 全链路流量染色（`X-Traffic-Tag`）、泳道隔离、三层复合灰度责任链调度与金丝雀平滑降级
+- [ateng-cloud-seata 文档](./ateng-cloud-seata/README.md) | [上下文词汇表](./ateng-cloud-seata/CONTEXT.md) | [示例](./ateng-cloud-samples/sample-cloud-seata/README.md): Seata 分布式事务协调、AT / TCC 双核驱动、TCC 防悬挂与幂等屏障、跨进程 `XID` 透传与多租户内部表排除
