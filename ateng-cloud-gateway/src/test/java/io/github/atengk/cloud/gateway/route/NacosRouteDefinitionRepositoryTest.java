@@ -17,11 +17,20 @@ import org.springframework.cloud.gateway.support.NotFoundException;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -431,5 +440,140 @@ class NacosRouteDefinitionRepositoryTest {
         assertEquals(1, repository.getRoutesSnapshot().size());
 
         assertDoesNotThrow(repository::destroy);
+    }
+
+    @Test
+    @DisplayName("响应式非阻塞持久化：save 与 delete 在 NonBlocking 线程订阅时卸载 Nacos 持久化至 boundedElastic")
+    void testSaveAndDeletePersistOffNonBlockingThread() throws Exception {
+        ConfigService mockConfigService = mock(ConfigService.class);
+        NacosConfigManager mockConfigManager = mock(NacosConfigManager.class);
+        when(mockConfigManager.getConfigService()).thenReturn(mockConfigService);
+
+        @SuppressWarnings("unchecked")
+        ObjectProvider<NacosConfigManager> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(mockConfigManager);
+
+        List<Boolean> nonBlockingFlags = new CopyOnWriteArrayList<>();
+        List<String> executingThreads = new CopyOnWriteArrayList<>();
+        List<String> publishedJsons = new CopyOnWriteArrayList<>();
+        when(mockConfigService.publishConfig(eq("async-routes.json"), eq("TEST_GROUP"), any(), any())).thenAnswer(inv -> {
+            nonBlockingFlags.add(Schedulers.isInNonBlockingThread());
+            executingThreads.add(Thread.currentThread().getName());
+            publishedJsons.add(inv.getArgument(2, String.class));
+            return true;
+        });
+
+        List<Object> publishedEvents = new CopyOnWriteArrayList<>();
+        ApplicationEventPublisher publisher = publishedEvents::add;
+        AtengGatewayDynamicRouteProperties properties = new AtengGatewayDynamicRouteProperties();
+        properties.setDataId("async-routes.json");
+        properties.setGroup("TEST_GROUP");
+
+        NacosRouteDefinitionRepository repository = new NacosRouteDefinitionRepository(
+                provider, properties, objectMapper, publisher);
+        repository.afterPropertiesSet();
+
+        RouteDefinition route = new RouteDefinition();
+        route.setId("async-save-route");
+        route.setUri(URI.create("lb://async-service"));
+
+        repository.save(Mono.just(route))
+                .subscribeOn(Schedulers.parallel())
+                .block();
+
+        repository.delete(Mono.just("async-save-route"))
+                .subscribeOn(Schedulers.parallel())
+                .block();
+
+        assertEquals(2, nonBlockingFlags.size(), "save 与 delete 均应触发 Nacos 反向持久化");
+        assertTrue(nonBlockingFlags.stream().noneMatch(Boolean::booleanValue),
+                "Nacos 远程持久化严禁在 Reactor NonBlocking/EventLoop 线程执行: threads=" + executingThreads);
+        assertTrue(executingThreads.stream().allMatch(name -> name.startsWith("boundedElastic-")),
+                "Nacos 远程持久化应卸载至 boundedElastic 调度器: threads=" + executingThreads);
+        assertTrue(publishedJsons.get(0).contains("async-save-route"));
+        assertFalse(publishedJsons.get(1).contains("async-save-route"));
+        assertEquals(2, publishedEvents.size());
+
+        repository.destroy();
+    }
+
+    @Test
+    @DisplayName("并发原子热更与快照守卫：多线交替推送合法与畸变路由配置不损坏有效快照且不阻塞抛出异常")
+    void testConcurrentPublishRoutesPreservesSnapshotIntegrity() throws Exception {
+        AtengGatewayDynamicRouteProperties properties = new AtengGatewayDynamicRouteProperties();
+        List<Object> publishedEvents = new CopyOnWriteArrayList<>();
+        NacosRouteDefinitionRepository repository = new NacosRouteDefinitionRepository(
+                null, properties, objectMapper, publishedEvents::add);
+
+        String validJsonA = """
+                [
+                  {
+                    "id": "concurrent-route-a",
+                    "uri": "lb://service-a"
+                  }
+                ]
+                """;
+        String validJsonB = """
+                [
+                  {
+                    "id": "concurrent-route-b",
+                    "uri": "lb://service-b"
+                  }
+                ]
+                """;
+        String brokenJson = "[ { \"id\": \"broken\", \"uri\": ";
+
+        assertTrue(repository.updateRoutes(validJsonA));
+
+        int workerCount = 6;
+        int iterations = 20;
+        ExecutorService executor = new ThreadPoolExecutor(
+                workerCount, workerCount, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        CountDownLatch startGate = new CountDownLatch(1);
+        List<Throwable> errors = new CopyOnWriteArrayList<>();
+        AtomicInteger successCount = new AtomicInteger(0);
+
+        try {
+            CountDownLatch doneGate = new CountDownLatch(workerCount);
+            for (int w = 0; w < workerCount; w++) {
+                final int workerId = w;
+                executor.submit(() -> {
+                    try {
+                        startGate.await();
+                        for (int i = 0; i < iterations; i++) {
+                            if (workerId % 3 == 0) {
+                                repository.updateRoutes(brokenJson);
+                            } else if (workerId % 2 == 0) {
+                                if (repository.updateRoutes(validJsonA)) {
+                                    successCount.incrementAndGet();
+                                }
+                            } else {
+                                if (repository.updateRoutes(validJsonB)) {
+                                    successCount.incrementAndGet();
+                                }
+                            }
+                            Map<String, RouteDefinition> snap = repository.getRoutesSnapshot();
+                            assertEquals(1, snap.size(), "任意并发时刻有效快照均应保持完整单路由状态");
+                            assertTrue(snap.containsKey("concurrent-route-a") || snap.containsKey("concurrent-route-b"));
+                        }
+                    } catch (Throwable ex) {
+                        errors.add(ex);
+                    } finally {
+                        doneGate.countDown();
+                    }
+                });
+            }
+            startGate.countDown();
+            assertTrue(doneGate.await(15, TimeUnit.SECONDS), "并发刷新任务应在超时前全部完成");
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertTrue(errors.isEmpty(), "并发推送合法与畸变路由时不应抛出任何异常: " + errors);
+        assertTrue(successCount.get() > 0);
+        assertEquals(1, repository.getRouteCount());
+        assertTrue(repository.updateRoutes(validJsonA));
+        assertTrue(repository.isSnapshotHealthy());
+        assertNull(repository.getLastRefreshError());
     }
 }

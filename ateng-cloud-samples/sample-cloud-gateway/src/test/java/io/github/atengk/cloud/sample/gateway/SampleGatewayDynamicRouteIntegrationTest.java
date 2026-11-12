@@ -57,10 +57,12 @@ public class SampleGatewayDynamicRouteIntegrationTest {
     @AfterEach
     void cleanUp() {
         // 测试结束后确定性清理动态路由与环境属性源，防止跨用例与类级上下文污染
-        try {
-            nacosRouteDefinitionRepository.delete(Mono.just("dynamic-order-route")).block();
-        } catch (Exception ignored) {
-            // 忽略未找到异常
+        for (String routeId : new String[]{"dynamic-order-route", "shared-precedence-route"}) {
+            try {
+                nacosRouteDefinitionRepository.delete(Mono.just(routeId)).block();
+            } catch (Exception ignored) {
+                // 忽略未找到异常
+            }
         }
         if (environment != null && environment.getPropertySources().contains("test")) {
             environment.getPropertySources().remove("test");
@@ -298,6 +300,102 @@ public class SampleGatewayDynamicRouteIntegrationTest {
                 .jsonPath("$.code").isEqualTo(200)
                 .jsonPath("$.data.status").isEqualTo("FALLBACK_TO_BASELINE")
                 .jsonPath("$.data.fallbackToBaseline").isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("测试双轨路由同名覆盖优先级与全景诊断端点快照健康度联动")
+    void testDualTrackPrecedenceAndPanoramaSnapshotHealth() {
+        // 1. 激活主配置基线路由 shared-precedence-route -> path-guard
+        TestPropertyValues.of(
+                "spring.cloud.gateway.routes[0].id=shared-precedence-route",
+                "spring.cloud.gateway.routes[0].uri=forward:/sample/cloud/gateway/security/path-guard",
+                "spring.cloud.gateway.routes[0].predicates[0]=Path=/dynamic/precedence/**"
+        ).applyTo(environment);
+        applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(
+                Set.of("spring.cloud.gateway.routes[0].id", "spring.cloud.gateway.routes[0].uri")));
+
+        webTestClient.get()
+                .uri("/dynamic/precedence/check")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.defenseStatus").isEqualTo("PATH_NORMALIZED");
+
+        // 2. Nacos 独立动态路由定义同名 shared-precedence-route -> route/definitions，验证独立动态路由权威覆盖主配置路由
+        String overrideJson = """
+                [
+                  {
+                    "id": "shared-precedence-route",
+                    "uri": "forward:/sample/cloud/gateway/route/definitions",
+                    "predicates": [
+                      {
+                        "name": "Path",
+                        "args": {
+                          "_genkey_0": "/dynamic/precedence/**"
+                        }
+                      }
+                    ]
+                  }
+                ]
+                """;
+        assertTrue(nacosRouteDefinitionRepository.updateRoutes(overrideJson));
+
+        webTestClient.get()
+                .uri("/dynamic/precedence/check")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data").isArray();
+
+        // 3. 推送畸变 Nacos 路由配置：Last-Known Good Snapshot 兜底生效，全景诊断准确切换为 DEGRADED
+        assertFalse(nacosRouteDefinitionRepository.updateRoutes("[ { \"id\": \"corrupted\", \"uri\": "));
+
+        webTestClient.get()
+                .uri("/dynamic/precedence/check")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data").isArray();
+
+        webTestClient.get()
+                .uri("/actuator/atengGateway")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("DEGRADED")
+                .jsonPath("$.dynamicRoute.nacosRoute.snapshotHealthy").isEqualTo(false)
+                .jsonPath("$.dynamicRoute.nacosRoute.lastRefreshError").isNotEmpty();
+
+        // 4. 恢复合法 Nacos 路由并清理后，全景诊断恢复 UP
+        assertTrue(nacosRouteDefinitionRepository.updateRoutes(overrideJson));
+        webTestClient.get()
+                .uri("/actuator/atengGateway")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("UP")
+                .jsonPath("$.dynamicRoute.nacosRoute.snapshotHealthy").isEqualTo(true);
+
+        // 5. 推送破损主配置路由：主配置快照守卫回滚并由全景诊断反映 DEGRADED
+        TestPropertyValues.of(
+                "spring.cloud.gateway.routes[0].id=shared-precedence-route",
+                "spring.cloud.gateway.routes[0].uri=/missing-scheme",
+                "spring.cloud.gateway.routes[0].predicates[0]=Path=/dynamic/precedence/**"
+        ).applyTo(environment);
+        applicationEventPublisher.publishEvent(new EnvironmentChangeEvent(
+                Set.of("spring.cloud.gateway.routes[0].uri")));
+
+        webTestClient.get()
+                .uri("/actuator/atengGateway")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("DEGRADED")
+                .jsonPath("$.dynamicRoute.mainConfigRoute.snapshotHealthy").isEqualTo(false)
+                .jsonPath("$.dynamicRoute.mainConfigRoute.lastRefreshError").isNotEmpty();
     }
 
     private void assertDynamicMainHotReturnsOk() {

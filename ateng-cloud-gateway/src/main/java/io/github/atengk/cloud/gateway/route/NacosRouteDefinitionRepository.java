@@ -25,11 +25,13 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 基于 Nacos 配置中心的动态路由持久化仓库与快照守卫热更新实现
@@ -81,6 +83,16 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
      */
     private final AtomicReference<String> lastRefreshError = new AtomicReference<>(null);
 
+    /**
+     * 反向持久化串行锁 (防止并发异步持久化乱序覆盖 Nacos 远端配置，且不触发虚拟线程 Pinning)
+     */
+    private final ReentrantLock persistLock = new ReentrantLock();
+
+    /**
+     * 动态路由解析与快照替换锁 (替代 synchronized，防止虚拟线程 Carrier Pinning)
+     */
+    private final ReentrantLock publishLock = new ReentrantLock();
+
     public NacosRouteDefinitionRepository(
             @Nullable ObjectProvider<NacosConfigManager> nacosConfigManagerProvider,
             AtengGatewayDynamicRouteProperties properties,
@@ -118,9 +130,7 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
                 next.put(r.getId(), r);
                 return Collections.unmodifiableMap(next);
             });
-            persistSnapshotToNacos();
-            publishRefreshEvent();
-            return Mono.empty();
+            return persistAndRefreshAsync();
         });
     }
 
@@ -133,6 +143,7 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
             AtomicBoolean removed = new AtomicBoolean(false);
             routesSnapshot.updateAndGet(current -> {
                 if (!current.containsKey(id)) {
+                    removed.set(false);
                     return current;
                 }
                 Map<String, RouteDefinition> next = new LinkedHashMap<>(current);
@@ -141,13 +152,17 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
                 return Collections.unmodifiableMap(next);
             });
             if (removed.get()) {
-                persistSnapshotToNacos();
-                publishRefreshEvent();
-                return Mono.empty();
+                return persistAndRefreshAsync();
             } else {
                 return Mono.defer(() -> Mono.error(new NotFoundException("RouteDefinition not found: " + id)));
             }
         });
+    }
+
+    private Mono<Void> persistAndRefreshAsync() {
+        return Mono.fromRunnable(this::persistSnapshotToNacos)
+                .subscribeOn(Schedulers.boundedElastic())
+                .then(Mono.fromRunnable(this::publishRefreshEvent));
     }
 
     /**
@@ -240,49 +255,56 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
      * @param publishEvent 是否发布 RefreshRoutesEvent 事件
      * @return 校验与更新是否成功
      */
-    public synchronized boolean publishRoutes(String configInfo, boolean publishEvent) {
-        if (!StringUtils.hasText(configInfo)) {
-            log.warn("[Gateway] 动态路由配置内容为空，触发快照守卫，坚决保留现有快照: dataId={}, group={}",
-                    properties.getDataId(), properties.getGroup());
-            lastRefreshTime.set(System.currentTimeMillis());
-            lastRefreshSuccess.set(false);
-            lastRefreshError.set("动态路由配置内容为空");
-            return false;
-        }
-
+    public boolean publishRoutes(String configInfo, boolean publishEvent) {
+        publishLock.lock();
         try {
-            // 1. 反序列化
-            List<RouteDefinition> newRoutes = parseRouteDefinitions(configInfo);
-
-            // 2. 深度语法语义校验
-            validateRouteDefinitions(newRoutes);
-
-            // 3. 构造新的不可变快照映射
-            Map<String, RouteDefinition> newMap = new LinkedHashMap<>();
-            for (RouteDefinition route : newRoutes) {
-                newMap.put(route.getId(), route);
+            if (!StringUtils.hasText(configInfo)) {
+                log.warn("[Gateway] 动态路由配置内容为空，触发快照守卫，坚决保留现有快照: dataId={}, group={}",
+                        properties.getDataId(), properties.getGroup());
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(false);
+                lastRefreshError.set("动态路由配置内容为空");
+                return false;
             }
 
-            // 4. 原子替换内存快照
-            routesSnapshot.set(Collections.unmodifiableMap(newMap));
-            lastRefreshTime.set(System.currentTimeMillis());
-            lastRefreshSuccess.set(true);
-            lastRefreshError.set(null);
-            log.info("[Gateway] Nacos 动态路由原子更新成功: dataId={}, group={}, 路由数={}",
-                    properties.getDataId(), properties.getGroup(), newMap.size());
+            try {
+                // 1. 反序列化
+                List<RouteDefinition> newRoutes = parseRouteDefinitions(configInfo);
 
-            // 5. 发布路由刷新事件
-            if (publishEvent) {
-                publishRefreshEvent();
+                // 2. 深度语法语义校验
+                validateRouteDefinitions(newRoutes);
+
+                // 3. 构造新的不可变快照映射
+                Map<String, RouteDefinition> newMap = new LinkedHashMap<>();
+                for (RouteDefinition route : newRoutes) {
+                    newMap.put(route.getId(), route);
+                }
+
+                // 4. 原子替换内存快照
+                routesSnapshot.set(Collections.unmodifiableMap(newMap));
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(true);
+                lastRefreshError.set(null);
+                log.info("[Gateway] Nacos 动态路由原子更新成功: dataId={}, group={}, 路由数={}",
+                        properties.getDataId(), properties.getGroup(), newMap.size());
+
+                // 5. 发布路由刷新事件
+                if (publishEvent) {
+                    publishRefreshEvent();
+                }
+                return true;
+            } catch (Exception ex) {
+                log.error("[Gateway] Nacos 动态路由反序列化或语义校验失败，快照守卫生效，坚决保留上一份有效快照: dataId={}, group={}, error={}",
+                        properties.getDataId(), properties.getGroup(), ex.getMessage(), ex);
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(false);
+                lastRefreshError.set(ex.getMessage());
+                return false;
             }
-            return true;
-        } catch (Exception ex) {
-            log.error("[Gateway] Nacos 动态路由反序列化或语义校验失败，快照守卫生效，坚决保留上一份有效快照: dataId={}, group={}, error={}",
-                    properties.getDataId(), properties.getGroup(), ex.getMessage(), ex);
-            lastRefreshTime.set(System.currentTimeMillis());
-            lastRefreshSuccess.set(false);
-            lastRefreshError.set(ex.getMessage());
-            return false;
+        } finally {
+            if (publishLock.isHeldByCurrentThread()) {
+                publishLock.unlock();
+            }
         }
     }
 
@@ -331,6 +353,7 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
      */
     private void persistSnapshotToNacos() {
         if (configService != null && properties.isEnabled()) {
+            persistLock.lock();
             try {
                 List<RouteDefinition> currentRoutes = new ArrayList<>(routesSnapshot.get().values());
                 String json = objectMapper.writeValueAsString(currentRoutes);
@@ -345,6 +368,10 @@ public class NacosRouteDefinitionRepository implements RouteDefinitionRepository
             } catch (Exception ex) {
                 log.warn("[Gateway] 动态路由反向持久化写入 Nacos 异常: dataId={}, group={}, error={}",
                         properties.getDataId(), properties.getGroup(), ex.getMessage());
+            } finally {
+                if (persistLock.isHeldByCurrentThread()) {
+                    persistLock.unlock();
+                }
             }
         }
     }

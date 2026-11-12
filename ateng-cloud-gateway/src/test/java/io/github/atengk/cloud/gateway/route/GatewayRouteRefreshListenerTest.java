@@ -17,6 +17,12 @@ import org.springframework.mock.env.MockEnvironment;
 
 import java.net.URI;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -244,5 +250,61 @@ class GatewayRouteRefreshListenerTest {
         assertFalse(GatewayRouteRefreshListener.isRouteRelatedKey("spring.cloud.gateway.enabled"));
         assertFalse(GatewayRouteRefreshListener.isRouteRelatedKey("server.port"));
         assertFalse(GatewayRouteRefreshListener.isRouteRelatedKey("ateng.cloud.gateway.dynamic-route.enabled"));
+    }
+
+    @Test
+    @DisplayName("并发主配置热更与快照守卫：多线并发触发环境变更时受管路由与快照始终保持一致性")
+    void testConcurrentEnvironmentRefreshPreservesSnapshotConsistency() throws Exception {
+        environment.setProperty("spring.cloud.gateway.routes[0].id", "baseline-route");
+        environment.setProperty("spring.cloud.gateway.routes[0].uri", "lb://baseline-service");
+        refreshListener.refreshRoutesFromEnvironment(Set.of("spring.cloud.gateway.routes[0].id"));
+        assertEquals(1, refreshListener.getLastKnownGoodRoutes().size());
+
+        List<Object> concurrentEvents = new CopyOnWriteArrayList<>();
+        GatewayRouteRefreshListener concurrentListener = new GatewayRouteRefreshListener(
+                gatewayProperties, environment, concurrentEvents::add, dynamicRouteProperties);
+        concurrentListener.afterPropertiesSet();
+
+        int workerCount = 4;
+        ExecutorService executor = new ThreadPoolExecutor(
+                workerCount, workerCount, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        CountDownLatch startGate = new CountDownLatch(1);
+        List<Throwable> errors = new CopyOnWriteArrayList<>();
+
+        try {
+            CountDownLatch doneGate = new CountDownLatch(workerCount);
+            for (int w = 0; w < workerCount; w++) {
+                final int workerId = w;
+                executor.submit(() -> {
+                    try {
+                        startGate.await();
+                        for (int i = 0; i < 15; i++) {
+                            if (workerId % 2 == 0) {
+                                concurrentListener.refreshRoutesFromEnvironment(
+                                        Set.of("spring.cloud.gateway.routes[0].uri"));
+                            } else {
+                                concurrentListener.refreshRoutesFromEnvironment(
+                                        Set.of("spring.cloud.gateway.default-filters[0].name"));
+                            }
+                            assertFalse(concurrentListener.getLastKnownGoodRoutes().isEmpty());
+                            assertEquals("baseline-route", concurrentListener.getLastKnownGoodRoutes().get(0).getId());
+                        }
+                    } catch (Throwable ex) {
+                        errors.add(ex);
+                    } finally {
+                        doneGate.countDown();
+                    }
+                });
+            }
+            startGate.countDown();
+            assertTrue(doneGate.await(15, TimeUnit.SECONDS), "并发主配置热更应在超时前完成");
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertTrue(errors.isEmpty(), "并发主配置热更不应产生异常或竞态破坏: " + errors);
+        assertTrue(concurrentListener.isSnapshotHealthy());
+        assertEquals(1, gatewayProperties.getRoutes().size());
+        assertEquals("baseline-route", gatewayProperties.getRoutes().get(0).getId());
     }
 }

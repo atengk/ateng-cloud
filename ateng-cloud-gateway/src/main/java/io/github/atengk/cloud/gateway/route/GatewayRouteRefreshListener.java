@@ -23,6 +23,7 @@ import org.springframework.util.StringUtils;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 微服务主配置文件 ({@code spring.cloud.gateway.routes}) 动态感知与安全热更监听器
@@ -73,6 +74,11 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
      */
     private final AtomicReference<String> lastRefreshError = new AtomicReference<>(null);
 
+    /**
+     * 主配置路由热绑与快照回滚同步锁 (替代 synchronized，防止虚拟线程 Carrier Pinning)
+     */
+    private final ReentrantLock refreshLock = new ReentrantLock();
+
     public GatewayRouteRefreshListener(
             GatewayProperties gatewayProperties,
             Environment environment,
@@ -91,28 +97,35 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
 
     @Override
     public void afterPropertiesSet() {
-        if (gatewayProperties != null) {
-            List<RouteDefinition> initialRoutes = gatewayProperties.getRoutes() != null
-                    ? new ArrayList<>(gatewayProperties.getRoutes())
-                    : Collections.emptyList();
-            List<FilterDefinition> initialDefaultFilters = gatewayProperties.getDefaultFilters() != null
-                    ? new ArrayList<>(gatewayProperties.getDefaultFilters())
-                    : Collections.emptyList();
-            try {
-                GatewayRouteValidator.validateRouteDefinitions(initialRoutes);
-                RouteSnapshot snapshot = new RouteSnapshot(initialRoutes, initialDefaultFilters);
-                lastKnownGoodSnapshot.set(snapshot);
-                lastRefreshTime.set(System.currentTimeMillis());
-                lastRefreshSuccess.set(true);
-                lastRefreshError.set(null);
-                log.info("[Gateway] 主配置路由基线快照采集完成，初始路由数: {}, 默认过滤器数: {}",
-                        snapshot.routes().size(), snapshot.defaultFilters().size());
-            } catch (Exception ex) {
-                log.warn("[Gateway] 主配置初始路由存在语法校验警告，安全保留空基线以防快照污染: {}", ex.getMessage());
-                lastKnownGoodSnapshot.set(RouteSnapshot.EMPTY);
-                lastRefreshTime.set(System.currentTimeMillis());
-                lastRefreshSuccess.set(false);
-                lastRefreshError.set(ex.getMessage());
+        refreshLock.lock();
+        try {
+            if (gatewayProperties != null) {
+                List<RouteDefinition> initialRoutes = gatewayProperties.getRoutes() != null
+                        ? new ArrayList<>(gatewayProperties.getRoutes())
+                        : Collections.emptyList();
+                List<FilterDefinition> initialDefaultFilters = gatewayProperties.getDefaultFilters() != null
+                        ? new ArrayList<>(gatewayProperties.getDefaultFilters())
+                        : Collections.emptyList();
+                try {
+                    GatewayRouteValidator.validateRouteDefinitions(initialRoutes);
+                    RouteSnapshot snapshot = new RouteSnapshot(initialRoutes, initialDefaultFilters);
+                    lastKnownGoodSnapshot.set(snapshot);
+                    lastRefreshTime.set(System.currentTimeMillis());
+                    lastRefreshSuccess.set(true);
+                    lastRefreshError.set(null);
+                    log.info("[Gateway] 主配置路由基线快照采集完成，初始路由数: {}, 默认过滤器数: {}",
+                            snapshot.routes().size(), snapshot.defaultFilters().size());
+                } catch (Exception ex) {
+                    log.warn("[Gateway] 主配置初始路由存在语法校验警告，安全保留空基线以防快照污染: {}", ex.getMessage());
+                    lastKnownGoodSnapshot.set(RouteSnapshot.EMPTY);
+                    lastRefreshTime.set(System.currentTimeMillis());
+                    lastRefreshSuccess.set(false);
+                    lastRefreshError.set(ex.getMessage());
+                }
+            }
+        } finally {
+            if (refreshLock.isHeldByCurrentThread()) {
+                refreshLock.unlock();
             }
         }
     }
@@ -154,91 +167,98 @@ public class GatewayRouteRefreshListener implements ApplicationListener<Applicat
      * @param changedKeys 发生变更的环境变量键集合 (可为 null 或空，表示全量环境刷新)
      * @return 若成功刷新路由或因内容相同无需刷新返回 true；若校验失败回退快照或未匹配路由键返回 false
      */
-    public synchronized boolean refreshRoutesFromEnvironment(@Nullable Set<String> changedKeys) {
-        if (!properties.isEnabled()) {
-            log.debug("[Gateway] 动态路由已关闭 (ateng.cloud.gateway.dynamic-route.enabled=false)，跳过主配置路由热更");
-            return false;
-        }
-
-        // 1. 判断是否包含路由相关属性变更 (若为 null 或空集合，视为 Spring 整体环境热更)
-        if (changedKeys != null && !changedKeys.isEmpty()) {
-            boolean hasRouteKey = false;
-            for (String key : changedKeys) {
-                if (isRouteRelatedKey(key)) {
-                    hasRouteKey = true;
-                    break;
-                }
-            }
-            if (!hasRouteKey) {
+    public boolean refreshRoutesFromEnvironment(@Nullable Set<String> changedKeys) {
+        refreshLock.lock();
+        try {
+            if (!properties.isEnabled()) {
+                log.debug("[Gateway] 动态路由已关闭 (ateng.cloud.gateway.dynamic-route.enabled=false)，跳过主配置路由热更");
                 return false;
             }
-            log.info("[Gateway] 捕获主配置路由属性变更通知，受影响键集: {}", changedKeys);
-        } else {
-            log.info("[Gateway] 捕获全量环境热更通知，准备刷新主配置路由表");
-        }
 
-        if (environment == null) {
-            log.warn("[Gateway] Spring Environment 为 null，无法执行路由属性增量热绑");
-            return false;
-        }
+            // 1. 判断是否包含路由相关属性变更 (若为 null 或空集合，视为 Spring 整体环境热更)
+            if (changedKeys != null && !changedKeys.isEmpty()) {
+                boolean hasRouteKey = false;
+                for (String key : changedKeys) {
+                    if (isRouteRelatedKey(key)) {
+                        hasRouteKey = true;
+                        break;
+                    }
+                }
+                if (!hasRouteKey) {
+                    return false;
+                }
+                log.info("[Gateway] 捕获主配置路由属性变更通知，受影响键集: {}", changedKeys);
+            } else {
+                log.info("[Gateway] 捕获全量环境热更通知，准备刷新主配置路由表");
+            }
 
-        // 2. 动态提取候选路由配置
-        GatewayProperties candidateProperties = new GatewayProperties();
-        try {
-            Binder.get(environment).bind("spring.cloud.gateway", Bindable.ofInstance(candidateProperties));
-        } catch (Exception ex) {
-            log.error("[Gateway] 主配置路由属性重新绑定异常，快照守卫生效，保留现有有效路由: {}", ex.getMessage(), ex);
+            if (environment == null) {
+                log.warn("[Gateway] Spring Environment 为 null，无法执行路由属性增量热绑");
+                return false;
+            }
+
+            // 2. 动态提取候选路由配置
+            GatewayProperties candidateProperties = new GatewayProperties();
+            try {
+                Binder.get(environment).bind("spring.cloud.gateway", Bindable.ofInstance(candidateProperties));
+            } catch (Exception ex) {
+                log.error("[Gateway] 主配置路由属性重新绑定异常，快照守卫生效，保留现有有效路由: {}", ex.getMessage(), ex);
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(false);
+                lastRefreshError.set(ex.getMessage());
+                restoreLastKnownGoodRoutes();
+                return false;
+            }
+
+            List<RouteDefinition> candidateRoutes = candidateProperties.getRoutes() != null
+                    ? candidateProperties.getRoutes()
+                    : Collections.emptyList();
+            List<FilterDefinition> candidateDefaultFilters = candidateProperties.getDefaultFilters() != null
+                    ? candidateProperties.getDefaultFilters()
+                    : Collections.emptyList();
+
+            // 3. 深度语法与语义校验
+            try {
+                GatewayRouteValidator.validateRouteDefinitions(candidateRoutes);
+            } catch (Exception ex) {
+                log.error("[Gateway] 主配置路由深度语法或语义校验失败，快照守卫生效，坚决保留上一份有效快照 [{} 条有效路由]: error={}",
+                        getLastKnownGoodRoutes().size(), ex.getMessage(), ex);
+                lastRefreshTime.set(System.currentTimeMillis());
+                lastRefreshSuccess.set(false);
+                lastRefreshError.set(ex.getMessage());
+                // 立即防御性回滚受管 GatewayProperties 实例，防止脏数据对外扩散
+                restoreLastKnownGoodRoutes();
+                return false;
+            }
+
+            // 4. 指纹去重，防御重复事件引发无效刷新
+            RouteSnapshot currentSnapshot = lastKnownGoodSnapshot.get();
+            if (currentSnapshot != null && currentSnapshot.matches(candidateRoutes, candidateDefaultFilters)) {
+                log.debug("[Gateway] 主配置路由与默认过滤器内容未发生实质变更 (fingerprint={})，跳过重复刷新", currentSnapshot.fingerprint());
+                return true;
+            }
+
+            // 5. 原子替换快照并同步至受管 GatewayProperties
+            RouteSnapshot newSnapshot = new RouteSnapshot(candidateRoutes, candidateDefaultFilters);
+            lastKnownGoodSnapshot.set(newSnapshot);
             lastRefreshTime.set(System.currentTimeMillis());
-            lastRefreshSuccess.set(false);
-            lastRefreshError.set(ex.getMessage());
-            restoreLastKnownGoodRoutes();
-            return false;
-        }
+            lastRefreshSuccess.set(true);
+            lastRefreshError.set(null);
+            if (gatewayProperties != null) {
+                gatewayProperties.setRoutes(new ArrayList<>(candidateRoutes));
+                gatewayProperties.setDefaultFilters(new ArrayList<>(candidateDefaultFilters));
+            }
 
-        List<RouteDefinition> candidateRoutes = candidateProperties.getRoutes() != null
-                ? candidateProperties.getRoutes()
-                : Collections.emptyList();
-        List<FilterDefinition> candidateDefaultFilters = candidateProperties.getDefaultFilters() != null
-                ? candidateProperties.getDefaultFilters()
-                : Collections.emptyList();
-
-        // 3. 深度语法与语义校验
-        try {
-            GatewayRouteValidator.validateRouteDefinitions(candidateRoutes);
-        } catch (Exception ex) {
-            log.error("[Gateway] 主配置路由深度语法或语义校验失败，快照守卫生效，坚决保留上一份有效快照 [{} 条有效路由]: error={}",
-                    getLastKnownGoodRoutes().size(), ex.getMessage(), ex);
-            lastRefreshTime.set(System.currentTimeMillis());
-            lastRefreshSuccess.set(false);
-            lastRefreshError.set(ex.getMessage());
-            // 立即防御性回滚受管 GatewayProperties 实例，防止脏数据对外扩散
-            restoreLastKnownGoodRoutes();
-            return false;
-        }
-
-        // 4. 指纹去重，防御重复事件引发无效刷新
-        RouteSnapshot currentSnapshot = lastKnownGoodSnapshot.get();
-        if (currentSnapshot != null && currentSnapshot.matches(candidateRoutes, candidateDefaultFilters)) {
-            log.debug("[Gateway] 主配置路由与默认过滤器内容未发生实质变更 (fingerprint={})，跳过重复刷新", currentSnapshot.fingerprint());
+            // 6. 发布 RefreshRoutesEvent 广播路由更新
+            publishRefreshRoutesEvent();
+            log.info("[Gateway] 主配置动态路由原子热更成功，生效路由数: {}, 默认过滤器数: {}, 已触发网关路由表原子刷新",
+                    candidateRoutes.size(), candidateDefaultFilters.size());
             return true;
+        } finally {
+            if (refreshLock.isHeldByCurrentThread()) {
+                refreshLock.unlock();
+            }
         }
-
-        // 5. 原子替换快照并同步至受管 GatewayProperties
-        RouteSnapshot newSnapshot = new RouteSnapshot(candidateRoutes, candidateDefaultFilters);
-        lastKnownGoodSnapshot.set(newSnapshot);
-        lastRefreshTime.set(System.currentTimeMillis());
-        lastRefreshSuccess.set(true);
-        lastRefreshError.set(null);
-        if (gatewayProperties != null) {
-            gatewayProperties.setRoutes(new ArrayList<>(candidateRoutes));
-            gatewayProperties.setDefaultFilters(new ArrayList<>(candidateDefaultFilters));
-        }
-
-        // 6. 发布 RefreshRoutesEvent 广播路由更新
-        publishRefreshRoutesEvent();
-        log.info("[Gateway] 主配置动态路由原子热更成功，生效路由数: {}, 默认过滤器数: {}, 已触发网关路由表原子刷新",
-                candidateRoutes.size(), candidateDefaultFilters.size());
-        return true;
     }
 
     /**
