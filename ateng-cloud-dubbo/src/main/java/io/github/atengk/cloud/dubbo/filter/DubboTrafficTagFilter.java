@@ -1,18 +1,19 @@
 package io.github.atengk.cloud.dubbo.filter;
 
+import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboTrafficProperties;
+import io.github.atengk.cloud.dubbo.support.DubboAttachmentSupport;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import io.github.atengk.cloud.dubbo.support.DubboTrafficPropagationSupport;
 import org.apache.dubbo.common.constants.CommonConstants;
 import org.apache.dubbo.common.extension.Activate;
+import org.apache.dubbo.rpc.BaseFilter;
 import org.apache.dubbo.rpc.Constants;
 import org.apache.dubbo.rpc.Filter;
 import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
-import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcException;
-import org.apache.dubbo.rpc.RpcInvocation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -31,116 +32,217 @@ import org.springframework.util.StringUtils;
  * @since 2026-10-28
  */
 @Activate(group = CommonConstants.CONSUMER, order = -8500)
-public class DubboTrafficTagFilter implements Filter {
+public class DubboTrafficTagFilter implements Filter, BaseFilter.Listener {
 
     private static final Logger log = LoggerFactory.getLogger(DubboTrafficTagFilter.class);
 
     public static final String DEFAULT_TRAFFIC_TAG_HEADER = "X-Traffic-Tag";
+    private static final String SHORT_TAG_KEY = "tag";
+    private static final String DUBBO_TAG_FORCE_KEY = "dubbo.tagforce";
+    private static final String TAG_FORCE_KEY = "tagforce";
 
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && !properties.isEnabled()) {
-            return invoker.invoke(invocation);
-        }
-        AtengDubboTrafficProperties traffic = properties != null ? properties.getTraffic() : null;
-        if (traffic != null && !traffic.isEnabled()) {
+        if (shouldSkipConsumerTraffic(invoker, properties)) {
             return invoker.invoke(invocation);
         }
 
-        String headerName = (traffic != null && StringUtils.hasText(traffic.getHeaderName()))
-                ? traffic.getHeaderName() : DEFAULT_TRAFFIC_TAG_HEADER;
+        String headerName = resolveHeaderName(properties);
 
-        // 1. 提取流量染色与泳道元数据快照 (优先 TrafficContextHolder，次选 MDC / 附件)
+        // 1. 提取当前线程上下文与请求自身携带有流量染色标记（禁止回退读取或镜像复活陈旧 ClientAttachment）
         var trafficSnapshot = DubboTrafficPropagationSupport.getSnapshot();
         String tag = trafficSnapshot != null && trafficSnapshot.hasTag()
                 ? trafficSnapshot.tag()
                 : resolveTrafficTag(invocation, headerName);
 
-        // 2. 若存在有效流量染色标签，则注入 Dubbo 标签路由及降级策略
-        if (StringUtils.hasText(tag) && !"null".equalsIgnoreCase(tag.trim())) {
-            String trimmedTag = tag.trim();
-            String forceTagParam = invocation.getAttachment(Constants.FORCE_USE_TAG);
-            if (!StringUtils.hasText(forceTagParam)) {
-                forceTagParam = RpcContext.getClientAttachment().getAttachment(Constants.FORCE_USE_TAG);
-            }
-            if (!StringUtils.hasText(forceTagParam)) {
-                forceTagParam = invocation.getAttachment("dubbo.tagforce");
-            }
-            boolean tagForce = StringUtils.hasText(forceTagParam)
-                    ? Boolean.parseBoolean(forceTagParam)
-                    : (traffic != null && traffic.isTagForce());
-            String tagForceStr = String.valueOf(tagForce);
+        // 2. 当前上下文与请求无有效流量染色标签时，前置对称清理全部受管路由出站键
+        if (!DubboAttachmentSupport.isValidAttachmentValue(tag)) {
+            clearOutboundRouteAttachments(invocation, headerName);
+            return invoker.invoke(invocation);
+        }
 
-            if (log.isDebugEnabled()) {
-                log.debug("[DUBBO-TRAFFIC] 注入金丝雀标签路由: tag={}, tagForce={}, service={}, method={}",
-                        trimmedTag, tagForce, invoker.getInterface().getName(), invocation.getMethodName());
-            }
+        String trimmedTag = tag.trim();
+        AtengDubboTrafficProperties traffic = properties != null ? properties.getTraffic() : null;
+        boolean tagForce = resolveTagForce(invocation, traffic);
+        String tagForceStr = String.valueOf(tagForce);
 
-            // 注入 Dubbo 标签路由键
-            setAttachment(invocation, CommonConstants.TAG_KEY, trimmedTag);
-            setAttachment(invocation, "tag", trimmedTag);
-
-            // 注入 Dubbo 强制标签标记与平滑降级标记
-            setAttachment(invocation, Constants.FORCE_USE_TAG, tagForceStr);
-            setAttachment(invocation, "dubbo.tagforce", tagForceStr);
-            setAttachment(invocation, "tagforce", tagForceStr);
-
-            // 同步确保全链路透传请求头存在
-            setAttachment(invocation, headerName, trimmedTag);
-
-            // 3. 强隔离校验 (Fail-Fast 防线)：若启用 tagForce=true，检验目标 invoker 标签；若目标不具备该标签则直接阻断
-            if (tagForce) {
-                String providerTag = invoker.getUrl().getParameter(CommonConstants.TAG_KEY);
-                if (!StringUtils.hasText(providerTag)) {
-                    providerTag = invoker.getUrl().getParameter("tag");
-                }
-                if (!trimmedTag.equals(providerTag)) {
-                    throw new RpcException("No provider available for the service " + invoker.getInterface().getName()
-                            + " under tag " + trimmedTag + " (tagforce=true, providerTag=" + providerTag + ")");
-                }
+        // 3. 强隔离 Fail-Fast 防线：先校验目标节点标签，不匹配则清理 ClientAttachment 与标签键并保留 Failover 重试所需的强制标记后阻断
+        if (tagForce) {
+            String providerTag = resolveProviderTag(invoker);
+            if (!trimmedTag.equals(providerTag)) {
+                DubboAttachmentSupport.removeOutboundAttachments(invocation, CommonConstants.TAG_KEY, SHORT_TAG_KEY);
+                DubboAttachmentSupport.removeClientAttachments(getManagedKeys(headerName));
+                throw new RpcException("No provider available for the service " + resolveServiceName(invoker)
+                        + " under tag " + trimmedTag + " (tagforce=true, providerTag=" + providerTag + ")");
             }
         }
+
+        if (log.isDebugEnabled()) {
+            log.debug("[DUBBO-TRAFFIC] 注入金丝雀标签路由: tag={}, tagForce={}, service={}, method={}",
+                    trimmedTag, tagForce, resolveServiceName(invoker), invocation.getMethodName());
+        }
+
+        // 4. 对称写入 Dubbo 标签路由键、平滑降级标记与全链路透传请求头
+        DubboAttachmentSupport.setOutboundAttachment(invocation, CommonConstants.TAG_KEY, trimmedTag);
+        DubboAttachmentSupport.setOutboundAttachment(invocation, SHORT_TAG_KEY, trimmedTag);
+        DubboAttachmentSupport.setOutboundAttachment(invocation, Constants.FORCE_USE_TAG, tagForceStr);
+        DubboAttachmentSupport.setOutboundAttachment(invocation, DUBBO_TAG_FORCE_KEY, tagForceStr);
+        DubboAttachmentSupport.setOutboundAttachment(invocation, TAG_FORCE_KEY, tagForceStr);
+        DubboAttachmentSupport.setOutboundAttachment(invocation, headerName, trimmedTag);
 
         return invoker.invoke(invocation);
     }
 
-    private String resolveTrafficTag(Invocation invocation, String headerName) {
-        // 1. 检查 MDC (注意：getSnapshot 已闭环探测默认键，此处检查自定义 headerName)
-        String tag = MDC.get(headerName);
-        if (!StringUtils.hasText(tag)) {
-            tag = MDC.get(DEFAULT_TRAFFIC_TAG_HEADER);
-        }
-        if (!StringUtils.hasText(tag)) {
-            tag = MDC.get("trafficTag");
-        }
-        if (!StringUtils.hasText(tag)) {
-            tag = MDC.get("traffic-tag");
-        }
-
-        // 2. 检查 RpcContext ClientAttachment
-        if (!StringUtils.hasText(tag)) {
-            tag = RpcContext.getClientAttachment().getAttachment(headerName);
-        }
-        if (!StringUtils.hasText(tag)) {
-            tag = RpcContext.getClientAttachment().getAttachment(CommonConstants.TAG_KEY);
-        }
-
-        // 3. 检查 Invocation Attachment
-        if (!StringUtils.hasText(tag)) {
-            tag = invocation.getAttachment(headerName);
-        }
-        if (!StringUtils.hasText(tag)) {
-            tag = invocation.getAttachment(CommonConstants.TAG_KEY);
-        }
-
-        return tag;
+    @Override
+    public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
+        cleanupConsumerClientAttachments(invoker);
     }
 
-    private void setAttachment(Invocation invocation, String key, String value) {
-        RpcContext.getClientAttachment().setAttachment(key, value);
-        if (invocation instanceof RpcInvocation rpcInvocation) {
-            rpcInvocation.setAttachment(key, value);
+    @Override
+    public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
+        cleanupConsumerClientAttachments(invoker);
+    }
+
+    private void cleanupConsumerClientAttachments(Invoker<?> invoker) {
+        var properties = DubboPropertiesHolder.get();
+        if (shouldSkipConsumerTraffic(invoker, properties)) {
+            return;
         }
+        DubboAttachmentSupport.removeClientAttachments(getManagedKeys(resolveHeaderName(properties)));
+    }
+
+    private boolean shouldSkipConsumerTraffic(Invoker<?> invoker, AtengDubboProperties properties) {
+        return !isTrafficEnabled(properties)
+                || DubboAttachmentSupport.isInjvmProtocol(invoker)
+                || DubboAttachmentSupport.isExplicitProviderSide(invoker);
+    }
+
+    private boolean isTrafficEnabled(AtengDubboProperties properties) {
+        if (properties != null && !properties.isEnabled()) {
+            return false;
+        }
+        AtengDubboTrafficProperties traffic = properties != null ? properties.getTraffic() : null;
+        return traffic == null || traffic.isEnabled();
+    }
+
+    private String resolveHeaderName(AtengDubboProperties properties) {
+        AtengDubboTrafficProperties traffic = properties != null ? properties.getTraffic() : null;
+        return (traffic != null && StringUtils.hasText(traffic.getHeaderName()))
+                ? traffic.getHeaderName().trim() : DEFAULT_TRAFFIC_TAG_HEADER;
+    }
+
+    private String[] getManagedKeys(String headerName) {
+        if (DEFAULT_TRAFFIC_TAG_HEADER.equals(headerName)) {
+            return new String[]{
+                    CommonConstants.TAG_KEY,
+                    SHORT_TAG_KEY,
+                    Constants.FORCE_USE_TAG,
+                    DUBBO_TAG_FORCE_KEY,
+                    TAG_FORCE_KEY,
+                    DEFAULT_TRAFFIC_TAG_HEADER
+            };
+        }
+        return new String[]{
+                CommonConstants.TAG_KEY,
+                SHORT_TAG_KEY,
+                Constants.FORCE_USE_TAG,
+                DUBBO_TAG_FORCE_KEY,
+                TAG_FORCE_KEY,
+                headerName,
+                DEFAULT_TRAFFIC_TAG_HEADER
+        };
+    }
+
+    private void clearOutboundRouteAttachments(Invocation invocation, String headerName) {
+        DubboAttachmentSupport.removeOutboundAttachments(invocation, getManagedKeys(headerName));
+    }
+
+    private boolean resolveTagForce(Invocation invocation, AtengDubboTrafficProperties traffic) {
+        if (invocation != null) {
+            // 1. 优先采信仅在当前 Invocation 显式声明（非 ClientAttachment 镜像拷贝）的强隔离标记
+            String explicitForce = findTagForceAttachment(invocation, true);
+            if (explicitForce != null) {
+                return Boolean.parseBoolean(explicitForce);
+            }
+            // 2. 若与 ClientAttachment 同源镜像：过滤前次 DubboTrafficTagFilter 未回调清理所遗留的成套路由快照，
+            //    同时保留调用方通过 RpcContext.getClientAttachment() 合法发起的单次强隔离声明
+            if (!isStaleRouteAttachmentEcho(invocation)) {
+                String echoedForce = findTagForceAttachment(invocation, false);
+                if (echoedForce != null) {
+                    return Boolean.parseBoolean(echoedForce);
+                }
+            }
+        }
+        return traffic != null && traffic.isTagForce();
+    }
+
+    private String findTagForceAttachment(Invocation invocation, boolean requireNonEchoed) {
+        String[] forceKeys = {Constants.FORCE_USE_TAG, DUBBO_TAG_FORCE_KEY, TAG_FORCE_KEY};
+        for (String key : forceKeys) {
+            String value = invocation.getAttachment(key);
+            if (DubboAttachmentSupport.isValidAttachmentValue(value)
+                    && (!requireNonEchoed || !DubboAttachmentSupport.isEchoedClientAttachment(invocation, key))) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private boolean isStaleRouteAttachmentEcho(Invocation invocation) {
+        if (!DubboAttachmentSupport.isEchoedClientAttachment(invocation, CommonConstants.TAG_KEY)
+                || !DubboAttachmentSupport.isEchoedClientAttachment(invocation, SHORT_TAG_KEY)
+                || !DubboAttachmentSupport.isEchoedClientAttachment(invocation, Constants.FORCE_USE_TAG)
+                || !DubboAttachmentSupport.isEchoedClientAttachment(invocation, DUBBO_TAG_FORCE_KEY)
+                || !DubboAttachmentSupport.isEchoedClientAttachment(invocation, TAG_FORCE_KEY)) {
+            return false;
+        }
+        String tagKeyVal = invocation.getAttachment(CommonConstants.TAG_KEY).trim();
+        String shortTagVal = invocation.getAttachment(SHORT_TAG_KEY).trim();
+        String forceVal = invocation.getAttachment(Constants.FORCE_USE_TAG).trim();
+        String dubboTagForceVal = invocation.getAttachment(DUBBO_TAG_FORCE_KEY).trim();
+        String tagForceVal = invocation.getAttachment(TAG_FORCE_KEY).trim();
+        return tagKeyVal.equals(shortTagVal)
+                && forceVal.equals(dubboTagForceVal)
+                && dubboTagForceVal.equals(tagForceVal);
+    }
+
+    private String resolveTrafficTag(Invocation invocation, String headerName) {
+        String tag = MDC.get(headerName);
+        if (!DubboAttachmentSupport.isValidAttachmentValue(tag)) {
+            tag = MDC.get(DEFAULT_TRAFFIC_TAG_HEADER);
+        }
+        if (!DubboAttachmentSupport.isValidAttachmentValue(tag)) {
+            tag = MDC.get("trafficTag");
+        }
+        if (!DubboAttachmentSupport.isValidAttachmentValue(tag)) {
+            tag = MDC.get("traffic-tag");
+        }
+        if (!DubboAttachmentSupport.isValidAttachmentValue(tag) && invocation != null) {
+            String invTag = invocation.getAttachment(headerName);
+            if (DubboAttachmentSupport.isValidAttachmentValue(invTag)
+                    && !DubboAttachmentSupport.isEchoedClientAttachment(invocation, headerName)) {
+                tag = invTag;
+            }
+        }
+        return DubboAttachmentSupport.isValidAttachmentValue(tag) ? tag : null;
+    }
+
+    private String resolveProviderTag(Invoker<?> invoker) {
+        if (invoker == null || invoker.getUrl() == null) {
+            return null;
+        }
+        String providerTag = invoker.getUrl().getParameter(CommonConstants.TAG_KEY);
+        return StringUtils.hasText(providerTag) ? providerTag : invoker.getUrl().getParameter(SHORT_TAG_KEY);
+    }
+
+    private String resolveServiceName(Invoker<?> invoker) {
+        if (invoker != null && invoker.getInterface() != null) {
+            return invoker.getInterface().getName();
+        }
+        if (invoker != null && invoker.getUrl() != null && StringUtils.hasText(invoker.getUrl().getServiceInterface())) {
+            return invoker.getUrl().getServiceInterface();
+        }
+        return "UnknownService";
     }
 }

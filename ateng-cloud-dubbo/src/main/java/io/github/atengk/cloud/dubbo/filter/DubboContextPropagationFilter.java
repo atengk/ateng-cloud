@@ -3,6 +3,8 @@ package io.github.atengk.cloud.dubbo.filter;
 import io.github.atengk.boot.core.constant.MessageHeaderConstants;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
+import io.github.atengk.cloud.dubbo.support.DubboAttachmentSupport;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import io.github.atengk.cloud.dubbo.support.DubboSeataPropagationSupport;
 import io.github.atengk.cloud.dubbo.support.DubboTrafficPropagationSupport;
@@ -15,7 +17,6 @@ import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Result;
 import org.apache.dubbo.rpc.RpcContext;
 import org.apache.dubbo.rpc.RpcException;
-import org.apache.dubbo.rpc.RpcInvocation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -41,21 +42,26 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
 
     public static final String TRAFFIC_TAG = "X-Traffic-Tag";
 
+    private static final String[] CONSUMER_MANAGED_ATTACHMENT_KEYS = {
+            MessageHeaderConstants.TRACE_ID,
+            MessageHeaderConstants.USER_ID,
+            MessageHeaderConstants.TENANT_ID,
+            MessageHeaderConstants.IGNORE_TENANT,
+            TRAFFIC_TAG,
+            DubboTrafficPropagationSupport.TRAFFIC_LANE,
+            DubboTrafficPropagationSupport.TRAFFIC_RULE,
+            DubboSeataPropagationSupport.TX_XID,
+            DubboSeataPropagationSupport.TX_XID_LOWERCASE
+    };
+
     @Override
     public Result invoke(Invoker<?> invoker, Invocation invocation) throws RpcException {
         var properties = DubboPropertiesHolder.get();
-        if (properties != null && (!properties.isEnabled()
-                || (properties.getContext() != null && !properties.getContext().isEnabled()))) {
+        if (!isContextEnabled(properties) || DubboAttachmentSupport.isInjvmProtocol(invoker)) {
             return invoker.invoke(invocation);
         }
 
-        // 本地短路调用 (injvm 进程内内存直接调用) 上下文天然共享，直接执行
-        if (invoker != null && invoker.getUrl() != null
-                && "injvm".equalsIgnoreCase(invoker.getUrl().getProtocol())) {
-            return invoker.invoke(invocation);
-        }
-
-        boolean isConsumer = isConsumerSide(invoker);
+        boolean isConsumer = DubboAttachmentSupport.isConsumerSide(invoker);
         if (isConsumer) {
             handleConsumer(invocation);
             return invoker.invoke(invocation);
@@ -70,55 +76,56 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
         }
     }
 
-    private boolean isConsumerSide(Invoker<?> invoker) {
-        if (invoker != null && invoker.getUrl() != null) {
-            String side = invoker.getUrl().getParameter(CommonConstants.SIDE_KEY);
-            if (CommonConstants.CONSUMER_SIDE.equalsIgnoreCase(side)) {
-                return true;
-            }
-            if (CommonConstants.PROVIDER_SIDE.equalsIgnoreCase(side)) {
-                return false;
-            }
-        }
-        return RpcContext.getContext().isConsumerSide();
+    private boolean isContextEnabled(AtengDubboProperties properties) {
+        return properties == null
+                || (properties.isEnabled() && (properties.getContext() == null || properties.getContext().isEnabled()));
     }
 
     private void handleConsumer(Invocation invocation) {
-        // 1. 提取并注入分布式链路追踪 Trace ID
+        // 1. 对称对齐分布式链路追踪 Trace ID
         String traceId = MDC.get("traceId");
         if (!StringUtils.hasText(traceId)) {
             traceId = MDC.get(MessageHeaderConstants.TRACE_ID);
         }
-        setAttachmentIfValid(invocation, MessageHeaderConstants.TRACE_ID, traceId);
+        DubboAttachmentSupport.reconcileOutboundAttachment(invocation, MessageHeaderConstants.TRACE_ID, traceId);
 
-        // 2. 提取并注入当前登录用户 ID
-        String userId = UserContextHolder.getUserId();
-        setAttachmentIfValid(invocation, MessageHeaderConstants.USER_ID, userId);
+        // 2. 对称对齐当前登录用户 ID 与当前租户 ID
+        DubboAttachmentSupport.reconcileOutboundAttachment(
+                invocation, MessageHeaderConstants.USER_ID, UserContextHolder.getUserId());
+        DubboAttachmentSupport.reconcileOutboundAttachment(
+                invocation, MessageHeaderConstants.TENANT_ID, TenantContextHolder.getTenantId());
 
-        // 3. 提取并注入当前租户 ID
-        String tenantId = TenantContextHolder.getTenantId();
-        setAttachmentIfValid(invocation, MessageHeaderConstants.TENANT_ID, tenantId);
+        // 3. 对称对齐忽略租户标记 (未开启时必须主动清除前次或预填残留)
+        String ignoreTenant = TenantContextHolder.isIgnoreTenant() ? Boolean.TRUE.toString() : null;
+        DubboAttachmentSupport.reconcileOutboundAttachment(invocation, MessageHeaderConstants.IGNORE_TENANT, ignoreTenant);
 
-        // 4. 提取并注入忽略租户标记 (仅当为 true 时显式透传)
-        if (TenantContextHolder.isIgnoreTenant()) {
-            setAttachmentIfValid(invocation, MessageHeaderConstants.IGNORE_TENANT, Boolean.TRUE.toString());
-        }
-
-        // 5. 提取并注入金丝雀流量染色标记与泳道上下文快照 (getSnapshot 内部已闭环处理 TrafficContextHolder 与 MDC 回退)
+        // 4. 对称对齐金丝雀流量染色标记与泳道上下文快照
+        // 当本地线程无有效流量标签时清理 ClientAttachment 残留，同时仅清洗从 ClientAttachment 镜像拷贝的旧值或无效占位符，
+        // 保留调用方在本次 Invocation 显式指定的有效 X-Traffic-Tag 供下游 DubboTrafficTagFilter(-8500) 解析路由。
         var trafficSnapshot = DubboTrafficPropagationSupport.getSnapshot();
-        if (trafficSnapshot != null && trafficSnapshot.isValid()) {
-            if (trafficSnapshot.hasTag()) {
-                setAttachmentIfValid(invocation, TRAFFIC_TAG, trafficSnapshot.tag());
+        String trafficTag = (trafficSnapshot != null && trafficSnapshot.hasTag()) ? trafficSnapshot.tag() : null;
+        String trafficLane = (trafficSnapshot != null && trafficSnapshot.hasLane()) ? trafficSnapshot.laneName() : null;
+        String trafficRule = (trafficSnapshot != null && trafficSnapshot.isValid()) ? trafficSnapshot.matchedRule() : null;
+        if (DubboAttachmentSupport.isValidAttachmentValue(trafficTag)) {
+            DubboAttachmentSupport.setOutboundAttachment(invocation, TRAFFIC_TAG, trafficTag.trim());
+        } else {
+            boolean echoedFromClient = DubboAttachmentSupport.isEchoedClientAttachment(invocation, TRAFFIC_TAG);
+            DubboAttachmentSupport.removeClientAttachments(TRAFFIC_TAG);
+            String invTrafficTag = invocation != null ? invocation.getAttachment(TRAFFIC_TAG) : null;
+            if (echoedFromClient
+                    || (invTrafficTag != null && !DubboAttachmentSupport.isValidAttachmentValue(invTrafficTag))) {
+                DubboAttachmentSupport.removeOutboundAttachment(invocation, TRAFFIC_TAG);
             }
-            if (trafficSnapshot.hasLane()) {
-                setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficSnapshot.laneName());
-            }
-            setAttachmentIfValid(invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE, trafficSnapshot.matchedRule());
         }
+        DubboAttachmentSupport.reconcileOutboundAttachment(
+                invocation, DubboTrafficPropagationSupport.TRAFFIC_LANE, trafficLane);
+        DubboAttachmentSupport.reconcileOutboundAttachment(
+                invocation, DubboTrafficPropagationSupport.TRAFFIC_RULE, trafficRule);
 
-        // 6. 提取并注入 Seata 全局分布式事务 XID
+        // 5. 对称对齐 Seata 全局分布式事务 XID（出站统一收敛至规范键 TX_XID 并无条件清洗小写兼容键）
         String xid = DubboSeataPropagationSupport.getXID();
-        setAttachmentIfValid(invocation, DubboSeataPropagationSupport.TX_XID, xid);
+        DubboAttachmentSupport.reconcileOutboundAttachment(invocation, DubboSeataPropagationSupport.TX_XID, xid);
+        DubboAttachmentSupport.removeOutboundAttachment(invocation, DubboSeataPropagationSupport.TX_XID_LOWERCASE);
     }
 
     private boolean handleProvider(Invocation invocation) {
@@ -179,17 +186,6 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
         MDC.remove(MessageHeaderConstants.TRACE_ID);
     }
 
-    private void setAttachmentIfValid(Invocation invocation, String key, String value) {
-        if (!StringUtils.hasText(value) || "null".equalsIgnoreCase(value.trim())) {
-            return;
-        }
-        String trimmed = value.trim();
-        RpcContext.getClientAttachment().setAttachment(key, trimmed);
-        if (invocation instanceof RpcInvocation rpcInvocation) {
-            rpcInvocation.setAttachment(key, trimmed);
-        }
-    }
-
     private String getAttachment(Invocation invocation, String key) {
         String value = invocation.getAttachment(key);
         if (!StringUtils.hasText(value)) {
@@ -206,14 +202,21 @@ public class DubboContextPropagationFilter implements Filter, BaseFilter.Listene
 
     @Override
     public void onResponse(Result appResponse, Invoker<?> invoker, Invocation invocation) {
-        if (!isConsumerSide(invoker)) {
-            cleanContexts(false);
-        }
+        cleanupCallback(invoker);
     }
 
     @Override
     public void onError(Throwable t, Invoker<?> invoker, Invocation invocation) {
-        if (!isConsumerSide(invoker)) {
+        cleanupCallback(invoker);
+    }
+
+    private void cleanupCallback(Invoker<?> invoker) {
+        if (!isContextEnabled(DubboPropertiesHolder.get()) || DubboAttachmentSupport.isInjvmProtocol(invoker)) {
+            return;
+        }
+        if (DubboAttachmentSupport.isConsumerSide(invoker)) {
+            DubboAttachmentSupport.removeClientAttachments(CONSUMER_MANAGED_ATTACHMENT_KEYS);
+        } else {
             cleanContexts(false);
         }
     }

@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import io.github.atengk.cloud.dubbo.support.DubboSeataPropagationSupport;
+import io.github.atengk.cloud.dubbo.support.DubboTrafficPropagationSupport;
 import io.github.atengk.cloud.traffic.context.TrafficContext;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import org.apache.dubbo.common.URL;
@@ -48,7 +49,7 @@ class DubboContextPropagationFilterTest {
 
     @AfterEach
     void tearDown() {
-        DubboPropertiesHolder.set(null);
+        DubboPropertiesHolder.reset();
         cleanAllContexts();
     }
 
@@ -193,5 +194,166 @@ class DubboContextPropagationFilterTest {
         filter.invoke(invoker, invocation);
 
         assertThat(RpcContext.getClientAttachment().getAttachment(MessageHeaderConstants.USER_ID)).isNull();
+    }
+
+    @Test
+    @DisplayName("消费端出站前置对称对齐: 同线程清空本地上下文后二次调用彻底消除前次残留附件并保留业务自定义附件")
+    void testConsumerPreInvokeReconciliationRemovesStaleManagedAttachments() {
+        Invoker<?> invoker = mock(Invoker.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/io.github.atengk.cloud.dubbo.api.DemoService?side=consumer");
+        when(invoker.getUrl()).thenReturn(url);
+        when(invoker.invoke(any())).thenReturn(new AppResponse("ok"));
+
+        // 1. 第 1 次调用：挂载全量四维上下文、IgnoreTenant、Traffic 泳道与 Seata XID，以及业务方非受管附件
+        MDC.put(MessageHeaderConstants.TRACE_ID, "trace-call-1");
+        UserContextHolder.setUserId("user-call-1");
+        TenantContextHolder.setTenantId("tenant-call-1");
+        TenantContextHolder.setIgnoreTenant(true);
+        TrafficContextHolder.setContext(TrafficContext.of("gray-v1", "lane-1", "rule-1"));
+        RootContext.bind("10.0.0.1:8091:111111");
+        RpcContext.getClientAttachment().setAttachment("X-Custom-Biz", "biz-keep");
+
+        RpcInvocation firstInvocation = new RpcInvocation();
+        firstInvocation.setMethodName("step1");
+        filter.invoke(invoker, firstInvocation);
+
+        assertThat(RpcContext.getClientAttachment().getAttachment(MessageHeaderConstants.IGNORE_TENANT)).isEqualTo("true");
+        assertThat(RpcContext.getClientAttachment().getAttachment(DubboSeataPropagationSupport.TX_XID))
+                .isEqualTo("10.0.0.1:8091:111111");
+
+        // 2. 清空全部本地上下文（模拟未经过 onResponse 直接同线程复用，且二次 invocation 预带脏附件）
+        UserContextHolder.clear();
+        TenantContextHolder.clear();
+        TrafficContextHolder.clear();
+        MDC.clear();
+        RootContext.unbind();
+
+        RpcInvocation secondInvocation = new RpcInvocation();
+        secondInvocation.setMethodName("step2");
+        secondInvocation.setAttachment(MessageHeaderConstants.TRACE_ID, "trace-call-1");
+        secondInvocation.setAttachment(MessageHeaderConstants.USER_ID, "user-call-1");
+        secondInvocation.setAttachment(MessageHeaderConstants.TENANT_ID, "tenant-call-1");
+        secondInvocation.setAttachment(MessageHeaderConstants.IGNORE_TENANT, "true");
+        secondInvocation.setAttachment(DubboContextPropagationFilter.TRAFFIC_TAG, "gray-v1");
+        secondInvocation.setAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE, "lane-1");
+        secondInvocation.setAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE, "rule-1");
+        secondInvocation.setAttachment(DubboSeataPropagationSupport.TX_XID, "10.0.0.1:8091:111111");
+        secondInvocation.setAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE, "10.0.0.1:8091:111111");
+        secondInvocation.setAttachment("X-Req-Biz", "req-keep");
+
+        filter.invoke(invoker, secondInvocation);
+
+        // 3. 断言 ClientAttachment 与 RpcInvocation 受管键全部清除，非受管业务附件完好保留
+        var clientAttachment = RpcContext.getClientAttachment();
+        assertConsumerManagedAttachmentsNull(clientAttachment);
+        assertThat(clientAttachment.getAttachment("X-Custom-Biz")).isEqualTo("biz-keep");
+
+        assertConsumerManagedAttachmentsNull(secondInvocation);
+        assertThat(secondInvocation.getAttachment("X-Req-Biz")).isEqualTo("req-keep");
+    }
+
+    @Test
+    @DisplayName("消费端切换新 Seata TX_XID 与显式 Invocation X-Traffic-Tag：清洗旧 tx_xid 且保留非镜像单次请求头")
+    void testConsumerReconcilesLowercaseXidSwitchAndPreservesExplicitInvocationTag() {
+        Invoker<?> invoker = mock(Invoker.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/io.github.atengk.cloud.dubbo.api.DemoService?side=consumer");
+        when(invoker.getUrl()).thenReturn(url);
+        when(invoker.invoke(any())).thenReturn(new AppResponse("ok"));
+
+        // 1. 激活新 XID 时，旧 tx_xid 必须被彻底清洗，避免与新 TX_XID 双值并发
+        RootContext.bind("10.0.0.2:8091:999999");
+        RpcContext.getClientAttachment().setAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE, "10.0.0.1:8091:111111");
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE, "10.0.0.1:8091:111111");
+        invocation.setAttachment(DubboContextPropagationFilter.TRAFFIC_TAG, "explicit-inv-tag");
+
+        filter.invoke(invoker, invocation);
+
+        assertThat(RpcContext.getClientAttachment().getAttachment(DubboSeataPropagationSupport.TX_XID))
+                .isEqualTo("10.0.0.2:8091:999999");
+        assertThat(invocation.getAttachment(DubboSeataPropagationSupport.TX_XID))
+                .isEqualTo("10.0.0.2:8091:999999");
+        assertThat(RpcContext.getClientAttachment().getAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
+        assertThat(invocation.getAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
+        // 非 ClientAttachment 镜像拷贝的 Invocation 显式标签应保留给下游 DubboTrafficTagFilter 解析
+        assertThat(invocation.getAttachment(DubboContextPropagationFilter.TRAFFIC_TAG)).isEqualTo("explicit-inv-tag");
+    }
+
+    @Test
+    @DisplayName("消费端只读 Invocation 包装对象执行前置清理不抛异常")
+    void testConsumerReadOnlyInvocationAttachmentsSafeCleanup() {
+        Invoker<?> invoker = mock(Invoker.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/io.github.atengk.cloud.dubbo.api.DemoService?side=consumer");
+        when(invoker.getUrl()).thenReturn(url);
+        when(invoker.invoke(any())).thenReturn(new AppResponse("ok"));
+
+        Invocation readOnlyInvocation = mock(Invocation.class);
+        java.util.Map<String, Object> frozenMap = java.util.Collections.unmodifiableMap(
+                java.util.Map.of(MessageHeaderConstants.IGNORE_TENANT, "true"));
+        when(readOnlyInvocation.getObjectAttachments()).thenReturn(frozenMap);
+        when(readOnlyInvocation.getAttachment(any())).thenAnswer(inv -> {
+            Object v = frozenMap.get(inv.getArgument(0, String.class));
+            return v != null ? v.toString() : null;
+        });
+
+        Result result = filter.invoke(invoker, readOnlyInvocation);
+        assertThat(result.getValue()).isEqualTo("ok");
+        assertThat(RpcContext.getClientAttachment().getAttachment(MessageHeaderConstants.IGNORE_TENANT)).isNull();
+    }
+
+    @Test
+    @DisplayName("消费端 onResponse 与 onError 回调闭环清理受管出站附件键，同时保留业务方自定义非受管附件")
+    void testConsumerOnResponseAndOnErrorCleanManagedClientAttachments() {
+        Invoker<?> invoker = mock(Invoker.class);
+        URL url = URL.valueOf("tri://127.0.0.1:50051/io.github.atengk.cloud.dubbo.api.DemoService?side=consumer");
+        when(invoker.getUrl()).thenReturn(url);
+        when(invoker.invoke(any())).thenReturn(new AppResponse("ok"));
+
+        // 1. onResponse 场景
+        UserContextHolder.setUserId("user-resp");
+        TenantContextHolder.setIgnoreTenant(true);
+        TrafficContextHolder.setContext(TrafficContext.of("gray-resp", "lane-resp", "rule-resp"));
+        RootContext.bind("10.0.0.2:8091:222222");
+        RpcContext.getClientAttachment().setAttachment("X-Custom-Header", "keep-on-response");
+
+        RpcInvocation respInvocation = new RpcInvocation();
+        Result result = filter.invoke(invoker, respInvocation);
+        filter.onResponse(result, invoker, respInvocation);
+
+        assertConsumerManagedAttachmentsNull(RpcContext.getClientAttachment());
+        assertThat(RpcContext.getClientAttachment().getAttachment("X-Custom-Header")).isEqualTo("keep-on-response");
+
+        // 2. onError 场景
+        RpcContext.getClientAttachment().setAttachment("X-Custom-Header", "keep-on-error");
+        RpcInvocation errInvocation = new RpcInvocation();
+        filter.invoke(invoker, errInvocation);
+        filter.onError(new org.apache.dubbo.rpc.RpcException("rpc timeout"), invoker, errInvocation);
+
+        assertConsumerManagedAttachmentsNull(RpcContext.getClientAttachment());
+        assertThat(RpcContext.getClientAttachment().getAttachment("X-Custom-Header")).isEqualTo("keep-on-error");
+    }
+
+    private void assertConsumerManagedAttachmentsNull(org.apache.dubbo.rpc.RpcContextAttachment attachment) {
+        assertThat(attachment.getAttachment(MessageHeaderConstants.TRACE_ID)).isNull();
+        assertThat(attachment.getAttachment(MessageHeaderConstants.USER_ID)).isNull();
+        assertThat(attachment.getAttachment(MessageHeaderConstants.TENANT_ID)).isNull();
+        assertThat(attachment.getAttachment(MessageHeaderConstants.IGNORE_TENANT)).isNull();
+        assertThat(attachment.getAttachment(DubboContextPropagationFilter.TRAFFIC_TAG)).isNull();
+        assertThat(attachment.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
+        assertThat(attachment.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isNull();
+        assertThat(attachment.getAttachment(DubboSeataPropagationSupport.TX_XID)).isNull();
+        assertThat(attachment.getAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
+    }
+
+    private void assertConsumerManagedAttachmentsNull(Invocation invocation) {
+        assertThat(invocation.getAttachment(MessageHeaderConstants.TRACE_ID)).isNull();
+        assertThat(invocation.getAttachment(MessageHeaderConstants.USER_ID)).isNull();
+        assertThat(invocation.getAttachment(MessageHeaderConstants.TENANT_ID)).isNull();
+        assertThat(invocation.getAttachment(MessageHeaderConstants.IGNORE_TENANT)).isNull();
+        assertThat(invocation.getAttachment(DubboContextPropagationFilter.TRAFFIC_TAG)).isNull();
+        assertThat(invocation.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_LANE)).isNull();
+        assertThat(invocation.getAttachment(DubboTrafficPropagationSupport.TRAFFIC_RULE)).isNull();
+        assertThat(invocation.getAttachment(DubboSeataPropagationSupport.TX_XID)).isNull();
+        assertThat(invocation.getAttachment(DubboSeataPropagationSupport.TX_XID_LOWERCASE)).isNull();
     }
 }
