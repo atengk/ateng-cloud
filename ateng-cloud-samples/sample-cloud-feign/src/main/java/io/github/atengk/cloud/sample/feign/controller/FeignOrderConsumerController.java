@@ -45,7 +45,7 @@ public class FeignOrderConsumerController {
     }
 
     /**
-     * 1. 声明式查商品详情：演示 @AdaptiveUnwrap 客户端自动脱壳剥离 Result 外壳
+     * 1. 声明式查商品详情：演示 @AdaptiveUnwrap 客户端自适应解包并提取 Result 业务数据
      *
      * @param id 商品 ID
      * @return 业务强类型结果包装

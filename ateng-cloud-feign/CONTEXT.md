@@ -13,19 +13,19 @@ _Avoid_: 自动脱壳, 智能拆包, 响应拦截剥离
 _Avoid_: 容错重试, 弹性重试机制, 失败轮询
 
 **4D Context Propagation**:
-在微服务跨进程 HTTP 通信时，出站请求以最高优先级自动抽取当前线程的 MDC traceId、userId、tenantId 及 ignoreTenant 快照并标准化挂载至 HTTP 标头的全链路治理机制。
+在微服务跨进程 HTTP 通信时，出站请求（`FeignContextPropagationInterceptor`）以最高优先级自动抽取当前线程的 MDC traceId、userId、tenantId、ignoreTenant 快照及可选的 Seata 全局事务 XID（`TX_XID`）挂载至 HTTP 标头；入站请求（`FeignContextWebFilter`）对称提取 HTTP 标头还原至对应上下文容器，并在出口 `finally` 块中 100% 确定性释放的全链路双向治理机制。
 _Avoid_: 标头透传, 请求头复制, 线程变量传递
 
 **Canary Traffic Tag Propagation**:
-在微服务全链路跨进程通信中，出站请求透明捕获当前线程 MDC 中的流量染色标记（`X-Traffic-Tag`），并标准化注入至 HTTP 出站标头的金丝雀灰度发布路由机制。
+在微服务全链路跨进程通信中，出站与入站通过零强依赖反射桥梁（`FeignTrafficPropagationSupport`）双向同步 `TrafficContextHolder` 中的流量染色标签（`X-Traffic-Tag`）、所属泳道（`X-Traffic-Lane`）与命中规则（`X-Traffic-Rule`），并在未引入流量模块时平滑回退 MDC 的金丝雀灰度发布路由机制。
 _Avoid_: 灰度标头透传, 标签传递, 染色转发
 
 **Same-Token Fail-Fast Guard**:
-依托 Sa-Token `SameTokenProvider` SPI，向出站 Feign 请求动态挂载内部同源受信凭据标头（`same-token`），对绕过网关直连内网暴露端口的非受信任流量实施快速 401 阻断的内网零信任防穿透机制。
+依托 `SameTokenProvider` SPI 向出站 Feign 请求动态挂载内部同源受信凭据标头（`Same-Token`），并在服务端入站过滤器中支持按需开启 `Same-Token` 强校验与白名单路径放行，对绕过网关直连内网暴露端口的非受信任流量实施快速 401 阻断的内网零信任防穿透机制。
 _Avoid_: 内网Token拦截, 鉴权请求头, 安全签名透传
 
 **Causal Error Decoding**:
-当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，优先按对端标准 `Result` 报文的业务错误状态转译为受管的强类型 `BusinessException`，且 100% 完整保留原始因果链（底层 `FeignException` 作为 `cause`）的防御性异常解码器。
+当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，优先按对端标准 `Result` 报文的业务错误状态转译为受管的强类型 `BusinessException`，且 100% 完整保留原始因果链（底层 `FeignException` 作为 `cause`）；对于网络建连/读取超时（`RetryableException`），默认保留原生异常以兼容熔断器统计，并支持按需开启网络异常强转译的防御性异常解码体系。
 _Avoid_: 统一异常拦截, 错误包装器, Feign异常处理
 
 **Connection Pool Warm Transport**:
@@ -41,7 +41,7 @@ _Avoid_: 二进制解包, 文件流拦截, 数据流解码
 _Avoid_: 参数展平器, GET对象映射, 查询参数转换
 
 **Per-Client Isolation**:
-支持“全局默认基线 + 单 Client 精确覆盖”的三级配置优先级模型，实现不同下游服务在超时、重试、日志级别及解包规则上的物理隔离配置机制。
+支持“全局默认基线 + 单 Client 精确覆盖（`contextId` 优先、`name` 回退）”的三级配置优先级模型，实现不同下游服务在连接/读取超时、重试策略、日志级别、自适应解包及响应载荷防爆上限（`maxResponseSize`）上的物理隔离配置机制。
 _Avoid_: 客户端独立配置, 差异化设置, 局部属性覆盖
 
 **Eager Preheating**:
@@ -52,6 +52,10 @@ _Avoid_: 客户端提前加载, 预热初始化, 首次请求加速
 无缝接入 Micrometer Observation 标准门面，自动采集微服务 RPC 调用的耗时直方图、吞吐量、状态码分布及分布式 Span 编织的统一可观测度量体系。
 _Avoid_: 客户端埋点, Feign监控, 调用链采集
 
+**Slow Call Detection**:
+在 `AtengFeignLogger` 响应拦截切面中基于强类型 `Duration` 阈值（支持全局与单 Client 覆盖）实时监测 RPC 调用耗时，一旦超越阈值即突破 `DEBUG` 限制主动输出结构化 `WARN` 慢调用告警日志的生产排障机制。
+_Avoid_: 慢请求日志, 耗时打印, 慢接口监控
+
 **Payload Guard**:
-配合弹性 GZIP 传输压缩机制，对超过阈值的超大响应报文实施快速失败熔断，守住客户端 JVM 堆内存与防范解压炸弹的内存防波堤机制。
+配合真实的请求体字节流 GZIP 压缩与响应 GZIP 解压流透明适配，对超过阈值（支持全局与单 Client 覆盖）的超大响应报文实施流式有界读取与快速失败熔断，守住客户端 JVM 堆内存与防范 GZIP 解压炸弹的内存防波堤机制。
 _Avoid_: 报文大小限制, 内存防爆, 响应拦截器

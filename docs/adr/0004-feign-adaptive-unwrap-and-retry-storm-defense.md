@@ -6,7 +6,7 @@
 1. **统一契约与业务代码冗余矛盾**：框架推行显式统一返回契约 `Result<T>`，微服务间通信在物理层面上始终返回包装对象。若由业务开发人员在每个 Feign 调用处手动判空与剥壳，会导致代码充斥样板代码；若无脑使用全局切面，又会破坏对第三方非标接口的兼容性。
 2. **读超时重试引发全链路雪崩**：对于非幂等写接口（POST/PUT，如下单、扣减库存、账户转账），发生网络读超时（`SocketTimeoutException`）往往意味着对端服务端正处于高负载并在执行数据库写操作。此时客户端若无脑发起重试，不仅会造成下游重复落库，更会瞬间引发数据库锁冲突与全网雪崩。
 3. **四维上下文与内网零信任防穿透断链**：微服务跨进程调用时，若未能透明透传 MDC traceId、租户 ID、用户 ID 及 Sa-Token 内部受信凭据（Same-Token），会导致多租户隔离失效、链路追踪断裂及内网未授权穿透攻击。
-4. **冷启动首调超时与生产深水区缺陷**：Feign 默认懒加载机制导致滚动发布瞬间首调延迟飙升；对于二进制流、文件导出、复杂 GET POJO 传参以及大报文内存防爆缺乏工业级防御支撑。
+4. **冷启动首调超时与生产深水区缺陷**：Feign 默认懒加载机制导致滚动发布瞬间首调延迟飙升；对于二进制流、文件导出、复杂 GET POJO 传参以及大报文与解压炸弹载荷防护（Payload Guard）缺乏工业级防御支撑。
 
 ## Decision
 
@@ -21,7 +21,8 @@
 
 2. **因果异常解码与因果链保真 (Causal Error Decoding)**：
    - 定制 `AtengFeignErrorDecoder`，当遭遇非 2xx HTTP 状态码时，确立“业务状态优先于传输层状态”原则：优先尝试按 `Result<?>` 格式解析并转译为业务异常（`BusinessException(code, msg, feignException)`）；
-   - 无法解析或属于网关/网络层故障时，统一转译为 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染。
+   - 无法解析时，由 `FeignErrorSupport` 按 HTTP 状态码精确映射对应 `CommonResultCode`（如 400/401/403/404/405/413/429/503，其余兜底映射为 `CommonResultCode.INTERNAL_SERVER_ERROR`），同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染；
+   - **网络层异常（`RetryableException`）兼容与可选转译**：对于建连失败或读取超时耗尽后抛出的 `RetryableException`，默认保留原生异常抛出以兼容 Sentinel / Resilience4j 熔断器异常识别，同时支持通过 `ateng.cloud.feign.translate-network-exceptions=true` 按需在动态代理层因果转译为 `BusinessException(CommonResultCode.SERVICE_UNAVAILABLE, ...)` 并保留原始 `cause`。
 
 3. **防雪崩弹性重试纪律 (Retry Storm Defense)**：
    - 定制 `AtengFeignRetryer` 彻底践行**“写请求绝对禁止重试不变量”**：
@@ -30,12 +31,13 @@
    - **Full Jitter 弹性抖动算法**：退避休眠引入带有保底时间窗的 Full Jitter 算法（`floor + random(0, upper - floor)`，`floor = min(period / 2, 20ms)`），在打散并发重试脉冲的同时保留最小物理退避缓冲，彻底消除高并发下的惊群风暴；
    - 强类型配置项 `ateng.cloud.feign.retry.*` 统一采用 `Duration` 规范管理重试间隔与上限。
 
-4. **全链路四维上下文与零信任同源防穿透透传 (4D Context & Same-Token)**：
-   - 实现 `FeignContextPropagationInterceptor`，显式实现 `Ordered.HIGHEST_PRECEDENCE` 确保第一顺位执行，在请求出站前自动从当前线程提取并标准化挂载：`X-Trace-Id`、`X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant` 及 `X-Traffic-Tag`；
-   - **生态扩展原生解耦**：跨中间件（如 Seata XID 透传）或业务自定义出站标头，统一遵循 Spring 官方 `RequestInterceptor` 单例责任链机制无缝协同，Starter 绝不造专有侵入性 SPI；
-   - **平滑条件探测零信任凭据**：基于 `@ConditionalOnClass(SaSameUtil.class)` 条件探测，仅当类路径存在 Sa-Token 且开启校验时自动附加 `Same-Token`，未引入时平滑跳过；
+4. **全链路四维上下文与零信任同源防穿透双向闭环 (Symmetric 4D Context & Same-Token)**：
+   - **出站注入（Consumer）**：实现 `FeignContextPropagationInterceptor`，显式实现 `Ordered.HIGHEST_PRECEDENCE` 确保第一顺位执行，在请求出站前自动从当前线程提取并标准化挂载：`x-trace-id`、`x-user-id`、`x-tenant-id`、`x-ignore-tenant`、灰度泳道元数据（`X-Traffic-Tag`、`X-Traffic-Lane`、`X-Traffic-Rule`）及 Seata 全局事务 `TX_XID`；
+   - **入站还原与确定性清理（Provider）**：在 Servlet 环境下自动装配 `FeignContextWebFilter`，入站自动提取 HTTP 标头并还原至 `UserContextHolder`、`TenantContextHolder`、`TrafficContextHolder`、Seata `RootContext` 与 `MDC`，在出口 `finally` 块中按快照恢复与幂等清理原则 100% 强制释放，杜绝容器线程池复用污染；
+   - **零强依赖跨模块反射桥接**：内置 `FeignTrafficPropagationSupport` 与 `FeignSeataPropagationSupport`，通过 `ClassUtils` 优先读写 `TrafficContextHolder`（平滑回退 MDC）与 Seata `RootContext`，既兑现 `AtengTrafficFeignAutoConfiguration` 的让位契约，又保持零额外编译期强依赖；
+   - **零信任凭据签发与入站校验**：基于 `@ConditionalOnClass(SaSameUtil.class)` 条件探测与 `SameTokenProvider` SPI 出站附加 `Same-Token`；入站支持通过 `ateng.cloud.feign.context.check-same-token=true` 开启强校验（支持白名单路径放行），对绕过网关的未授权直连请求快速返回 `401 UNAUTHORIZED`；
    - **空值防呆清洗**：上下文项为空时直接跳过标头注入，严禁向 HTTP Headers 写入 `"null"` 脏数据；
-   - **日志脱敏防线**：定制 `AtengFeignLogger`，在输出请求详情时对 `Same-Token`、`Authorization` 等敏感标头执行自动掩码脱敏。
+   - **日志脱敏与慢调用主动告警**：定制 `AtengFeignLogger`，对 `Same-Token`、`Authorization` 等敏感标头执行自动掩码脱敏；同时内置基于 `slow-call-threshold`（默认 `2s`，支持单 Client 覆盖）的慢调用检测，超阈值时突破 `DEBUG` 限制主动输出 `WARN` 告警日志。
 
 5. **连接池高并发通信底座 (Connection Pool Warm Transport)**：
    - 标配引入 `io.github.openfeign:feign-hc5`，默认自动装配 Apache HttpClient 5 线程池通信底座；
@@ -48,20 +50,20 @@
 
 7. **复杂 GET 参数自动绑定与客户端隔离配置 (QueryMap & Per-Client Isolation)**：
    - 自动装配 `SpringQueryMap` 解析适配器，彻底防范 GET 请求传递 POJO 时被误转为 POST 或参数丢失；
-   - 建立“全局默认基线 + 单 Client 精确覆盖”的三级配置体系（`ateng.cloud.feign.clients.<name>.*`），实现不同下游服务在超时、重试与解包规则上的物理隔离配置。
+   - 建立“全局默认基线 + 单 Client 精确覆盖（`contextId` 优先、`name` 回退）”的三级配置体系（`ateng.cloud.feign.clients.<name>.*`），实现不同下游服务在超时、重试、日志级别、解包规则与响应载荷上限（`maxResponseSize`）上的物理隔离配置。
 
-8. **饥饿预热、统一度量与内存防爆 (Preheating, Observation & Payload Guard)**：
-   - 提供客户端饥饿加载机制（`eager-load`），在容器启动完成时静默预热指定 FeignClient，消灭滚动发布首调超时；
+8. **主动预热、统一度量与载荷防护 (Eager Preheating, Observation & Payload Guard)**：
+   - 提供客户端主动预热机制（`ateng.cloud.feign.preheat.*` / `AtengFeignPreheatListener`，默认启用 `enabled=true`），在容器启动完成时静默预热指定或扫描到的 `@FeignClient` 及其连接池，消灭滚动发布首调超时；
    - 统一接入 Micrometer Observation 标准门面，自动采集微服务 RPC 调用的耗时直方图与状态码分布，联动 `ateng-boot-observability` 完成跨进程 Span 编织；
-   - 支持弹性 GZIP 请求/响应压缩，设置响应体硬防爆阈值（默认 10MB），防范客户端内存 OOM。
+   - 支持真实的请求体字节流 GZIP 压缩（`GZIPOutputStream`）与响应 GZIP 解压流透明适配，设置响应体有界读取上限（默认 10MB，支持单 Client 覆盖），防范客户端内存 OOM 与 GZIP 解压炸弹。
 
 9. **100% 离线自洽 1:1 场景工程**：
-   - 在 `ateng-cloud-samples/sample-cloud-feign` 配套专属沙箱，内置 Mock Provider 控制器，基于 `@SpringBootTest(webEnvironment = RANDOM_PORT)` 全真覆盖自适应解包、原生透传、错误转译、标头透传、重试防雪崩及流式传输。
+   - 在 `ateng-cloud-samples/sample-cloud-feign` 配套专属沙箱，内置 Mock Provider 控制器，基于 `@SpringBootTest(webEnvironment = DEFINED_PORT)` 配合动态可用端口分配（`@DynamicPropertySource`）全真覆盖自适应解包、原生透传、因果错误解码、四维上下文传播、防雪崩重试及流式传输。
 
 ## Consequences
 
 1. **极简且安全的研发体验**：业务开发人员无需编写冗余的判空与解包逻辑，直接接收强类型实体，同时对非标接口保持零侵入兼容。
 2. **彻底消灭非幂等资损与雪崩**：严密的防重试雪崩算法从底层截断了网络抖动时对非幂等接口的重复提交，保障资金与核心订单安全。
-3. **零信任内网防穿透闭环**：协同 Sa-Token Same-Token 与四维标头透传，确保未经网关鉴权的外部恶意探测直接 Fail-Fast 阻断。
+3. **零信任内网防穿透闭环**：协同 Sa-Token Same-Token 与四维上下文传播（4D Context Propagation），确保未经网关鉴权的外部恶意探测直接 Fail-Fast 阻断。
 4. **全场景工业级覆盖**：系统性攻克了文件流式传输、GET 复杂参数绑定、客户端配置隔离、冷启动首调超时及超大报文 OOM 等生产深水区难题。
 5. **CI 门禁毫秒级全绿**：100% 离线自洽测试架构保障在任何脱网环境下持续交付与构建全绿。

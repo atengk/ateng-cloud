@@ -193,9 +193,9 @@ public class FeignToleranceController {
     }
 
     /**
-     * 6. 出站标头透传回显
+     * 6. 出站四维上下文与灰度标签传播回显
      *
-     * @return 下游收到的透传请求头映射
+     * @return 下游收到的请求头回显映射
      */
     @GetMapping("/headers")
     public Result<Map<String, String>> testHeaders() {

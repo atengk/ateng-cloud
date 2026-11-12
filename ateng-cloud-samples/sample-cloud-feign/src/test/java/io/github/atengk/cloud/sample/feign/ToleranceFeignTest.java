@@ -293,7 +293,7 @@ public class ToleranceFeignTest {
         Result<ToleranceResultVO> payloadResult = feignToleranceController.testPayloadOverflow();
         assertTrue(payloadResult.isSuccess());
 
-        // 标头透传
+        // 四维上下文传播
         Result<Map<String, String>> headersResult = feignToleranceController.testHeaders();
         assertTrue(headersResult.isSuccess());
     }

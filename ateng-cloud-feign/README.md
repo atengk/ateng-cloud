@@ -50,7 +50,7 @@
 | 配置项 | 类型 | 默认值 | 详细业务说明 |
 | :--- | :--- | :--- | :--- |
 | `ateng.cloud.feign.enabled` | `boolean` | `true` | 是否启用 `ateng-cloud-feign` 核心治理基础设施总开关 |
-| `ateng.cloud.feign.logger-level` | `feign.Logger.Level` | `BASIC` | 全局 Feign 请求响应日志级别 (`NONE` / `BASIC` / `HEADERS` / `FULL`) |
+| `ateng.cloud.feign.logger-level` | `feign.Logger.Level` | `BASIC` | 全局 Feign 请求响应日志级别 (`NONE` / `BASIC` / `HEADERS` / `FULL`；注意设为 `NONE` 时 OpenFeign 原生跳过 `Logger` 回调，慢调用探测亦不触发) |
 | `ateng.cloud.feign.slow-call-threshold` | `Duration` | `2s` | 全局慢调用 WARN 告警阈值（设为 `0` 或负数关闭全局慢调用告警） |
 | `ateng.cloud.feign.translate-network-exceptions` | `boolean` | `false` | 是否将穿透重试器的网络层与未转译 `FeignException` 转译为 `BusinessException`（默认 `false` 以保留原生异常供熔断器统计） |
 | `ateng.cloud.feign.httpclient.enabled` | `boolean` | `true` | 是否启用 Apache HttpClient 5 高并发连接池传输层优化 |
@@ -876,7 +876,7 @@ WARN ... SlowCallFeignClient : Feign 慢调用告警: client=slow-call-client, m
 
 **③ 机制原理解析**：
 
-生产环境通常会关闭 `DEBUG` 级别通信报文日志，若慢调用诊断绑定在 DEBUG 上将彻底失明。`AtengFeignLogger` 将慢调用阈值判断逻辑前置置于 `logger.isDebugEnabled()` 门卫之前，因此即使全局处于 `INFO` 或 `WARN` 日志级别且 `logger-level=NONE`，慢调用行为仍能毫秒级精确告警并定位到具体 `client`、`method` 与实测耗时。
+生产环境通常会关闭 `DEBUG` 级别通信报文日志，若慢调用诊断绑定在 DEBUG 上将彻底失明。`AtengFeignLogger` 将慢调用阈值判断逻辑前置置于 `logger.isDebugEnabled()` 门卫之前，因此只要 Feign 日志级别保持非 `NONE`（Starter 默认自动装配为 `BASIC`），即使全局 SLF4J 日志级别处于 `INFO` 或 `WARN`，慢调用行为仍能毫秒级精确告警并定位到具体 `client`、`method` 与实测耗时；注意若显式将 `logger-level` 设为 `NONE`，OpenFeign 底层 `ResponseHandler` 会直接跳过 `logAndRebufferResponse` 回调，慢调用告警将同步关闭。
 
 ---
 

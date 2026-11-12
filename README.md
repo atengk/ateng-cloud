@@ -27,7 +27,7 @@ flowchart TD
         direction TB
         
         subgraph RPCLink ["双模微服务通信契约"]
-            Feign["ateng-cloud-feign<br>(声明式 HTTP 客户端 / 智能剥壳 / 写接口禁重试防雪崩)"]
+            Feign["ateng-cloud-feign<br>(声明式 HTTP 客户端 / 自适应解包 / 写接口禁重试防雪崩)"]
             Dubbo["ateng-cloud-dubbo<br>(Apache Dubbo 3.3 / Triple & TCP 双核 / 契约校验)"]
         end
 
@@ -51,7 +51,7 @@ flowchart TD
 - ⚡ **开箱即用全能聚合**：通过 `ateng-cloud-bom` 统一锁定全域版本，`ateng-cloud-all` 一键装配微服务骨干构件，消除版本地狱与繁琐依赖配置；
 - 🔄 **双模微服务通信**：支持 OpenFeign 声明式 HTTP 与 Apache Dubbo 3.3 现代流式 Triple/TCP RPC，根据业务吞吐自由选型与正交共存；
 - 🌐 **全链路四维上下文穿透**：跨进程透明透传四维快照 $\langle\text{MDC traceId}, \text{userId}, \text{tenantId}, \text{ignoreTenant}\rangle$ 与金丝雀染色标（`X-Traffic-Tag`），多跳泳道隔离不丢标；
-- 🛡️ **微服务防雪崩与弹性容灾**：智能剥壳并因果转译对端业务异常；非幂等写接口（POST/PUT）发生读超时坚决禁止重试，杜绝重复落库与重试风暴；
+- 🛡️ **微服务防雪崩与弹性容灾**：自适应解包并因果转译对端业务异常；非幂等写接口（POST/PUT）发生读超时坚决禁止重试，杜绝重复落库与重试风暴；
 - 🔒 **零信任内网防穿透与响应式隔离**：网关集中鉴权并向下游安全注入 `Same-Token`，直连服务端口直接 401 熔断；网关坚持 WebFlux 纯响应式，与 Servlet 阻塞栈严格物理隔离；
 - ⚙️ **单例不可变配置安全热更**：全面遵循 Spring Boot 3 `spring.config.import` 规范，严禁在业务单例上标注 `@RefreshScope`，增量热更严格收敛于 `@ConfigurationProperties`。
 
@@ -140,14 +140,14 @@ ateng:
 
 ### 第 4 步：编写业务代码
 
-声明式定义跨服务 HTTP 客户端，开箱即享四维上下文自动透传与智能解包：
+声明式定义跨服务 HTTP 客户端，开箱即享四维上下文自动传播与自适应解包：
 
 ```java
 @FeignClient(name = "user-service")
 public interface UserServiceClient {
 
     @GetMapping("/api/user/{id}")
-    Result<UserVO> getUserById(@PathVariable("id") Long id);
+    UserVO getUserById(@PathVariable("id") Long id);
 }
 
 @RestController
@@ -159,8 +159,8 @@ public class OrderController {
 
     @GetMapping("/{orderId}")
     public Result<OrderDetailVO> getOrderDetail(@PathVariable("orderId") String orderId) {
-        // 自动完成 Result<T> 状态码校验与解包，若下游报错自动因果转译为本地业务异常
-        UserVO user = userServiceClient.getUserById(1001L).getData();
+        // 对端返回 Result<UserVO> 时自动完成状态码校验与自适应解包；若下游报错自动因果转译为 BusinessException
+        UserVO user = userServiceClient.getUserById(1001L);
         return Result.success(new OrderDetailVO(orderId, user));
     }
 }
@@ -174,7 +174,7 @@ public class OrderController {
 | :--- | :--- | :--- | :---: |
 | **物料清单 (BOM)** | `ateng-cloud-bom` | 全域依赖版本物料清单，统管 Spring Cloud、Dubbo 3.3 与全套 Starter 版本 | [查看文档](./ateng-cloud-bom/README.md) |
 | **Nacos 服务治理** | `ateng-cloud-nacos` | Nacos 2.x 注册中心、冷启动平滑预热、机房就近亲和与配置安全增量热更 | [查看文档](./ateng-cloud-nacos/README.md) |
-| **Feign 声明式客户端** | `ateng-cloud-feign` | 声明式 HTTP 通信、四维上下文透明透传、智能剥壳与非幂等写接口禁重试防雪崩 | [查看文档](./ateng-cloud-feign/README.md) |
+| **Feign 声明式客户端** | `ateng-cloud-feign` | 声明式 HTTP 通信、四维上下文对称传播、自适应解包与非幂等写接口禁重试防雪崩 | [查看文档](./ateng-cloud-feign/README.md) |
 | **Dubbo 高性能 RPC** | `ateng-cloud-dubbo` | Apache Dubbo 3.3 高性能 RPC、Triple/TCP 双核、双模契约校验与四维上下文透传 | [查看文档](./ateng-cloud-dubbo/README.md) |
 | **响应式微服务网关** | `ateng-cloud-gateway` | WebFlux 纯响应式网关、2MB 载荷硬防爆、Sa-Token 鉴权、Same-Token 签发与动态路由 | [查看文档](./ateng-cloud-gateway/README.md) |
 | **流量防卫与降级** | `ateng-cloud-sentinel` | Sentinel 流量防卫、熔断降级、路径防爆清洗、受管降级工厂与 Nacos 5 大规则持久化 | [查看文档](./ateng-cloud-sentinel/README.md) |

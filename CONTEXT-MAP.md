@@ -4,7 +4,7 @@
 
 - [BOM](./ateng-cloud-bom/CONTEXT.md) — 微服务全域依赖版本物料清单、上游 `ateng-boot-bom` 基线统管与依赖收敛仲裁（[ADR-0001](./docs/adr/0001-multi-repo-and-upstream-bom-baseline.md), [ADR-0002](./docs/adr/0002-microservice-dependency-baseline-and-upgrade-strategy.md)）
 - [Nacos](./ateng-cloud-nacos/CONTEXT.md) — 微服务动态注册发现、流量无损上下线、元数据治理与 Nacos 现代配置中心集成（[ADR-0003](./docs/adr/0003-nacos-zero-downtime-and-safe-hot-reload-architecture.md)）
-- [Feign](./ateng-cloud-feign/CONTEXT.md) — 声明式 HTTP/RPC 客户端通信、四维上下文透传、双模自适应解包与防重试雪崩（[ADR-0004](./docs/adr/0004-feign-adaptive-unwrap-and-retry-storm-defense.md)）
+- [Feign](./ateng-cloud-feign/CONTEXT.md) — 声明式 HTTP/RPC 客户端通信、双向四维上下文与灰度/事务上下文传播、双模自适应解包、防重试雪崩与慢调用治理（[ADR-0004](./docs/adr/0004-feign-adaptive-unwrap-and-retry-storm-defense.md)）
 - [Dubbo](./ateng-cloud-dubbo/CONTEXT.md) — 高性能 RPC 通信与治理、Triple/TCP 双核协议、四维上下文透传与双模契约校验（[ADR-0005](./docs/adr/0005-dubbo-triple-context-propagation-and-contract-architecture.md)）
 - [Gateway](./ateng-cloud-gateway/CONTEXT.md) — WebFlux 纯响应式网关、Sa-Token 集中鉴权、零信任 Same-Token 签发、动态路由与文档聚合（[ADR-0006](./docs/adr/0006-gateway-reactive-architecture-and-zero-trust-defense.md)）
 - [Sentinel](./ateng-cloud-sentinel/CONTEXT.md) — 流量防卫、熔断降级、受管降级工厂、路径防爆清洗与 Nacos 5 大规则全家桶持久化（[ADR-0007](./docs/adr/0007-sentinel-traffic-defense-and-managed-fallback-architecture.md)）
