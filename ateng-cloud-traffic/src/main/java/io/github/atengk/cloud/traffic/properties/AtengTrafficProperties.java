@@ -48,6 +48,16 @@ public class AtengTrafficProperties {
     private boolean strictLane = false;
 
     /**
+     * 按下游目标服务名精细化开启严格泳道隔离的 serviceId 集合 (忽略大小写匹配)
+     */
+    private Set<String> strictLaneServices = new LinkedHashSet<>();
+
+    /**
+     * 按流量染色标签精细化开启严格泳道隔离的 tag 集合 (忽略大小写匹配)
+     */
+    private Set<String> strictLaneTags = new LinkedHashSet<>();
+
+    /**
      * 是否开启跨跳泳道穿透保持语义 (中间服务降级至基线后，后续出站调用依然优先重回灰度泳道)
      */
     private boolean laneContinuity = true;
@@ -128,6 +138,56 @@ public class AtengTrafficProperties {
 
     public void setStrictLane(boolean strictLane) {
         this.strictLane = strictLane;
+    }
+
+    public Set<String> getStrictLaneServices() {
+        return strictLaneServices;
+    }
+
+    public void setStrictLaneServices(Set<String> strictLaneServices) {
+        this.strictLaneServices = strictLaneServices != null
+                ? new LinkedHashSet<>(strictLaneServices)
+                : new LinkedHashSet<>();
+    }
+
+    public Set<String> getStrictLaneTags() {
+        return strictLaneTags;
+    }
+
+    public void setStrictLaneTags(Set<String> strictLaneTags) {
+        this.strictLaneTags = strictLaneTags != null
+                ? new LinkedHashSet<>(strictLaneTags)
+                : new LinkedHashSet<>();
+    }
+
+    /**
+     * 综合判定当前调用是否需要激活严格泳道隔离 (全局 strict-lane、按目标服务名或按流量标签任一命中即生效，忽略大小写)
+     *
+     * @param serviceId 下游目标服务名 (可为 null)
+     * @param tag       当前活跃流量染色标签 (可为 null)
+     * @return true 表示命中强隔离，缺失灰度实例时必须 Fail-Fast 阻断；false 表示允许平滑降级
+     */
+    public boolean isStrictLaneRequired(String serviceId, String tag) {
+        if (strictLane) {
+            return true;
+        }
+        if (containsIgnoreCase(strictLaneServices, serviceId)) {
+            return true;
+        }
+        return containsIgnoreCase(strictLaneTags, tag);
+    }
+
+    private static boolean containsIgnoreCase(Set<String> candidates, String value) {
+        if (candidates == null || candidates.isEmpty() || value == null || value.isBlank()) {
+            return false;
+        }
+        String target = value.trim();
+        for (String candidate : candidates) {
+            if (candidate != null && candidate.trim().equalsIgnoreCase(target)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean isLaneContinuity() {

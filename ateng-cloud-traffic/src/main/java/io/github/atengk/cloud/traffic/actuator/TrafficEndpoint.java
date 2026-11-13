@@ -86,6 +86,8 @@ public class TrafficEndpoint {
         configSnapshot.put("headerName", properties.getHeaderName());
         configSnapshot.put("paramName", properties.getParamName());
         configSnapshot.put("strictLane", properties.isStrictLane());
+        configSnapshot.put("strictLaneServices", properties.getStrictLaneServices());
+        configSnapshot.put("strictLaneTags", properties.getStrictLaneTags());
         configSnapshot.put("fallbackToDefault", properties.isFallbackToDefault());
         configSnapshot.put("laneContinuity", properties.isLaneContinuity());
         configSnapshot.put("filterOrder", properties.getFilterOrder());

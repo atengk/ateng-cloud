@@ -1,6 +1,8 @@
 package io.github.atengk.cloud.traffic.autoconfigure;
 
 import io.github.atengk.cloud.traffic.actuator.TrafficEndpoint;
+import io.github.atengk.cloud.traffic.constant.TrafficConstants;
+import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.context.TrafficContextSnapshotProvider;
 import io.github.atengk.cloud.traffic.filter.TrafficContextFilter;
 import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
@@ -14,7 +16,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.web.client.RestClientCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.http.client.MockClientHttpRequest;
+import org.springframework.mock.http.client.MockClientHttpResponse;
+import org.springframework.web.client.RestClient;
+
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -115,5 +126,42 @@ class AtengTrafficAutoConfigurationTest {
                     assertThat(provider.getRules().get(0).getId()).isEqualTo("local-canary");
                     assertThat(provider.getRules().get(0).getTargetTag()).isEqualTo("v2");
                 });
+    }
+
+    @Test
+    @DisplayName("测试自动装配 trafficRestClientCustomizer 并通过 RestClient 自动透传且不覆盖显式同名 Header")
+    void testTrafficRestClientCustomizerAutoPropagation() {
+        nonWebRunner.run(context -> {
+            assertThat(context).hasBean("trafficRestClientCustomizer");
+            RestClientCustomizer customizer = context.getBean("trafficRestClientCustomizer", RestClientCustomizer.class);
+
+            AtomicReference<String> capturedHeader = new AtomicReference<>();
+            RestClient.Builder builder = RestClient.builder()
+                    .requestFactory((uri, method) -> new MockClientHttpRequest(method, uri) {
+                        @Override
+                        protected org.springframework.http.client.ClientHttpResponse executeInternal() {
+                            capturedHeader.set(getHeaders().getFirst(TrafficConstants.HEADER_TRAFFIC_TAG));
+                            return new MockClientHttpResponse("ok".getBytes(StandardCharsets.UTF_8), HttpStatus.OK);
+                        }
+                    });
+            customizer.customize(builder);
+            RestClient restClient = builder.build();
+
+            try {
+                // 1. 仅上下文存在 tag -> 自动注入 X-Traffic-Tag
+                TrafficContextHolder.setTag("canary-restclient");
+                restClient.method(HttpMethod.GET).uri("http://order-service/api/ping").retrieve().toBodilessEntity();
+                assertThat(capturedHeader.get()).isEqualTo("canary-restclient");
+
+                // 2. 调用方显式传入有效同名 Header -> 保留显式标头不覆盖
+                capturedHeader.set(null);
+                restClient.method(HttpMethod.GET).uri("http://order-service/api/ping")
+                        .header(TrafficConstants.HEADER_TRAFFIC_TAG, "explicit-v9")
+                        .retrieve().toBodilessEntity();
+                assertThat(capturedHeader.get()).isEqualTo("explicit-v9");
+            } finally {
+                TrafficContextHolder.clear();
+            }
+        });
     }
 }

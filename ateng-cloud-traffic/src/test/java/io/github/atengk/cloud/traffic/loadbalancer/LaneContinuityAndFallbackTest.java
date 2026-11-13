@@ -117,6 +117,32 @@ class LaneContinuityAndFallbackTest {
                 .hasMessageContaining("v2");
     }
 
+    @Test
+    @DisplayName("测试同一调用链多粒度隔离：strict-lane-services 中核心服务阻断 4210，其余服务平滑降级")
+    void testMixedSelectiveStrictLaneInSameCallChain() {
+        TrafficContextHolder.setTag("fin-canary");
+        properties.setStrictLane(false);
+        properties.setStrictLaneServices(java.util.Set.of("payment-service"));
+
+        ServiceInstance invBase = new DefaultServiceInstance("inv-base", "inventory-service", "10.0.1.1", 8080, false, Collections.emptyMap());
+        TrafficTagServiceInstanceListSupplier invSupplier = new TrafficTagServiceInstanceListSupplier(
+                new StaticServiceSupplier("inventory-service", List.of(invBase)),
+                properties
+        );
+        // 外围服务 inventory-service 不在强隔离列表 -> 平滑降级
+        assertThat(invSupplier.filterByTag(List.of(invBase), TrafficContextHolder.getTag())).containsExactly(invBase);
+
+        ServiceInstance payBase = new DefaultServiceInstance("pay-base", "payment-service", "10.0.2.1", 8080, false, Collections.emptyMap());
+        TrafficTagServiceInstanceListSupplier paySupplier = new TrafficTagServiceInstanceListSupplier(
+                new StaticServiceSupplier("payment-service", List.of(payBase)),
+                properties
+        );
+        // 核心服务 payment-service 在强隔离列表 -> 立即 Fail-Fast
+        assertThatThrownBy(() -> paySupplier.filterByTag(List.of(payBase), TrafficContextHolder.getTag()))
+                .isInstanceOf(TrafficRoutingException.class)
+                .hasMessageContaining("payment-service");
+    }
+
     private static class StaticServiceSupplier implements ServiceInstanceListSupplier {
         private final String serviceId;
         private final List<ServiceInstance> instances;

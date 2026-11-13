@@ -77,4 +77,18 @@ class TrafficClientHttpRequestInterceptorTest {
             return null;
         });
     }
+
+    @Test
+    @DisplayName("测试调用方已显式传递有效同名标头时不覆盖")
+    void testPreserveExplicitHeaderWhenPresent() throws IOException {
+        TrafficContextHolder.setTag("gray-context");
+        MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, URI.create("http://inventory-service/api/stock"));
+        request.getHeaders().set(TrafficConstants.HEADER_TRAFFIC_TAG, "explicit-v3");
+
+        interceptor.intercept(request, new byte[0], (req, body) -> {
+            HttpHeaders headers = req.getHeaders();
+            assertThat(headers.getFirst(TrafficConstants.HEADER_TRAFFIC_TAG)).isEqualTo("explicit-v3");
+            return null;
+        });
+    }
 }

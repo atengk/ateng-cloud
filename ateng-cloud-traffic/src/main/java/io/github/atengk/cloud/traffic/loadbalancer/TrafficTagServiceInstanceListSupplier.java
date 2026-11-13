@@ -83,14 +83,8 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
 
         // 2. 若下游全量可用实例列表为空
         if (instances == null || instances.isEmpty()) {
-            if (StringUtils.hasText(tag) && properties.isStrictLane()) {
-                String trimmedTag = tag.trim();
-                if (metricsManager != null) {
-                    metricsManager.recordStrictBlocked(getServiceId(), trimmedTag);
-                }
-                log.warn("[TrafficLoadBalancer] 目标服务无可用实例且开启严格隔离模式，直接阻断抛出异常 [serviceId={}, tag={}]",
-                        getServiceId(), trimmedTag);
-                throw new TrafficRoutingException(getServiceId(), trimmedTag);
+            if (StringUtils.hasText(tag)) {
+                failFastIfStrictLaneRequired(tag.trim(), "目标服务无可用实例");
             }
             return Collections.emptyList();
         }
@@ -113,15 +107,8 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
                 return Collections.unmodifiableList(taggedInstances);
             }
 
-            // 灰度节点全部下线或不存在时的容灾处理
-            if (properties.isStrictLane()) {
-                if (metricsManager != null) {
-                    metricsManager.recordStrictBlocked(getServiceId(), trimmedTag);
-                }
-                log.warn("[TrafficLoadBalancer] 目标灰度节点不存在且开启严格隔离模式，直接阻断抛出异常 [serviceId={}, tag={}]",
-                        getServiceId(), trimmedTag);
-                throw new TrafficRoutingException(getServiceId(), trimmedTag);
-            }
+            // 灰度节点全部下线或不存在时的容灾处理 (命中全局/服务级/标签级强隔离策略立即阻断)
+            failFastIfStrictLaneRequired(trimmedTag, "目标灰度节点不存在");
 
             if (properties.isFallbackToDefault()) {
                 if (metricsManager != null) {
@@ -142,6 +129,21 @@ public class TrafficTagServiceInstanceListSupplier extends DelegatingServiceInst
             metricsManager.recordBaselineHit(getServiceId());
         }
         return filterBaselineInstances(instances);
+    }
+
+    /**
+     * 判定是否触发多粒度严格泳道隔离 (全局/服务名/标签)，命中时记录监控指标并 Fail-Fast 抛出 TrafficRoutingException
+     */
+    private void failFastIfStrictLaneRequired(String trimmedTag, String reason) {
+        if (!properties.isStrictLaneRequired(getServiceId(), trimmedTag)) {
+            return;
+        }
+        if (metricsManager != null) {
+            metricsManager.recordStrictBlocked(getServiceId(), trimmedTag);
+        }
+        log.warn("[TrafficLoadBalancer] {}且命中严格泳道隔离策略，直接阻断抛出异常 [serviceId={}, tag={}]",
+                reason, getServiceId(), trimmedTag);
+        throw new TrafficRoutingException(getServiceId(), trimmedTag);
     }
 
     /**

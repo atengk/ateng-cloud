@@ -18,7 +18,7 @@
 | `TrafficContextHolder` | 核心门面类 | 流量染色与泳道状态线程上下文持有者 | 双向联动 TTL 与 MDC，具备 MDC 兜底平滑回填与确定性清理 |
 | `TrafficContext` | 不可变模型 | 强类型流量染色上下文值对象 | 封装流量标签 `tag` 与毫秒级创建时间戳 |
 | `TrafficContextFilter` | 核心过滤器 | 入站 HTTP 流量染色提取与 `finally` 幂等清理 | 注册为 `FilterRegistrationBean`，延迟从 `TrafficRuleProvider` 获取动态规则 |
-| `TrafficClientHttpRequestInterceptor` | 核心拦截器 | 出站 RestTemplate 请求头流量染色自动注入 | 当开启 `lane-continuity=true` 时自动透传当前流量标签 |
+| `TrafficClientHttpRequestInterceptor` | 核心拦截器 | 出站 RestTemplate / RestClient 请求头流量染色自动注入 | 当开启 `lane-continuity=true` 时自动透传当前流量标签，不覆盖调用方显式有效标头 |
 | `TrafficFeignRequestInterceptor` | 核心拦截器 | 出站 Feign 请求头流量染色标头注入 | 独立引入 Feign 时激活，最高优先级透传当前流量标签并清洗脏值 |
 | `TrafficTagServiceInstanceListSupplier` | 负载均衡供应商 | 灰度版本隔离第一层责任链，按 `metadata.tag` 精准过滤 | 支持全下线平滑降级（`fallbackToDefault`）与严格隔离阻断（`strictLane`） |
 | `StickyHashPartitioner` | 核心分发器 | 基于 MurmurHash3 的一致性哈希百分比分发器 | 支持单值比例放量与多版本 percentageRange [min, max) 互斥分桶切流，保障会话粘性 |
@@ -48,6 +48,8 @@
 | `ateng.cloud.traffic.param-name` | `String` | `"traffic_tag"` | 流量染色 URL Query 参数键名 |
 | `ateng.cloud.traffic.fallback-to-default` | `boolean` | `true` | 目标灰度实例全下线或未命中时，是否平滑降级至基线实例（零 503 报警） |
 | `ateng.cloud.traffic.strict-lane` | `boolean` | `false` | 是否开启金融级严格隔离模式（未命中灰度实例直接阻断抛出 4210 异常） |
+| `ateng.cloud.traffic.strict-lane-services` | `Set<String>` | `[]` | 按下游目标 `serviceId` 精细化激活严格泳道强隔离的服务名集合（忽略大小写） |
+| `ateng.cloud.traffic.strict-lane-tags` | `Set<String>` | `[]` | 按流量染色标签精细化激活严格泳道强隔离的标签集合（忽略大小写） |
 | `ateng.cloud.traffic.lane-continuity` | `boolean` | `true` | 是否开启跨跳泳道穿透保持语义（中间节点降级后，下游节点依然优先重回灰度泳道） |
 | `ateng.cloud.traffic.filter-order` | `int` | `HIGHEST_PRECEDENCE + 50` | 入站流量染色过滤器执行顺序（位于链路追踪 Filter 之后） |
 | `ateng.cloud.traffic.cache-ttl` | `Duration` | `3s` | 客户端负载均衡本地实例缓存收敛时效（消除灰度切流时的盲区） |

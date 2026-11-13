@@ -4,6 +4,7 @@ import io.github.atengk.cloud.traffic.code.TrafficResultCode;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import io.github.atengk.cloud.traffic.exception.TrafficRoutingException;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,8 +26,10 @@ import java.net.URI;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 流量标签实例选择器单元测试
@@ -219,6 +222,59 @@ class TrafficTagServiceInstanceListSupplierTest {
         List<ServiceInstance> result = supplier.get(request).blockFirst();
 
         assertThat(result).hasSize(1).containsExactly(grayInstance1);
+    }
+
+    @Test
+    @DisplayName("测试按服务名多粒度强隔离 (strict-lane-services，忽略大小写) 阻断 4210 并记录 strict_blocked，未配置服务平滑降级")
+    void testSelectiveStrictLaneByService() {
+        properties.setStrictLane(false);
+        properties.setStrictLaneServices(Set.of("PAYMENT-SERVICE"));
+        TrafficMetricsManager metricsManager = new TrafficMetricsManager(null, null);
+
+        List<ServiceInstance> onlyBaseline = List.of(baseInstance1);
+
+        // 1. 命中 strict-lane-services 的服务 -> 抛出 4210 并记录 strict_blocked
+        TrafficTagServiceInstanceListSupplier paymentSupplier = new TrafficTagServiceInstanceListSupplier(
+                new TestDelegateSupplier("payment-service", onlyBaseline), properties, metricsManager);
+        assertThatThrownBy(() -> paymentSupplier.filterByTag(onlyBaseline, "canary-fin"))
+                .isInstanceOf(TrafficRoutingException.class)
+                .satisfies(ex -> assertThat(((TrafficRoutingException) ex).getCode()).isEqualTo(TrafficResultCode.STRICT_LANE_BLOCK.getCode()))
+                .hasMessageContaining("payment-service");
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_STRICT_BLOCKED)).isEqualTo(1L);
+
+        // 2. 空实例列表命中 strict-lane-services -> 同样立即 Fail-Fast 阻断
+        assertThatThrownBy(() -> paymentSupplier.filterByTag(Collections.emptyList(), "canary-fin"))
+                .isInstanceOf(TrafficRoutingException.class);
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_STRICT_BLOCKED)).isEqualTo(2L);
+
+        // 3. 未命中 strict-lane-services 的外围服务 -> 平滑降级至基线
+        TrafficTagServiceInstanceListSupplier nonStrictSupplier = new TrafficTagServiceInstanceListSupplier(
+                new TestDelegateSupplier("notification-service", onlyBaseline), properties, metricsManager);
+        List<ServiceInstance> fallbackResult = nonStrictSupplier.filterByTag(onlyBaseline, "canary-fin");
+        assertThat(fallbackResult).containsExactly(baseInstance1);
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_FALLBACK)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("测试按流量标签多粒度强隔离 (strict-lane-tags，忽略大小写) 阻断 4210，其他标签平滑降级")
+    void testSelectiveStrictLaneByTag() {
+        properties.setStrictLane(false);
+        properties.setStrictLaneTags(Set.of("VIP-PAY"));
+        TrafficMetricsManager metricsManager = new TrafficMetricsManager(null, null);
+
+        List<ServiceInstance> onlyBaseline = List.of(baseInstance1);
+        TrafficTagServiceInstanceListSupplier supplier = new TrafficTagServiceInstanceListSupplier(
+                new TestDelegateSupplier("order-service", onlyBaseline), properties, metricsManager);
+
+        // 1. 命中 strict-lane-tags -> 阻断并累加 strict_blocked
+        assertThatThrownBy(() -> supplier.filterByTag(onlyBaseline, "vip-pay"))
+                .isInstanceOf(TrafficRoutingException.class)
+                .satisfies(ex -> assertThat(((TrafficRoutingException) ex).getCode()).isEqualTo(TrafficResultCode.STRICT_LANE_BLOCK.getCode()));
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_STRICT_BLOCKED)).isEqualTo(1L);
+
+        // 2. 非受保护标签 -> 平滑降级至基线
+        assertThat(supplier.filterByTag(onlyBaseline, "gray-normal")).containsExactly(baseInstance1);
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_FALLBACK)).isEqualTo(1L);
     }
 
     private TrafficTagServiceInstanceListSupplier createSupplier(List<ServiceInstance> instances) {

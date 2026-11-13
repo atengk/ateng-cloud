@@ -24,10 +24,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.client.RestClientCustomizer;
 import org.springframework.boot.web.client.RestTemplateCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
+import org.springframework.web.client.RestClient;
 
 /**
  * 全链路流量治理与灰度调度自动装配配置类
@@ -104,6 +106,23 @@ public class AtengTrafficAutoConfiguration {
                 restTemplate.getInterceptors().add(interceptor);
             }
         };
+    }
+
+    /**
+     * 注册 Spring 6 RestClient 自动定制器，将流量透传拦截器附加至 RestClient.Builder
+     *
+     * @param interceptor 出站透传拦截器
+     * @return RestClientCustomizer
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "trafficRestClientCustomizer")
+    @ConditionalOnClass({RestClientCustomizer.class, RestClient.class})
+    public RestClientCustomizer trafficRestClientCustomizer(TrafficClientHttpRequestInterceptor interceptor) {
+        return restClientBuilder -> restClientBuilder.requestInterceptors(interceptors -> {
+            if (!interceptors.contains(interceptor)) {
+                interceptors.add(interceptor);
+            }
+        });
     }
 
     /**

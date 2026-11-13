@@ -38,10 +38,10 @@
    - 构建「Nacos 应用专属规则 `${spring.application.name}-traffic-rules.json` ➔ Nacos 全局通用规则 `traffic-rules.json` ➔ 本地 YAML 静态保底规则 `ateng.cloud.traffic.rules`」三级规则供给体系；
    - 在 `OVERWRITE` 策略下按三级瀑布非空回退，在 `MERGE` 策略下合并三级规则并按 `priority` 升序排序；内存采用 `AtomicReference<List<TrafficRule>>` 快照实现零锁原子无感热更；
    - 缺省韧性自检：在配置中心未开启或网络不可达时，自动退化至本地静态规则（`PropertiesTrafficRuleProvider`）与 Header 透传模式，保障本地开发与 CI 离线自洽。
-6. **平滑降级、严格隔离与跨跳泳道穿透保持 (Resilient Fallback, Strict Isolation & Lane Continuity)**：
+6. **平滑降级、多粒度严格隔离与跨跳泳道穿透保持 (Resilient Fallback, Selective Strict Isolation & Lane Continuity)**：
    - 默认策略 `fallbackToDefault: true`：目标灰度实例列表为空时平滑降级至基线实例，杜绝 503 报警；
-   - 金融级严格隔离可选策略 `strictLane: true`：若强隔离开启且未匹配灰度实例，直接抛出受管业务异常（`4210 STRICT_LANE_BLOCK` Fail-Fast），确保业务流量绝不“误写基线表”；
-   - 跨跳泳道穿透保持（Lane Continuity）：中间服务降级至基线后，维持入站上下文携带的原始 `TrafficTag`，后续向外出站调用继续优先检索该标签的下游实例。
+   - 多粒度强隔离策略：支持全局开关 `strictLane: true`、按目标服务名集合 `strictLaneServices`、或按特定灰度标签集合 `strictLaneTags`（忽略大小写）精细化激活强隔离，未匹配灰度实例时直接抛出受管业务异常（`4210 STRICT_LANE_BLOCK` Fail-Fast），同时允许非受保护服务继续平滑降级；
+   - 跨跳泳道穿透保持与现代 HTTP 客户端自动透传：中间服务降级至基线后维持原始 `TrafficTag`，`RestTemplateCustomizer` 与 Spring 6 `RestClientCustomizer` 统一复用 `TrafficClientHttpRequestInterceptor` 向下游自动透传（且不覆盖调用方显式有效的同名标头）。
 7. **声明式泳道绑定与确定性恢复 (Declarative Lane Binding & Safe Recovery)**：
    - 交付 `@TrafficTag` 声明式注解与轻量 AOP 切面，支持在方法或类上显式绑定流量标签（支持常数字符串与 `${...}` 属性占位符，坚决杜绝 SpEL 动态求值以防范 RCE）；
    - 支持通过 `override = true/false` 控制覆盖与继承语义；出口 `finally` 块 100% 还原上级上下文。

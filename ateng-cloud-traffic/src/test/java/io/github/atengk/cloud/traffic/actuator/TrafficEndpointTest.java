@@ -82,6 +82,8 @@ class TrafficEndpointTest {
         properties.setAllowedTags(Set.of("vip-v2", "beta"));
         properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
         properties.setStrictLane(true);
+        properties.setStrictLaneServices(Set.of("payment-service"));
+        properties.setStrictLaneTags(Set.of("vip-v2"));
         properties.setRules(List.of(rule1));
 
         metricsManager.recordGrayHit("order-service", "vip-v2");
@@ -99,6 +101,8 @@ class TrafficEndpointTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) overview.get("properties");
         assertThat(props.get("strictLane")).isEqualTo(true);
+        assertThat(props.get("strictLaneServices")).isEqualTo(Set.of("payment-service"));
+        assertThat(props.get("strictLaneTags")).isEqualTo(Set.of("vip-v2"));
         assertThat(props.get("whitelistAction")).isEqualTo("REJECT");
         assertThat(props.get("allowedTags")).isEqualTo(Set.of("vip-v2", "beta"));
 

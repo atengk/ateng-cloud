@@ -37,7 +37,7 @@ public class TrafficClientHttpRequestInterceptor implements ClientHttpRequestInt
             if (StringUtils.hasText(tag)) {
                 String headerName = StringUtils.hasText(properties.getHeaderName())
                         ? properties.getHeaderName() : TrafficConstants.HEADER_TRAFFIC_TAG;
-                if (!request.getHeaders().containsKey(headerName)) {
+                if (!StringUtils.hasText(request.getHeaders().getFirst(headerName))) {
                     request.getHeaders().set(headerName, tag.trim());
                 }
             }

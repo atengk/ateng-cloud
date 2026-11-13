@@ -13,7 +13,7 @@
 | **0005** | **Dubbo 3.3 高性能 RPC、四维上下文透传与双模契约架构设计** | 🟢 已采纳 (Accepted) | 支持 Triple (HTTP/2) 与原生 TCP 双协议共存，双向 Filter 全自动透传四维上下文与灰度标签并严格 `finally` 清理 | `ateng-cloud-dubbo` | [查看](./0005-dubbo-triple-context-propagation-and-contract-architecture.md) |
 | **0006** | **Gateway WebFlux 响应式底座、零信任安全与动态治理架构设计** | 🟢 已采纳 (Accepted) | 坚守 WebFlux/Netty 纯响应式底座（严禁引入 Servlet 依赖），网关收口 Sa-Token 鉴权并签发 `Same-Token` 与 2MB 内存护栏 | `ateng-cloud-gateway` | [查看](./0006-gateway-reactive-architecture-and-zero-trust-defense.md) |
 | **0007** | **Sentinel 流量防卫、受管熔断降级与 Nacos 动态持久化架构设计** | 🟢 已采纳 (Accepted) | 统一 `FallbackFactory` 受管降级与双模空安全保底，内置 Web 异常熔断追踪桥接、REST 路径防爆清洗、Nacos 5 大规则语义防暴毙持久化及全景自省端点 | `ateng-cloud-sentinel` | [查看](./0007-sentinel-traffic-defense-and-managed-fallback-architecture.md) |
-| **0008** | **流量染色、泳道隔离与金丝雀灰度路由架构设计** | 🟢 已采纳 (Accepted) | 构建 `TrafficContextHolder`、三级规则消解、100 桶粘性哈希、纵深白名单闭环与三层复合灰度调度责任链 | `ateng-cloud-traffic` | [查看](./0008-traffic-gray-routing-and-lane-isolation-architecture.md) |
+| **0008** | **流量染色、泳道隔离与金丝雀灰度路由架构设计** | 🟢 已采纳 (Accepted) | 构建 `TrafficContextHolder`、三级规则消解、100 桶粘性哈希、多粒度强隔离（含 `RestClient` 透传）、纵深白名单闭环与三层复合灰度调度责任链 | `ateng-cloud-traffic` | [查看](./0008-traffic-gray-routing-and-lane-isolation-architecture.md) |
 | **0009** | **分布式事务增强、TCC 防悬挂屏障与跨进程协同架构设计** | 🟢 已采纳 (Accepted) | 融合 Seata AT/TCC 双核驱动，提供 TCC 空回滚/防悬挂/幂等屏障，通过 Feign/Dubbo 透传 XID 并协同动态数据源假切源守卫 | `ateng-cloud-seata` | [查看](./0009-seata-distributed-transaction-and-tcc-fence-architecture.md) |
 | **0010** | **微服务全家桶冒烟准出门禁与 CI 敏捷测试矩阵架构设计** | 🟢 已采纳 (Accepted) | 建立 `ateng-cloud-all` 聚合装配与 `sample-cloud-smoke-test` 全家桶冒烟工程，零衝突点亮微服务核心组件 | `ateng-cloud-all`, `ateng-cloud-samples` | [查看](./0010-microservice-all-in-one-smoke-test-and-ci-agile-matrix-architecture.md) |
 
