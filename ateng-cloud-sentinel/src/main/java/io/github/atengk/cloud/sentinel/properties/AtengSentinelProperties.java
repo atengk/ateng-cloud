@@ -46,6 +46,12 @@ public class AtengSentinelProperties {
     private BlockAdviceProperties blockAdvice = new BlockAdviceProperties();
 
     /**
+     * Web 异常熔断自动追踪桥接配置
+     */
+    @NestedConfigurationProperty
+    private TraceProperties trace = new TraceProperties();
+
+    /**
      * Sentinel 全景健康与规则自省 Actuator 端点配置
      */
     @NestedConfigurationProperty
@@ -89,6 +95,14 @@ public class AtengSentinelProperties {
 
     public void setBlockAdvice(BlockAdviceProperties blockAdvice) {
         this.blockAdvice = blockAdvice != null ? blockAdvice : new BlockAdviceProperties();
+    }
+
+    public TraceProperties getTrace() {
+        return trace;
+    }
+
+    public void setTrace(TraceProperties trace) {
+        this.trace = trace != null ? trace : new TraceProperties();
     }
 
     public EndpointProperties getEndpoint() {
@@ -478,6 +492,51 @@ public class AtengSentinelProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    /**
+     * Web 异常 Sentinel 熔断自动追踪桥接配置
+     */
+    public static class TraceProperties {
+
+        /**
+         * 是否启用 Web 异常 Sentinel 熔断自动追踪桥接 (默认 true)
+         */
+        private boolean enabled = true;
+
+        /**
+         * 是否将常规 BusinessException 计入 Sentinel 异常熔断统计 (默认 false 豁免)
+         */
+        private boolean traceBusinessException = false;
+
+        /**
+         * 额外声明豁免不计入 Sentinel 异常熔断统计的异常类型列表
+         */
+        private List<Class<? extends Throwable>> ignoreExceptions = new ArrayList<>();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isTraceBusinessException() {
+            return traceBusinessException;
+        }
+
+        public void setTraceBusinessException(boolean traceBusinessException) {
+            this.traceBusinessException = traceBusinessException;
+        }
+
+        public List<Class<? extends Throwable>> getIgnoreExceptions() {
+            return ignoreExceptions;
+        }
+
+        public void setIgnoreExceptions(List<Class<? extends Throwable>> ignoreExceptions) {
+            this.ignoreExceptions = ignoreExceptions != null ? new ArrayList<>(ignoreExceptions) : new ArrayList<>();
         }
     }
 }

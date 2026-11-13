@@ -14,9 +14,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-
-import java.nio.charset.StandardCharsets;
 
 /**
  * Sentinel Spring MVC Web 接口统一阻断异常处理器
@@ -35,8 +32,8 @@ import java.nio.charset.StandardCharsets;
  */
 public class AtengBlockExceptionHandler implements BlockExceptionHandler {
 
-    public static final String HEADER_BLOCK_RULE = "X-Sentinel-Block-Rule";
-    public static final String HEADER_RETRY_AFTER = "Retry-After";
+    public static final String HEADER_BLOCK_RULE = SentinelServletUtil.HEADER_BLOCK_RULE;
+    public static final String HEADER_RETRY_AFTER = SentinelServletUtil.HEADER_RETRY_AFTER;
 
     private static final Logger log = LoggerFactory.getLogger(AtengBlockExceptionHandler.class);
 
@@ -90,28 +87,16 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
             return;
         }
 
-        if (properties.getBlockHandler().isHttpStatusAlign()) {
-            response.setStatus(httpStatus.value());
-        } else {
-            response.setStatus(HttpStatus.OK.value());
-        }
-
-        response.setHeader(HEADER_BLOCK_RULE, ruleType);
-        long retryAfterSeconds = properties.getBlockHandler().getRetryAfter().toSeconds();
-        if (retryAfterSeconds > 0) {
-            response.setHeader(HEADER_RETRY_AFTER, String.valueOf(retryAfterSeconds));
-        }
-
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-
+        int targetStatus = properties.getBlockHandler().isHttpStatusAlign()
+                ? httpStatus.value()
+                : HttpStatus.OK.value();
+        var headers = SentinelServletUtil.createBlockHeaders(ruleType, properties.getBlockHandler().getRetryAfter());
         Result<Void> result = Result.fail(resultCode.getCode(), resultCode.getMsg());
 
         log.warn("Sentinel block triggered: resource='{}', rule={}, code={}, status={}, path='{}', clientIp='{}', origin='{}', traceId='{}'",
-                resourceName, ruleType, resultCode.name(), response.getStatus(), requestPath, clientIp, origin, traceId);
+                resourceName, ruleType, resultCode.name(), targetStatus, requestPath, clientIp, origin, traceId);
 
-        response.getWriter().write(objectMapper.writeValueAsString(result));
-        response.getWriter().flush();
+        SentinelServletUtil.writeBlockJsonResponse(response, objectMapper, targetStatus, headers, result);
     }
 
     /**

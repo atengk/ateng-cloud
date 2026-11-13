@@ -6,6 +6,7 @@ import com.alibaba.csp.sentinel.adapter.web.common.UrlCleaner;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.cloud.sentinel.advice.SentinelBlockExceptionAdvice;
+import io.github.atengk.cloud.sentinel.advice.SentinelExceptionTraceAdvice;
 import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
 import io.github.atengk.cloud.sentinel.datasource.SentinelNacosRuleSubscriber;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
@@ -88,19 +89,39 @@ public class AtengSentinelAutoConfiguration {
     }
 
     /**
-     * 注册 @SentinelResource 未捕获异常全局切面兜底
+     * Spring WebMVC 切面异常兜底与熔断追踪桥接配置 (仅在存在 spring-webmvc HandlerExceptionResolver 时生效)
      */
-    @Bean
-    @ConditionalOnMissingBean(SentinelBlockExceptionAdvice.class)
-    @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.block-advice", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public SentinelBlockExceptionAdvice sentinelBlockExceptionAdvice(
-            AtengSentinelProperties properties,
-            ObjectProvider<SentinelBlockCounter> counterProvider,
-            ObjectProvider<RequestOriginParser> originParserProvider) {
-        return new SentinelBlockExceptionAdvice(
-                properties,
-                counterProvider.getIfAvailable(),
-                originParserProvider.getIfAvailable());
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.web.servlet.HandlerExceptionResolver")
+    public static class SentinelWebMvcAdviceConfiguration {
+
+        /**
+         * 注册 @SentinelResource 未捕获与受管降级异常全局切面兜底
+         */
+        @Bean
+        @ConditionalOnMissingBean(SentinelBlockExceptionAdvice.class)
+        @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.block-advice", name = "enabled", havingValue = "true", matchIfMissing = true)
+        public SentinelBlockExceptionAdvice sentinelBlockExceptionAdvice(
+                AtengSentinelProperties properties,
+                ObjectProvider<SentinelBlockCounter> counterProvider,
+                ObjectProvider<RequestOriginParser> originParserProvider,
+                ObjectProvider<ObjectMapper> objectMapperProvider) {
+            return new SentinelBlockExceptionAdvice(
+                    properties,
+                    counterProvider.getIfAvailable(),
+                    originParserProvider.getIfAvailable(),
+                    objectMapperProvider.getIfAvailable(ObjectMapper::new));
+        }
+
+        /**
+         * 注册 Web 异常 Sentinel 熔断自动追踪桥接器
+         */
+        @Bean
+        @ConditionalOnMissingBean(SentinelExceptionTraceAdvice.class)
+        @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.trace", name = "enabled", havingValue = "true", matchIfMissing = true)
+        public SentinelExceptionTraceAdvice sentinelExceptionTraceAdvice(AtengSentinelProperties properties) {
+            return new SentinelExceptionTraceAdvice(properties);
+        }
     }
 
     /**

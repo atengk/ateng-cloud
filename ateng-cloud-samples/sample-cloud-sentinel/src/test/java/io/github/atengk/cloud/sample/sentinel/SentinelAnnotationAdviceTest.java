@@ -7,6 +7,7 @@ import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowItem;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRuleManager;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -35,11 +36,15 @@ class SentinelAnnotationAdviceTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private SentinelBlockCounter blockCounter;
+
     @AfterEach
     void tearDown() {
-        // 清理规则，遵守上下文零污染铁律
+        // 清理规则与计数器，遵守上下文零污染铁律
         FlowRuleManager.loadRules(Collections.emptyList());
         ParamFlowRuleManager.loadRules(Collections.emptyList());
+        blockCounter.reset();
     }
 
     @Test

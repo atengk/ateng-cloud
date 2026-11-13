@@ -7,11 +7,28 @@ import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowException;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowException;
 import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
 import org.slf4j.MDC;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.util.StringUtils;
+
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.UndeclaredThrowableException;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Sentinel Servlet 运行时请求与阻断解析辅助工具类
@@ -117,5 +134,160 @@ public final class SentinelServletUtil {
             return HttpStatus.SERVICE_UNAVAILABLE;
         }
         return HttpStatus.TOO_MANY_REQUESTS;
+    }
+
+    /**
+     * 根据 Sentinel 强类型错误码解析标准规则类型标识
+     */
+    public static String determineRuleType(SentinelResultCode resultCode) {
+        if (resultCode == null) {
+            return "UNKNOWN";
+        }
+        return switch (resultCode) {
+            case FLOW_LIMIT -> "FLOW";
+            case DEGRADE -> "DEGRADE";
+            case PARAM_FLOW_LIMIT -> "PARAM_FLOW";
+            case SYSTEM_BLOCK -> "SYSTEM";
+            case AUTHORITY_BLOCK -> "AUTHORITY";
+        };
+    }
+
+    /**
+     * 根据 Sentinel 强类型错误码解析对应的物理 HTTP 状态码
+     */
+    public static HttpStatus determineHttpStatus(SentinelResultCode resultCode) {
+        if (resultCode == SentinelResultCode.DEGRADE) {
+            return HttpStatus.SERVICE_UNAVAILABLE;
+        }
+        return HttpStatus.TOO_MANY_REQUESTS;
+    }
+
+    /**
+     * 从 {@link BusinessException} 中解析关联的 {@link SentinelResultCode}
+     *
+     * @param ex 业务异常实例
+     * @return 匹配的 {@link SentinelResultCode}，普通业务异常返回 {@code null}
+     */
+    public static SentinelResultCode resolveSentinelResultCode(BusinessException ex) {
+        if (ex == null) {
+            return null;
+        }
+        if (ex.getResultCode() instanceof SentinelResultCode sentinelCode) {
+            return sentinelCode;
+        }
+        if (ex.getResultCode() == null && ex.getCode() != null) {
+            for (SentinelResultCode candidate : SentinelResultCode.values()) {
+                if (candidate.getCode().equals(ex.getCode())) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 递归从异常链与反射/动态代理包装异常中提取底层 {@link BlockException}（带环检测防死循环）
+     */
+    public static BlockException extractBlockException(Throwable throwable) {
+        return (BlockException) findInCausalChain(throwable, BlockException.class::isInstance);
+    }
+
+    /**
+     * 在异常因果链及反射/代理包装异常（{@link UndeclaredThrowableException}、{@link InvocationTargetException}）
+     * 中按谓词查找首个匹配异常（带环检测防死循环）
+     */
+    public static Throwable findInCausalChain(Throwable throwable, Predicate<Throwable> predicate) {
+        if (throwable == null || predicate == null) {
+            return null;
+        }
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        Throwable current = throwable;
+        while (current != null && visited.add(current)) {
+            if (predicate.test(current)) {
+                return current;
+            }
+            Throwable next = current.getCause();
+            if (next == null && current instanceof UndeclaredThrowableException ute) {
+                next = ute.getUndeclaredThrowable();
+            } else if (next == null && current instanceof InvocationTargetException ite) {
+                next = ite.getTargetException();
+            }
+            current = next;
+        }
+        return null;
+    }
+
+    /**
+     * 构造标准阻断响应 HTTP 响应头（{@code X-Sentinel-Block-Rule} 与可选 {@code Retry-After}）
+     *
+     * @param ruleType   规则类型标识（如 FLOW、DEGRADE）
+     * @param retryAfter 退避等待时长（小于等于 0 时不写入 {@code Retry-After}）
+     * @return 标准 {@link HttpHeaders}
+     */
+    public static HttpHeaders createBlockHeaders(String ruleType, Duration retryAfter) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HEADER_BLOCK_RULE, StringUtils.hasText(ruleType) ? ruleType : "UNKNOWN");
+        if (retryAfter != null && !retryAfter.isNegative() && !retryAfter.isZero()) {
+            long retryAfterSeconds = retryAfter.toSeconds();
+            if (retryAfterSeconds > 0) {
+                headers.set(HEADER_RETRY_AFTER, String.valueOf(retryAfterSeconds));
+            }
+        }
+        return headers;
+    }
+
+    /**
+     * 将阻断或受管降级响应（HTTP 状态码、阻断响应头与 JSON {@link Result} 报文）安全写出至 {@link HttpServletResponse}
+     *
+     * @param response     Servlet 响应对象
+     * @param objectMapper JSON 序列化器
+     * @param statusCode   目标 HTTP 状态码
+     * @param headers      预装配阻断响应头
+     * @param body         统一响应体
+     * @throws IOException 响应输出流写出失败时抛出
+     */
+    public static void writeBlockJsonResponse(
+            HttpServletResponse response,
+            ObjectMapper objectMapper,
+            int statusCode,
+            HttpHeaders headers,
+            Result<Void> body) throws IOException {
+        if (response == null || response.isCommitted()) {
+            return;
+        }
+        response.setStatus(statusCode);
+        if (headers != null) {
+            headers.forEach((name, values) -> {
+                if (values != null && !values.isEmpty()) {
+                    response.setHeader(name, values.get(0));
+                }
+            });
+        }
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        ObjectMapper safeMapper = objectMapper != null ? objectMapper : new ObjectMapper();
+        response.getWriter().write(safeMapper.writeValueAsString(body));
+        response.getWriter().flush();
+    }
+
+    /**
+     * 根据 {@link SentinelResultCode} 构造等价阻断异常供计数器按规则维度归类统计
+     */
+    public static BlockException createBlockExceptionForResultCode(
+            SentinelResultCode resultCode,
+            String resource,
+            String message) {
+        String safeResource = StringUtils.hasText(resource) ? resource : "unknown";
+        String safeMessage = StringUtils.hasText(message) ? message : safeResource;
+        if (resultCode == null) {
+            return new DegradeException(safeResource, safeMessage);
+        }
+        return switch (resultCode) {
+            case FLOW_LIMIT -> new FlowException(safeResource, safeMessage);
+            case DEGRADE -> new DegradeException(safeResource, safeMessage);
+            case PARAM_FLOW_LIMIT -> new ParamFlowException(safeResource, safeMessage);
+            case SYSTEM_BLOCK -> new SystemBlockException(safeResource, safeMessage);
+            case AUTHORITY_BLOCK -> new AuthorityException(safeResource, safeMessage);
+        };
     }
 }

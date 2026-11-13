@@ -4,6 +4,7 @@ import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.BlockExceptio
 import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOriginParser;
 import com.alibaba.csp.sentinel.adapter.web.common.UrlCleaner;
 import io.github.atengk.cloud.sentinel.advice.SentinelBlockExceptionAdvice;
+import io.github.atengk.cloud.sentinel.advice.SentinelExceptionTraceAdvice;
 import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelPanoramaEndpoint;
@@ -13,9 +14,11 @@ import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -44,8 +47,14 @@ class AtengSentinelAutoConfigurationTest {
             assertThat(context).hasSingleBean(RequestOriginParser.class);
 
             assertThat(context).hasSingleBean(SentinelBlockExceptionAdvice.class);
+            assertThat(context).hasSingleBean(SentinelExceptionTraceAdvice.class);
             assertThat(context).hasSingleBean(SentinelBlockCounter.class);
             assertThat(context).hasSingleBean(SentinelPanoramaEndpoint.class);
+
+            AtengSentinelProperties props = context.getBean(AtengSentinelProperties.class);
+            assertThat(props.getTrace().isEnabled()).isTrue();
+            assertThat(props.getTrace().isTraceBusinessException()).isFalse();
+            assertThat(props.getTrace().getIgnoreExceptions()).isEmpty();
         });
     }
 
@@ -58,6 +67,7 @@ class AtengSentinelAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(AtengUrlCleaner.class);
                     assertThat(context).doesNotHaveBean(AtengRequestOriginParser.class);
                     assertThat(context).doesNotHaveBean(SentinelBlockExceptionAdvice.class);
+                    assertThat(context).doesNotHaveBean(SentinelExceptionTraceAdvice.class);
                     assertThat(context).doesNotHaveBean(SentinelBlockCounter.class);
                     assertThat(context).doesNotHaveBean(SentinelPanoramaEndpoint.class);
                 });
@@ -80,13 +90,28 @@ class AtengSentinelAutoConfigurationTest {
                 "ateng.cloud.sentinel.block-handler.enabled=false",
                 "ateng.cloud.sentinel.url-clean.enabled=false",
                 "ateng.cloud.sentinel.origin-parser.enabled=false",
-                "ateng.cloud.sentinel.block-advice.enabled=false"
+                "ateng.cloud.sentinel.block-advice.enabled=false",
+                "ateng.cloud.sentinel.trace.enabled=false"
         ).run(context -> {
             assertThat(context).doesNotHaveBean(AtengBlockExceptionHandler.class);
             assertThat(context).doesNotHaveBean(AtengUrlCleaner.class);
             assertThat(context).doesNotHaveBean(AtengRequestOriginParser.class);
             assertThat(context).doesNotHaveBean(SentinelBlockExceptionAdvice.class);
+            assertThat(context).doesNotHaveBean(SentinelExceptionTraceAdvice.class);
         });
+    }
+
+    @Test
+    @DisplayName("可选依赖缺失守卫：缺少 spring-webmvc HandlerExceptionResolver 时安全跳过 WebMVC 切面装配")
+    void testSkipWebMvcAdvicesWhenHandlerExceptionResolverAbsent() {
+        contextRunner
+                .withClassLoader(new FilteredClassLoader(HandlerExceptionResolver.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(SentinelBlockCounter.class);
+                    assertThat(context).doesNotHaveBean(SentinelBlockExceptionAdvice.class);
+                    assertThat(context).doesNotHaveBean(SentinelExceptionTraceAdvice.class);
+                });
     }
 
     @Test

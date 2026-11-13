@@ -159,4 +159,55 @@ class SentinelWebFlowDegradeTest {
         assertThat(blockCounter.getLastBlockEvent().traceId()).isEqualTo(responseTraceId);
         assertThat(blockCounter.getLastBlockEvent().origin()).isEqualTo("mobile-bff");
     }
+
+    @Test
+    @DisplayName("端到端豁免校验：4xx 参数校验异常与普通业务异常不触发异常熔断，且保持全局异常 JSON 契约")
+    void testValidationAndOrdinaryBusinessExceptionDoNotTripDegrade() throws Exception {
+        // 1. 为接口配置极为敏感的异常熔断规则：count=0, minRequestAmount=1
+        DegradeRule paymentPayRule = new DegradeRule();
+        paymentPayRule.setResource("/sample/cloud/sentinel/payment/pay");
+        paymentPayRule.setGrade(RuleConstant.DEGRADE_GRADE_EXCEPTION_COUNT);
+        paymentPayRule.setCount(0);
+        paymentPayRule.setTimeWindow(10);
+        paymentPayRule.setMinRequestAmount(1);
+
+        DegradeRule circuitBreakerRule = new DegradeRule();
+        circuitBreakerRule.setResource("/sample/cloud/sentinel/payment/circuit-breaker");
+        circuitBreakerRule.setGrade(RuleConstant.DEGRADE_GRADE_EXCEPTION_COUNT);
+        circuitBreakerRule.setCount(0);
+        circuitBreakerRule.setTimeWindow(10);
+        circuitBreakerRule.setMinRequestAmount(1);
+        DegradeRuleManager.loadRules(List.of(paymentPayRule, circuitBreakerRule));
+
+        // 2. 发起非法 @Valid 请求触发 MethodArgumentNotValidException（4xx 校验异常应被追踪桥接器豁免）
+        mockMvc.perform(post("/sample/cloud/sentinel/payment/pay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderNo\":\"\",\"amount\":0,\"channel\":\"\"}"))
+                .andExpect(status().isOk());
+
+        // 随后正常请求 /payment/pay 不应被入口 DegradeRule 拦截，而是实际进入 Controller -> Feign Fallback 源头计数
+        MvcResult payAfterInvalid = mockMvc.perform(post("/sample/cloud/sentinel/payment/pay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderNo\":\"ORD-100\",\"amount\":10.00,\"channel\":\"ALIPAY\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn();
+        assertThat(payAfterInvalid.getResponse().getHeader("X-Sentinel-Block-Rule")).isEqualTo("DEGRADE");
+        assertThat(blockCounter.getLastBlockEvent()).isNotNull();
+        assertThat(blockCounter.getLastBlockEvent().resource()).isEqualTo("RemotePaymentClient#payOrder");
+
+        // 3. 发起普通 BusinessException 请求（?businessFail=true），验证 GlobalExceptionHandler 正常渲染且不触发熔断
+        MvcResult bizFailResult = mockMvc.perform(get("/sample/cloud/sentinel/payment/circuit-breaker?businessFail=true"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode bizJson = objectMapper.readTree(bizFailResult.getResponse().getContentAsString());
+        assertThat(bizJson.get("code").asInt()).isEqualTo(10001);
+
+        // 下一次正常请求必须依然返回 200 pass，证明普通业务异常未触发 DegradeRule 熔断
+        MvcResult passResult = mockMvc.perform(get("/sample/cloud/sentinel/payment/circuit-breaker"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode passJson = objectMapper.readTree(passResult.getResponse().getContentAsString());
+        assertThat(passJson.get("code").asInt()).isEqualTo(200);
+        assertThat(passJson.get("data").asText()).isEqualTo("circuit-breaker-pass");
+    }
 }

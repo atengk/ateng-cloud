@@ -1,6 +1,6 @@
 package io.github.atengk.cloud.sample.sentinel.controller;
 
-import com.alibaba.csp.sentinel.Tracer;
+import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.sentinel.client.RemotePaymentClient;
 import io.github.atengk.cloud.sample.sentinel.model.payment.PaymentPayDTO;
@@ -71,20 +71,25 @@ public class SentinelPaymentDegradeController {
     }
 
     /**
-     * Web 端接口熔断降级自测
+     * Web 端接口熔断降级自测（零侵入自动异常追踪）
      *
-     * <p>当注入模拟故障时，Tracer.trace 记录异常指标；在进入熔断窗口期后，
-     * 请求被 Sentinel 熔断器拦截，AtengBlockExceptionHandler 统一返回 HTTP 503 与 DEGRADE(4202)。</p>
+     * <p>系统故障异常无需业务手工调用 {@code Tracer.trace(ex)}，由 {@code SentinelExceptionTraceAdvice}
+     * 在全局异常切面消化前自动注入 Sentinel 熔断统计；进入熔断窗口期后，请求被 Sentinel 熔断器拦截，
+     * {@code AtengBlockExceptionHandler} 统一返回 HTTP 503 与 DEGRADE(4202)。普通业务异常则豁免不触发熔断。</p>
      *
-     * @param fail 是否模拟业务异常
+     * @param fail         是否模拟系统故障异常
+     * @param businessFail 是否模拟普通业务异常（验证 4xx/普通业务异常不触发熔断）
      * @return 业务结果
      */
     @GetMapping("/circuit-breaker")
-    public Result<String> circuitBreaker(@RequestParam(name = "fail", defaultValue = "false") boolean fail) {
+    public Result<String> circuitBreaker(
+            @RequestParam(name = "fail", defaultValue = "false") boolean fail,
+            @RequestParam(name = "businessFail", defaultValue = "false") boolean businessFail) {
+        if (businessFail) {
+            throw new BusinessException(10001, "Simulated ordinary business exception");
+        }
         if (fail) {
-            IllegalStateException ex = new IllegalStateException("Simulated business exception for degrade circuit breaker");
-            Tracer.trace(ex);
-            throw ex;
+            throw new IllegalStateException("Simulated system exception for degrade circuit breaker");
         }
         return Result.success("circuit-breaker-pass");
     }
