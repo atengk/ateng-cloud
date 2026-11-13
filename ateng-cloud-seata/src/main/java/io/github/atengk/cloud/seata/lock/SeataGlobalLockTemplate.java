@@ -1,5 +1,8 @@
 package io.github.atengk.cloud.seata.lock;
 
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.seata.code.SeataResultCode;
+import io.github.atengk.cloud.seata.exception.SeataExceptionTranslator;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
 import org.apache.seata.core.context.GlobalLockConfigHolder;
 import org.apache.seata.core.context.RootContext;
@@ -65,6 +68,10 @@ public class SeataGlobalLockTemplate {
 
         try {
             return action.doInGlobalLock();
+        } catch (Error error) {
+            throw error;
+        } catch (Throwable ex) {
+            throw SeataExceptionTranslator.translate(ex);
         } finally {
             if (!alreadyRequireGlobalLock) {
                 RootContext.unbindGlobalLockFlag();
@@ -74,6 +81,50 @@ public class SeataGlobalLockTemplate {
                 GlobalLockConfigHolder.setAndReturnPrevious(previousConfig);
             } else {
                 GlobalLockConfigHolder.remove();
+            }
+        }
+    }
+
+    /**
+     * 在全局锁上下文中执行有返回值的业务逻辑，并在遭遇锁竞争冲突时按默认配置自动退避重试
+     *
+     * @param action 业务逻辑回调
+     * @param <T>    返回值类型
+     * @return 执行结果
+     * @throws Throwable 非锁冲突异常或重试耗尽后的 {@link BusinessException}
+     */
+    public <T> T executeWithRetry(GlobalLockCallback<T> action) throws Throwable {
+        return executeWithRetry(defaultGlobalLockConfig(), action);
+    }
+
+    /**
+     * 在全局锁上下文中执行有返回值的业务逻辑，并在遭遇锁竞争冲突时按指定配置执行温和退避重试
+     *
+     * @param config 自定义全局锁重试配置（为 null 时回退至默认配置）
+     * @param action 业务逻辑回调
+     * @param <T>    返回值类型
+     * @return 执行结果
+     * @throws Throwable 非锁冲突异常或重试耗尽后的 {@link BusinessException}
+     */
+    public <T> T executeWithRetry(GlobalLockConfig config, GlobalLockCallback<T> action) throws Throwable {
+        Objects.requireNonNull(action, "GlobalLock action 必须非空");
+        GlobalLockConfig effectiveConfig = config != null ? config : defaultGlobalLockConfig();
+        int maxRetryTimes = Math.max(0, effectiveConfig.getLockRetryTimes());
+        long retryIntervalMillis = Math.max(0L, effectiveConfig.getLockRetryInterval());
+
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return execute(effectiveConfig, action);
+            } catch (Error error) {
+                throw error;
+            } catch (Throwable ex) {
+                RuntimeException translated = (ex instanceof RuntimeException re)
+                        ? re
+                        : SeataExceptionTranslator.translate(ex);
+                if (!isLockConflict(translated) || attempt >= maxRetryTimes) {
+                    throw translated;
+                }
+                waitBeforeRetry(retryIntervalMillis, attempt + 1, maxRetryTimes, translated);
             }
         }
     }
@@ -96,11 +147,66 @@ public class SeataGlobalLockTemplate {
      * @throws Throwable 业务抛出的异常
      */
     public void executeWithoutResult(GlobalLockConfig config, Runnable action) throws Throwable {
+        execute(config, toCallback(action));
+    }
+
+    /**
+     * 在全局锁上下文中执行无返回值的业务逻辑，并在遭遇锁竞争冲突时按默认配置自动退避重试
+     *
+     * @param action 业务逻辑回调
+     * @throws Throwable 非锁冲突异常或重试耗尽后的 {@link BusinessException}
+     */
+    public void executeWithoutResultWithRetry(Runnable action) throws Throwable {
+        executeWithoutResultWithRetry(defaultGlobalLockConfig(), action);
+    }
+
+    /**
+     * 在全局锁上下文中执行无返回值的业务逻辑，并在遭遇锁竞争冲突时按指定配置执行退避重试
+     *
+     * @param config 自定义全局锁重试配置（为 null 时回退至默认配置）
+     * @param action 业务逻辑回调
+     * @throws Throwable 非锁冲突异常或重试耗尽后的 {@link BusinessException}
+     */
+    public void executeWithoutResultWithRetry(GlobalLockConfig config, Runnable action) throws Throwable {
+        executeWithRetry(config, toCallback(action));
+    }
+
+    private static GlobalLockCallback<Void> toCallback(Runnable action) {
         Objects.requireNonNull(action, "GlobalLock action 必须非空");
-        execute(config, () -> {
+        return () -> {
             action.run();
             return null;
-        });
+        };
+    }
+
+    private boolean isLockConflict(RuntimeException translated) {
+        return translated instanceof BusinessException be
+                && Objects.equals(SeataResultCode.SEATA_LOCK_CONFLICT.getCode(), be.getCode());
+    }
+
+    private void waitBeforeRetry(long retryIntervalMillis, int nextRetryAttempt, int maxRetryTimes, RuntimeException conflictException) {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new BusinessException(
+                    SeataResultCode.SEATA_LOCK_CONFLICT,
+                    "全局锁冲突退避重试前检测到线程中断",
+                    conflictException
+            );
+        }
+        log.warn("检测到分布式全局锁冲突，准备第 {}/{} 次退避重试 (等待 {} ms): {}",
+                nextRetryAttempt, maxRetryTimes, retryIntervalMillis, conflictException.getMessage());
+        if (retryIntervalMillis <= 0L) {
+            return;
+        }
+        try {
+            Thread.sleep(retryIntervalMillis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(
+                    SeataResultCode.SEATA_LOCK_CONFLICT,
+                    "全局锁冲突退避重试等待被中断",
+                    conflictException
+            );
+        }
     }
 
     /**

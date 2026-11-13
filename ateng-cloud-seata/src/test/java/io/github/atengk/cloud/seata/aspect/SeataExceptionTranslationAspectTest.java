@@ -1,15 +1,25 @@
 package io.github.atengk.cloud.seata.aspect;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.seata.code.SeataResultCode;
+import io.github.atengk.cloud.seata.properties.SeataProperties;
+import org.apache.seata.core.context.RootContext;
 import org.apache.seata.core.exception.TransactionException;
 import org.apache.seata.core.exception.TransactionExceptionCode;
 import org.apache.seata.spring.annotation.GlobalLock;
 import org.apache.seata.spring.annotation.GlobalTransactional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -147,5 +157,112 @@ class SeataExceptionTranslationAspectTest {
                     BusinessException be = (BusinessException) ex;
                     assertThat(be.getCode()).isEqualTo(SeataResultCode.SEATA_LOCK_CONFLICT.getCode());
                 });
+    }
+
+    @AfterEach
+    void cleanupRootContext() {
+        RootContext.unbind();
+    }
+
+    @Test
+    @DisplayName("测试 @GlobalTransactional 方法执行超过 defaultTimeout 时输出结构化 WARN 慢事务告警且不影响返回值")
+    void testSlowGlobalTransactionWarnLogging() throws Exception {
+        SeataProperties properties = new SeataProperties();
+        properties.getTx().setDefaultTimeout(Duration.ofMillis(20));
+
+        SlowTransactionalService target = new SlowTransactionalService();
+        AspectJProxyFactory factory = new AspectJProxyFactory(target);
+        factory.addAspect(new SeataExceptionTranslationAspect(properties));
+        SlowTransactionalService proxy = factory.getProxy();
+
+        Logger aspectLogger = (Logger) LoggerFactory.getLogger(SeataExceptionTranslationAspect.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        aspectLogger.addAppender(appender);
+        RootContext.bind("127.0.0.1:8091:slow-tx-test-xid");
+        try {
+            String okResult = proxy.slowSuccess();
+            assertThat(okResult).isEqualTo("slow-ok");
+
+            assertThatThrownBy(proxy::slowFailure)
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(ex -> assertThat(((BusinessException) ex).getCode()).isEqualTo(SeataResultCode.SEATA_TC_UNAVAILABLE.getCode()));
+
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == Level.WARN)
+                    .hasSize(2)
+                    .anySatisfy(event -> assertThat(event.getFormattedMessage())
+                            .contains("slowSuccess")
+                            .contains("127.0.0.1:8091:slow-tx-test-xid")
+                            .contains("20ms"))
+                    .anySatisfy(event -> assertThat(event.getFormattedMessage())
+                            .contains("slowFailure")
+                            .contains("127.0.0.1:8091:slow-tx-test-xid"));
+        } finally {
+            aspectLogger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("测试未超时、@GlobalLock 方法及非正阈值均不触发慢全局事务 WARN 告警")
+    void testNoSlowTransactionWarnWhenWithinTimeoutOrNotGlobalTransactional() {
+        SeataProperties properties = new SeataProperties();
+        properties.getTx().setDefaultTimeout(Duration.ofSeconds(10));
+
+        SlowTransactionalService target = new SlowTransactionalService();
+        AspectJProxyFactory factory = new AspectJProxyFactory(target);
+        factory.addAspect(new SeataExceptionTranslationAspect(properties));
+        SlowTransactionalService proxy = factory.getProxy();
+
+        Logger aspectLogger = (Logger) LoggerFactory.getLogger(SeataExceptionTranslationAspect.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        aspectLogger.addAppender(appender);
+        try {
+            assertThat(proxy.fastTransactional()).isEqualTo("fast-ok");
+            assertThat(proxy.slowGlobalLock()).isEqualTo("lock-ok");
+
+            SeataProperties zeroTimeoutProps = new SeataProperties();
+            zeroTimeoutProps.getTx().setDefaultTimeout(Duration.ZERO);
+            AspectJProxyFactory zeroFactory = new AspectJProxyFactory(target);
+            zeroFactory.addAspect(new SeataExceptionTranslationAspect(zeroTimeoutProps));
+            SlowTransactionalService zeroProxy = zeroFactory.getProxy();
+            assertThat(zeroProxy.slowSuccess()).isEqualTo("slow-ok");
+
+            assertThat(appender.list).filteredOn(event -> event.getLevel() == Level.WARN).isEmpty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        } finally {
+            aspectLogger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    static class SlowTransactionalService {
+
+        @GlobalTransactional
+        public String slowSuccess() throws InterruptedException {
+            Thread.sleep(45);
+            return "slow-ok";
+        }
+
+        @GlobalTransactional
+        public void slowFailure() throws Exception {
+            Thread.sleep(45);
+            throw new TransactionException(TransactionExceptionCode.IO, "TC timeout");
+        }
+
+        @GlobalTransactional
+        public String fastTransactional() {
+            return "fast-ok";
+        }
+
+        @GlobalLock
+        public String slowGlobalLock() throws InterruptedException {
+            Thread.sleep(25);
+            return "lock-ok";
+        }
     }
 }

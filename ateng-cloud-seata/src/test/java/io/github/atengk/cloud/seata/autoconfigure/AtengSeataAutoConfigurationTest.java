@@ -262,6 +262,7 @@ class AtengSeataAutoConfigurationTest {
                         DataSourceAutoConfiguration.class
                 ))
                 .withPropertyValues(
+                        "ateng.cloud.seata.tx.default-timeout=45s",
                         "spring.datasource.url=jdbc:h2:mem:order_guard_test;DB_CLOSE_DELAY=-1",
                         "spring.datasource.driver-class-name=org.h2.Driver",
                         "spring.datasource.username=sa",
@@ -270,6 +271,8 @@ class AtengSeataAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(TccFenceRepository.class);
                     assertThat(context.getBean(TccFenceRepository.class)).isInstanceOf(JdbcTccFenceRepository.class);
+                    assertThat(context.getBean(SeataExceptionTranslationAspect.class)
+                            .getSeataProperties().getTx().getDefaultTimeout()).isEqualTo(Duration.ofSeconds(45));
                 });
     }
 }

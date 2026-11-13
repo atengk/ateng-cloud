@@ -42,6 +42,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
+import java.time.Duration;
 import java.util.concurrent.ScheduledExecutorService;
 
 /**
@@ -126,16 +127,21 @@ public class AtengSeataAutoConfiguration {
     }
 
     /**
-     * 注册 Seata 异常因果转译切面
+     * 注册 Seata 异常因果转译与慢事务监测切面
      *
+     * @param properties Seata 配置属性
      * @return SeataExceptionTranslationAspect 实例
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnClass(ProceedingJoinPoint.class)
-    public SeataExceptionTranslationAspect seataExceptionTranslationAspect() {
-        log.debug("装配 SeataExceptionTranslationAspect 异常因果转译切面");
-        return new SeataExceptionTranslationAspect();
+    public SeataExceptionTranslationAspect seataExceptionTranslationAspect(SeataProperties properties) {
+        Duration defaultTimeout = (properties != null && properties.getTx() != null)
+                ? properties.getTx().getDefaultTimeout()
+                : null;
+        log.debug("装配 SeataExceptionTranslationAspect 异常因果转译与慢事务监测切面, 默认超时: {}s",
+                defaultTimeout != null ? defaultTimeout.toSeconds() : null);
+        return new SeataExceptionTranslationAspect(properties);
     }
 
     /**
