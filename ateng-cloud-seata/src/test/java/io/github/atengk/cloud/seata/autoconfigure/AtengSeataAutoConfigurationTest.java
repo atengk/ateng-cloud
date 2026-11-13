@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.seata.autoconfigure;
 
+import io.github.atengk.cloud.seata.aspect.SeataDynamicDatasourceGuardAspect;
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
 import io.github.atengk.cloud.seata.aspect.SeataGlobalLockAspect;
 import io.github.atengk.cloud.seata.autoconfigure.AtengSeataAutoConfiguration.SeataMarker;
@@ -18,14 +19,17 @@ import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
 import io.github.atengk.cloud.seata.tcc.TccFenceRepository;
 import io.github.atengk.cloud.seata.tcc.TccFenceTableInitializer;
 import io.github.atengk.cloud.seata.tenant.SeataTenantLineHandlerPostProcessor;
+import com.baomidou.dynamic.datasource.annotation.DS;
 import org.apache.seata.rm.GlobalLockTemplate;
 import org.apache.seata.rm.fence.SpringFenceConfig;
+import org.aspectj.lang.ProceedingJoinPoint;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
@@ -61,6 +65,7 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataDynamicDataSourcePropertiesCustomizer.class);
             assertThat(context).hasSingleBean(SeataDynamicDataSourceCoordinator.class);
             assertThat(context).hasSingleBean(SeataDynamicDatasourceGuard.class);
+            assertThat(context).hasSingleBean(SeataDynamicDatasourceGuardAspect.class);
             assertThat(context).hasSingleBean(SeataGlobalLockAspect.class);
             assertThat(context).hasSingleBean(SeataGlobalLockTemplate.class);
             assertThat(context).hasSingleBean(GlobalLockTemplate.class);
@@ -99,6 +104,7 @@ class AtengSeataAutoConfigurationTest {
             assertThat(context).hasSingleBean(SeataDynamicDataSourcePropertiesCustomizer.class);
             assertThat(context).hasSingleBean(SeataDynamicDataSourceCoordinator.class);
             assertThat(context).hasSingleBean(SeataDynamicDatasourceGuard.class);
+            assertThat(context).hasSingleBean(SeataDynamicDatasourceGuardAspect.class);
             assertThat(context).hasSingleBean(SeataGlobalLockAspect.class);
             assertThat(context).hasSingleBean(SeataGlobalLockTemplate.class);
             assertThat(context).hasSingleBean(GlobalLockTemplate.class);
@@ -118,6 +124,7 @@ class AtengSeataAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(SeataDynamicDataSourcePropertiesCustomizer.class);
                     assertThat(context).doesNotHaveBean(SeataDynamicDataSourceCoordinator.class);
                     assertThat(context).hasSingleBean(SeataDynamicDatasourceGuard.class);
+                    assertThat(context).hasSingleBean(SeataDynamicDatasourceGuardAspect.class);
                 });
     }
 
@@ -129,6 +136,7 @@ class AtengSeataAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(AtengSeataAutoConfiguration.class);
                     assertThat(context).doesNotHaveBean(SeataDynamicDatasourceGuard.class);
+                    assertThat(context).doesNotHaveBean(SeataDynamicDatasourceGuardAspect.class);
                     assertThat(context).hasSingleBean(SeataDynamicDataSourcePropertiesCustomizer.class);
                 });
     }
@@ -274,5 +282,27 @@ class AtengSeataAutoConfigurationTest {
                     assertThat(context.getBean(SeataExceptionTranslationAspect.class)
                             .getSeataProperties().getTx().getDefaultTimeout()).isEqualTo(Duration.ofSeconds(45));
                 });
+    }
+
+    @Test
+    @DisplayName("自定义 SeataDynamicDatasourceGuardAspect 时遵循 @ConditionalOnMissingBean，且缺少 @DS 或 AspectJ 类时跳过装配")
+    void shouldRespectMissingBeanAndClassConditionsForGuardAspect() {
+        SeataDynamicDatasourceGuardAspect customAspect =
+                new SeataDynamicDatasourceGuardAspect(new SeataDynamicDatasourceGuard(new SeataProperties()));
+
+        nonWebRunner
+                .withBean(SeataDynamicDatasourceGuardAspect.class, () -> customAspect)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(SeataDynamicDatasourceGuardAspect.class);
+                    assertThat(context.getBean(SeataDynamicDatasourceGuardAspect.class)).isSameAs(customAspect);
+                });
+
+        nonWebRunner
+                .withClassLoader(new FilteredClassLoader(DS.class))
+                .run(context -> assertThat(context).doesNotHaveBean(SeataDynamicDatasourceGuardAspect.class));
+
+        nonWebRunner
+                .withClassLoader(new FilteredClassLoader(ProceedingJoinPoint.class))
+                .run(context -> assertThat(context).doesNotHaveBean(SeataDynamicDatasourceGuardAspect.class));
     }
 }

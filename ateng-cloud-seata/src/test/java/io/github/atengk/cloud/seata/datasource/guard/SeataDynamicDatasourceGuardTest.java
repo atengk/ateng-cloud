@@ -1,13 +1,20 @@
 package io.github.atengk.cloud.seata.datasource.guard;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.baomidou.dynamic.datasource.toolkit.DynamicDataSourceContextHolder;
 import com.baomidou.dynamic.datasource.tx.TransactionContext;
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.seata.code.SeataResultCode;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
 import org.apache.seata.core.context.RootContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -43,7 +50,7 @@ class SeataDynamicDatasourceGuardTest {
     }
 
     private void cleanupContext() {
-        if (StringUtilsHasText(RootContext.getXID())) {
+        if (RootContext.inGlobalTransaction()) {
             RootContext.unbind();
         }
         TransactionContext.remove();
@@ -55,10 +62,6 @@ class SeataDynamicDatasourceGuardTest {
         if (TransactionSynchronizationManager.hasResource(SeataDynamicDatasourceGuard.TX_BOUND_DATASOURCE_RESOURCE_KEY)) {
             TransactionSynchronizationManager.unbindResource(SeataDynamicDatasourceGuard.TX_BOUND_DATASOURCE_RESOURCE_KEY);
         }
-    }
-
-    private boolean StringUtilsHasText(String str) {
-        return str != null && !str.isBlank();
     }
 
     @Test
@@ -107,16 +110,29 @@ class SeataDynamicDatasourceGuardTest {
     }
 
     @Test
-    @DisplayName("Spring 单连接事务中跨库切源时刚性拦截并抛出假切源致命风险异常")
+    @DisplayName("Spring 单连接事务中跨库切源时刚性拦截并抛出 5105 BusinessException（无重复 error 日志）")
     void shouldFailWhenFalseSwitchDetectedInSpringTransaction() {
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         DynamicDataSourceContextHolder.push("master");
 
-        assertThatThrownBy(() -> guard.validateSwitch("slave_ds"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("检测到 Spring 单连接事务 (DataSourceTransactionManager) 假切源致命风险")
-                .hasMessageContaining("当前事务已绑定数据源 [master]，尝试切源至 [slave_ds]");
+        Logger guardLogger = (Logger) LoggerFactory.getLogger(SeataDynamicDatasourceGuard.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        guardLogger.addAppender(appender);
+        try {
+            assertThatThrownBy(() -> guard.validateSwitch("slave_ds"))
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                            .isEqualTo(SeataResultCode.SEATA_FALSE_DATASOURCE_SWITCH.getCode()))
+                    .hasMessageContaining("检测到 Spring 单连接事务 (DataSourceTransactionManager) 假切源致命风险")
+                    .hasMessageContaining("当前事务已绑定数据源 [master]，尝试切源至 [slave_ds]");
+
+            assertThat(appender.list).filteredOn(event -> event.getLevel() == Level.ERROR).isEmpty();
+        } finally {
+            guardLogger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test
@@ -134,15 +150,28 @@ class SeataDynamicDatasourceGuardTest {
     }
 
     @Test
-    @DisplayName("当配置 failOnFalseSwitch=false 时假切源降级为告警不抛出异常")
+    @DisplayName("当配置 failOnFalseSwitch=false 时假切源降级为 WARN 告警不抛出异常")
     void shouldDegradeToWarnWhenFailOnFalseSwitchIsFalse() {
         properties.getDynamicDatasource().setFailOnFalseSwitch(false);
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         DynamicDataSourceContextHolder.push("master");
 
-        assertThatCode(() -> guard.validateSwitch("slave_ds"))
-                .doesNotThrowAnyException();
+        Logger guardLogger = (Logger) LoggerFactory.getLogger(SeataDynamicDatasourceGuard.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        guardLogger.addAppender(appender);
+        try {
+            assertThatCode(() -> guard.validateSwitch("slave_ds"))
+                    .doesNotThrowAnyException();
+
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == Level.WARN)
+                    .anySatisfy(event -> assertThat(event.getFormattedMessage()).contains("failOnFalseSwitch=false"));
+        } finally {
+            guardLogger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test

@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.seata.autoconfigure;
 
+import io.github.atengk.cloud.seata.aspect.SeataDynamicDatasourceGuardAspect;
 import io.github.atengk.cloud.seata.aspect.SeataExceptionTranslationAspect;
 import io.github.atengk.cloud.seata.aspect.SeataGlobalLockAspect;
 import io.github.atengk.cloud.seata.constant.SeataConstants;
@@ -210,6 +211,25 @@ public class AtengSeataAutoConfiguration {
     public SeataDynamicDatasourceGuard seataDynamicDatasourceGuard(SeataProperties properties) {
         log.debug("装配 SeataDynamicDatasourceGuard 动态数据源切源安全守卫");
         return new SeataDynamicDatasourceGuard(properties);
+    }
+
+    /**
+     * 注册声明式 @DS 动态数据源假切源自动防卫切面
+     *
+     * @param guard 动态数据源切源安全守卫
+     * @return SeataDynamicDatasourceGuardAspect 实例
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(SeataDynamicDatasourceGuard.class)
+    @ConditionalOnClass(name = {
+            "com.baomidou.dynamic.datasource.annotation.DS",
+            "org.aspectj.lang.ProceedingJoinPoint"
+    })
+    @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX + ".dynamic-datasource", name = "guard-enabled", havingValue = "true", matchIfMissing = true)
+    public SeataDynamicDatasourceGuardAspect seataDynamicDatasourceGuardAspect(SeataDynamicDatasourceGuard guard) {
+        log.debug("装配 SeataDynamicDatasourceGuardAspect 声明式 @DS 假切源防卫切面");
+        return new SeataDynamicDatasourceGuardAspect(guard);
     }
 
     /**

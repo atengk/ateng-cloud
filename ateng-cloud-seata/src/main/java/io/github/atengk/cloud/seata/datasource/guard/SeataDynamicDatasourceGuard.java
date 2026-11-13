@@ -2,6 +2,8 @@ package io.github.atengk.cloud.seata.datasource.guard;
 
 import com.baomidou.dynamic.datasource.toolkit.DynamicDataSourceContextHolder;
 import com.baomidou.dynamic.datasource.tx.TransactionContext;
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.seata.code.SeataResultCode;
 import io.github.atengk.cloud.seata.properties.SeataProperties;
 import org.apache.seata.core.context.RootContext;
 import org.slf4j.Logger;
@@ -122,11 +124,9 @@ public class SeataDynamicDatasourceGuard {
         );
 
         if (seataProperties.getDynamicDatasource().isFailOnFalseSwitch()) {
-            log.error(errorMessage);
-            throw new IllegalStateException(errorMessage);
-        } else {
-            log.warn("假切源拦截降级 (failOnFalseSwitch=false): {}", errorMessage);
+            throw new BusinessException(SeataResultCode.SEATA_FALSE_DATASOURCE_SWITCH, errorMessage);
         }
+        log.warn("假切源拦截降级 (failOnFalseSwitch=false): {}", errorMessage);
     }
 
     /**

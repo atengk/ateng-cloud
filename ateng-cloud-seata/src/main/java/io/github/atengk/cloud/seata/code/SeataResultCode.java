@@ -34,6 +34,11 @@ public enum SeataResultCode implements IResultCode {
     SEATA_DEGRADE_BLOCKED(5104, "下游调用触发熔断降级，全局事务强制阻断回滚"),
 
     /**
+     * Spring 单连接事务非法跨库假切源阻断
+     */
+    SEATA_FALSE_DATASOURCE_SWITCH(5105, "Spring 单连接事务非法跨库假切源阻断"),
+
+    /**
      * TCC 分支事务已被业务悬挂拦截
      */
     TCC_FENCE_SUSPENDED(5110, "TCC 分支事务已被业务悬挂拦截"),
