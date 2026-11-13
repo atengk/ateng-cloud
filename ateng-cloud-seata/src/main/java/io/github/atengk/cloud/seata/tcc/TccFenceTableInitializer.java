@@ -39,6 +39,10 @@ public class TccFenceTableInitializer implements InitializingBean {
     public TccFenceTableInitializer(DataSource dataSource, SeataProperties properties) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource 必须非空");
         this.properties = Objects.requireNonNull(properties, "properties 必须非空");
+        JdbcTccFenceRepository.resolveValidatedTableName(
+                properties.getTcc().getTableName(),
+                SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME
+        );
     }
 
     @Override
@@ -56,10 +60,10 @@ public class TccFenceTableInitializer implements InitializingBean {
      * @return true 表示由于缺失而成功执行了自愈建表；false 表示表已存在或配置关闭，跳过建表
      */
     public boolean initializeTable() {
-        String tableName = properties.getTcc().getTableName();
-        if (tableName == null || tableName.isBlank()) {
-            tableName = SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME;
-        }
+        String tableName = JdbcTccFenceRepository.resolveValidatedTableName(
+                properties.getTcc().getTableName(),
+                SeataConstants.DEFAULT_TCC_FENCE_TABLE_NAME
+        );
 
         Connection conn = null;
         try {
@@ -92,27 +96,37 @@ public class TccFenceTableInitializer implements InitializingBean {
     }
 
     private boolean checkTableExists(DatabaseMetaData metaData, String tableName, String catalog, String schema) throws SQLException {
+        String targetSchema = schema;
+        String targetTable = tableName;
+        int dotIndex = tableName.indexOf('.');
+        if (dotIndex > 0) {
+            targetSchema = tableName.substring(0, dotIndex);
+            targetTable = tableName.substring(dotIndex + 1);
+        }
+
         String[] types = new String[]{"TABLE"};
         // 1. 原始大小写精确匹配
-        try (ResultSet rs = metaData.getTables(catalog, schema, tableName, types)) {
+        try (ResultSet rs = metaData.getTables(catalog, targetSchema, targetTable, types)) {
             if (rs.next()) {
                 return true;
             }
         }
         // 2. 全大写匹配 (Oracle, H2 等主流关系型库默认大写存储元数据)
-        try (ResultSet rs = metaData.getTables(catalog, schema, tableName.toUpperCase(Locale.ROOT), types)) {
+        String upperSchema = targetSchema != null ? targetSchema.toUpperCase(Locale.ROOT) : null;
+        try (ResultSet rs = metaData.getTables(catalog, upperSchema, targetTable.toUpperCase(Locale.ROOT), types)) {
             if (rs.next()) {
                 return true;
             }
         }
         // 3. 全小写匹配 (PostgreSQL, MySQL Linux 区分大小写模式)
-        try (ResultSet rs = metaData.getTables(catalog, schema, tableName.toLowerCase(Locale.ROOT), types)) {
+        String lowerSchema = targetSchema != null ? targetSchema.toLowerCase(Locale.ROOT) : null;
+        try (ResultSet rs = metaData.getTables(catalog, lowerSchema, targetTable.toLowerCase(Locale.ROOT), types)) {
             if (rs.next()) {
                 return true;
             }
         }
         // 4. 忽略 catalog/schema 传参歧义的候选表名探测（防御部分特定驱动忽略当前 catalog/schema 参数导致的漏检）
-        List<String> candidates = List.of(tableName, tableName.toUpperCase(Locale.ROOT), tableName.toLowerCase(Locale.ROOT));
+        List<String> candidates = List.of(targetTable, targetTable.toUpperCase(Locale.ROOT), targetTable.toLowerCase(Locale.ROOT));
         for (String candidate : candidates) {
             try (ResultSet rs = metaData.getTables(null, null, candidate, types)) {
                 while (rs.next()) {
@@ -122,7 +136,7 @@ public class TccFenceTableInitializer implements InitializingBean {
                     if (candidate.equalsIgnoreCase(actualName)) {
                         // 防御多数据库/多租户共享实例误判：若连接已获取到明确 catalog/schema，必须保证与元数据一致
                         boolean catMatch = catalog == null || tableCat == null || catalog.equalsIgnoreCase(tableCat);
-                        boolean schemMatch = schema == null || tableSchem == null || schema.equalsIgnoreCase(tableSchem);
+                        boolean schemMatch = targetSchema == null || tableSchem == null || targetSchema.equalsIgnoreCase(tableSchem);
                         if (catMatch && schemMatch) {
                             return true;
                         }
@@ -149,14 +163,16 @@ public class TccFenceTableInitializer implements InitializingBean {
             stmt.execute(ddl);
         }
 
+        // 将 schema.table 中的点号替换为下划线，避免 CREATE INDEX 语法非法
+        String indexTablePrefix = tableName.replace('.', '_');
         // 尝试创建辅助索引（平滑容错，即使某些数据库权限不足或语法特殊亦不阻断核心主表运作）
         try (Statement stmt = conn.createStatement()) {
-            stmt.execute("CREATE INDEX idx_" + tableName + "_modified ON " + tableName + " (gmt_modified)");
+            stmt.execute("CREATE INDEX idx_" + indexTablePrefix + "_modified ON " + tableName + " (gmt_modified)");
         } catch (SQLException e) {
             log.debug("创建 TCC 防卫表 gmt_modified 索引被跳过或已存在: {}", e.getMessage());
         }
         try (Statement stmt = conn.createStatement()) {
-            stmt.execute("CREATE INDEX idx_" + tableName + "_status ON " + tableName + " (status)");
+            stmt.execute("CREATE INDEX idx_" + indexTablePrefix + "_status ON " + tableName + " (status)");
         } catch (SQLException e) {
             log.debug("创建 TCC 防卫表 status 索引被跳过或已存在: {}", e.getMessage());
         }

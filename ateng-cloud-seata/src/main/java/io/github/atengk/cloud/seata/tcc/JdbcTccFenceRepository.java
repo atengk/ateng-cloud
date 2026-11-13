@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +35,7 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
     private static final Logger log = LoggerFactory.getLogger(JdbcTccFenceRepository.class);
 
     public static final String DEFAULT_LOG_TABLE_NAME = "tcc_fence_log";
+    private static final Pattern VALID_TABLE_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+(\\.[a-zA-Z0-9_]+)?$");
 
     private final DataSource dataSource;
     private final String tableName;
@@ -44,7 +46,26 @@ public class JdbcTccFenceRepository implements TccFenceRepository {
 
     public JdbcTccFenceRepository(DataSource dataSource, String tableName) {
         this.dataSource = Objects.requireNonNull(dataSource, "DataSource 必须非空");
-        this.tableName = (tableName != null && !tableName.isBlank()) ? tableName : DEFAULT_LOG_TABLE_NAME;
+        this.tableName = resolveValidatedTableName(tableName, DEFAULT_LOG_TABLE_NAME);
+    }
+
+    /**
+     * 解析并白名单校验 TCC 防卫表名标识符，杜绝动态 SQL 拼接注入风险
+     *
+     * @param rawTableName     原始表名配置
+     * @param defaultTableName 缺省回退表名
+     * @return 校验通过的合法表名
+     */
+    static String resolveValidatedTableName(String rawTableName, String defaultTableName) {
+        if (rawTableName == null || rawTableName.isBlank()) {
+            return defaultTableName;
+        }
+        if (!VALID_TABLE_NAME_PATTERN.matcher(rawTableName).matches()) {
+            throw new IllegalArgumentException(
+                    "非法 TCC 防卫表名 tableName: [" + rawTableName + "]，仅允许合法 SQL 标识符 [a-zA-Z0-9_] 或 schema.table 格式"
+            );
+        }
+        return rawTableName;
     }
 
     @Override

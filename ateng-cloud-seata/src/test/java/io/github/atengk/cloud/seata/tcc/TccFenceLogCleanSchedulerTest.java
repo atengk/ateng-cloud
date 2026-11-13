@@ -5,10 +5,20 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 
+import java.lang.reflect.Modifier;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -165,5 +175,50 @@ class TccFenceLogCleanSchedulerTest {
         // 重复调用 stop 幂等
         scheduler.stop();
         assertThat(scheduler.isRunning()).isFalse();
+    }
+
+    @Test
+    @DisplayName("防虚拟线程 Pinning：start/stop 不得使用 synchronized，高并发启停由 ReentrantLock 安全守护")
+    void shouldUseReentrantLockInsteadOfSynchronizedAndRemainThreadSafe() throws Exception {
+        assertThat(Modifier.isSynchronized(TccFenceLogCleanScheduler.class.getMethod("start").getModifiers())).isFalse();
+        assertThat(Modifier.isSynchronized(TccFenceLogCleanScheduler.class.getMethod("stop").getModifiers())).isFalse();
+
+        properties.getTcc().setCleanEnabled(false);
+        int threadCount = 8;
+        ExecutorService executor = new ThreadPoolExecutor(
+                threadCount,
+                threadCount,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(),
+                new CustomizableThreadFactory("tcc-clean-test-")
+        );
+        CountDownLatch startGate = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        try {
+            for (int i = 0; i < threadCount; i++) {
+                final boolean doStart = (i % 2 == 0);
+                futures.add(executor.submit(() -> {
+                    startGate.await();
+                    for (int round = 0; round < 50; round++) {
+                        if (doStart) {
+                            scheduler.start();
+                        } else {
+                            scheduler.stop();
+                        }
+                    }
+                    return null;
+                }));
+            }
+            startGate.countDown();
+            for (Future<?> future : futures) {
+                future.get(10, TimeUnit.SECONDS);
+            }
+            scheduler.stop();
+            assertThat(scheduler.isRunning()).isFalse();
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
     }
 }

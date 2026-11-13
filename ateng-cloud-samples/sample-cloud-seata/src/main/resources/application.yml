@@ -47,8 +47,8 @@ ateng:
   cloud:
     seata:
       enabled: true
-      tx-service-group: default_tx_group
-      default-timeout: 30s
+      tx:
+        default-timeout: 30s
       lock:
         retry-interval: 50ms
         retry-times: 30

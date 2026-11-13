@@ -28,6 +28,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -49,6 +51,17 @@ import java.util.concurrent.ScheduledExecutorService;
  * @since 2026-10-29
  */
 @AutoConfiguration
+@AutoConfigureAfter(name = {
+        "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
+        "com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourceAutoConfiguration",
+        "com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration",
+        "com.baomidou.mybatisplus.autoconfigure.MybatisPlusInnerInterceptorAutoConfiguration"
+})
+@AutoConfigureBefore(name = {
+        "com.alibaba.cloud.seata.autoconfigure.SeataAutoConfiguration",
+        "org.apache.seata.spring.boot.autoconfigure.SeataAutoConfiguration",
+        "org.apache.seata.spring.boot.autoconfigure.SeataSpringFenceAutoConfiguration"
+})
 @EnableConfigurationProperties(SeataProperties.class)
 @ConditionalOnProperty(prefix = SeataConstants.PROPERTIES_PREFIX, name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AtengSeataAutoConfiguration {

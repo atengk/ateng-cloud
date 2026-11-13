@@ -14,6 +14,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * TCC 防卫日志分级生命周期批量清理调度器
@@ -42,6 +43,7 @@ public class TccFenceLogCleanScheduler implements SmartLifecycle {
     private final SeataProperties properties;
     private final ScheduledExecutorService scheduledExecutor;
     private final boolean internalExecutor;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
 
     private volatile boolean running = false;
     private ScheduledFuture<?> scheduledFuture;
@@ -63,55 +65,69 @@ public class TccFenceLogCleanScheduler implements SmartLifecycle {
     }
 
     @Override
-    public synchronized void start() {
-        if (running) {
-            return;
-        }
-        SeataProperties.TccProperties tcc = properties != null ? properties.getTcc() : null;
-        if (tcc == null || !tcc.isCleanEnabled()) {
-            log.info("TCC 防卫日志定时清理已被配置禁用 (clean-enabled=false)，跳过启动");
-            running = true;
-            return;
-        }
-        Duration cleanPeriod = tcc.getCleanPeriod();
-        if (cleanPeriod == null || cleanPeriod.isNegative() || cleanPeriod.isZero()) {
-            cleanPeriod = Duration.ofDays(1);
-        }
-        long periodSeconds = Math.max(1, cleanPeriod.toSeconds());
-        log.info("启动 TCC 防卫日志分级生命周期定时清理调度器, 执行周期: {} 秒, 终态保留期: {}, 悬挂倍数: {}x",
-                periodSeconds, tcc.getLogTtl(), tcc.getSuspendedRetentionMultiplier());
+    public void start() {
+        lifecycleLock.lock();
+        try {
+            if (running) {
+                return;
+            }
+            SeataProperties.TccProperties tcc = properties != null ? properties.getTcc() : null;
+            if (tcc == null || !tcc.isCleanEnabled()) {
+                log.info("TCC 防卫日志定时清理已被配置禁用 (clean-enabled=false)，跳过启动");
+                running = true;
+                return;
+            }
+            Duration cleanPeriod = tcc.getCleanPeriod();
+            if (cleanPeriod == null || cleanPeriod.isNegative() || cleanPeriod.isZero()) {
+                cleanPeriod = Duration.ofDays(1);
+            }
+            long periodSeconds = Math.max(1, cleanPeriod.toSeconds());
+            log.info("启动 TCC 防卫日志分级生命周期定时清理调度器, 执行周期: {} 秒, 终态保留期: {}, 悬挂倍数: {}x",
+                    periodSeconds, tcc.getLogTtl(), tcc.getSuspendedRetentionMultiplier());
 
-        scheduledFuture = scheduledExecutor.scheduleWithFixedDelay(
-                this::safeClean,
-                periodSeconds,
-                periodSeconds,
-                TimeUnit.SECONDS
-        );
-        running = true;
+            scheduledFuture = scheduledExecutor.scheduleWithFixedDelay(
+                    this::safeClean,
+                    periodSeconds,
+                    periodSeconds,
+                    TimeUnit.SECONDS
+            );
+            running = true;
+        } finally {
+            if (lifecycleLock.isHeldByCurrentThread()) {
+                lifecycleLock.unlock();
+            }
+        }
     }
 
     @Override
-    public synchronized void stop() {
-        if (!running) {
-            return;
-        }
-        log.info("停止 TCC 防卫日志定时清理调度器");
-        if (scheduledFuture != null) {
-            scheduledFuture.cancel(false);
-            scheduledFuture = null;
-        }
-        if (internalExecutor) {
-            scheduledExecutor.shutdown();
-            try {
-                if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+    public void stop() {
+        lifecycleLock.lock();
+        try {
+            if (!running) {
+                return;
+            }
+            log.info("停止 TCC 防卫日志定时清理调度器");
+            if (scheduledFuture != null) {
+                scheduledFuture.cancel(false);
+                scheduledFuture = null;
+            }
+            if (internalExecutor) {
+                scheduledExecutor.shutdown();
+                try {
+                    if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                        scheduledExecutor.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
                     scheduledExecutor.shutdownNow();
+                    Thread.currentThread().interrupt();
                 }
-            } catch (InterruptedException e) {
-                scheduledExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
+            }
+            running = false;
+        } finally {
+            if (lifecycleLock.isHeldByCurrentThread()) {
+                lifecycleLock.unlock();
             }
         }
-        running = false;
     }
 
     @Override

@@ -23,6 +23,9 @@ import org.apache.seata.rm.fence.SpringFenceConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
@@ -230,6 +233,43 @@ class AtengSeataAutoConfigurationTest {
                 .withBean(javax.sql.DataSource.class, () -> realDs)
                 .run(context -> {
                     assertThat(context).hasSingleBean(TccFenceTableInitializer.class);
+                });
+    }
+
+    @Test
+    @DisplayName("自动装配时序守卫：显式声明 @AutoConfigureAfter/@AutoConfigureBefore 且先注册 Ateng 后注册 DataSource 仍能装配 JdbcTccFenceRepository")
+    void shouldDeclareAutoConfigureOrderingAndResolveDataSource() {
+        AutoConfigureAfter afterAnnotation = AtengSeataAutoConfiguration.class.getAnnotation(AutoConfigureAfter.class);
+        AutoConfigureBefore beforeAnnotation = AtengSeataAutoConfiguration.class.getAnnotation(AutoConfigureBefore.class);
+
+        assertThat(afterAnnotation).isNotNull();
+        assertThat(afterAnnotation.name()).contains(
+                "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
+                "com.baomidou.dynamic.datasource.spring.boot.autoconfigure.DynamicDataSourceAutoConfiguration",
+                "com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration"
+        );
+
+        assertThat(beforeAnnotation).isNotNull();
+        assertThat(beforeAnnotation.name()).contains(
+                "com.alibaba.cloud.seata.autoconfigure.SeataAutoConfiguration",
+                "org.apache.seata.spring.boot.autoconfigure.SeataAutoConfiguration"
+        );
+
+        // 刻意将 AtengSeataAutoConfiguration 放在 DataSourceAutoConfiguration 之前，验证排序后仍激活 JdbcTccFenceRepository
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        AtengSeataAutoConfiguration.class,
+                        DataSourceAutoConfiguration.class
+                ))
+                .withPropertyValues(
+                        "spring.datasource.url=jdbc:h2:mem:order_guard_test;DB_CLOSE_DELAY=-1",
+                        "spring.datasource.driver-class-name=org.h2.Driver",
+                        "spring.datasource.username=sa",
+                        "spring.datasource.password="
+                )
+                .run(context -> {
+                    assertThat(context).hasSingleBean(TccFenceRepository.class);
+                    assertThat(context.getBean(TccFenceRepository.class)).isInstanceOf(JdbcTccFenceRepository.class);
                 });
     }
 }

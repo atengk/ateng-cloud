@@ -222,4 +222,30 @@ class JdbcTccFenceRepositoryTest {
         assertThat(repository.deleteExpiredRecords(LocalDateTime.now(), Collections.emptyList(), 10)).isEqualTo(0);
         assertThat(repository.deleteExpiredRecords(LocalDateTime.now(), null, 10)).isEqualTo(0);
     }
+
+    @Test
+    @DisplayName("表名白名单正则防注入校验：非法表名立即抛 IllegalArgumentException，合法 schema.table 正常通过")
+    void shouldValidateTableNameWhitelist() {
+        List<String> invalidNames = List.of(
+                "tcc_fence_log; DROP TABLE users",
+                "tcc-fence",
+                "tcc fence",
+                "tcc'fence",
+                "tcc_fence_log--comment",
+                ".tcc_fence_log",
+                "seata.",
+                "a.b.c"
+        );
+        for (String invalidName : invalidNames) {
+            assertThatThrownBy(() -> new JdbcTccFenceRepository(dataSource, invalidName))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("tableName");
+        }
+
+        JdbcTccFenceRepository validDefault = new JdbcTccFenceRepository(dataSource, "tcc_fence_log");
+        assertThat(validDefault.getTableName()).isEqualTo("tcc_fence_log");
+
+        JdbcTccFenceRepository validSchemaQualified = new JdbcTccFenceRepository(dataSource, "seata.tcc_fence_log");
+        assertThat(validSchemaQualified.getTableName()).isEqualTo("seata.tcc_fence_log");
+    }
 }

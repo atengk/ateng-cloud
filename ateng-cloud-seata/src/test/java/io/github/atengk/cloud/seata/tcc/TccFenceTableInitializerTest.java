@@ -12,6 +12,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +49,7 @@ class TccFenceTableInitializerTest {
         try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
             stmt.execute("DROP TABLE IF EXISTS tcc_fence_log");
             stmt.execute("DROP TABLE IF EXISTS my_custom_fence");
+            stmt.execute("DROP SCHEMA IF EXISTS seata CASCADE");
         }
     }
 
@@ -130,6 +132,41 @@ class TccFenceTableInitializerTest {
         assertThatThrownBy(faultyInit::initializeTable)
                 .isInstanceOf(TccFenceException.class)
                 .hasMessageContaining("TCC 防卫表自愈建表失败");
+    }
+
+    @Test
+    @DisplayName("表名白名单正则防注入校验：非法表名在构造期或初始化期立即抛 IllegalArgumentException，合法 schema.table 正常自愈建表")
+    void shouldValidateTableNameWhitelistFailFastAndSupportSchemaQualifiedName() throws Exception {
+        List<String> invalidNames = List.of(
+                "tcc_fence_log; DROP TABLE users",
+                "tcc-fence",
+                "tcc fence",
+                "tcc'fence",
+                "tcc_fence_log/*comment*/"
+        );
+        for (String invalidName : invalidNames) {
+            SeataProperties invalidProps = new SeataProperties();
+            invalidProps.getTcc().setTableName(invalidName);
+            assertThatThrownBy(() -> new TccFenceTableInitializer(dataSource, invalidProps))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("tableName");
+
+            SeataProperties delayedInvalidProps = new SeataProperties();
+            TccFenceTableInitializer delayedInitializer = new TccFenceTableInitializer(dataSource, delayedInvalidProps);
+            delayedInvalidProps.getTcc().setTableName(invalidName);
+            assertThatThrownBy(delayedInitializer::initializeTable)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("tableName");
+        }
+
+        try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE SCHEMA IF NOT EXISTS seata");
+        }
+        properties.getTcc().setTableName("seata.tcc_fence_log");
+        properties.getTcc().setAutoInitTable(true);
+        boolean initialized = initializer.initializeTable();
+        assertThat(initialized).isTrue();
+        assertThat(initializer.initializeTable()).isFalse();
     }
 
     private boolean isTableExists(String tableName) throws SQLException {
