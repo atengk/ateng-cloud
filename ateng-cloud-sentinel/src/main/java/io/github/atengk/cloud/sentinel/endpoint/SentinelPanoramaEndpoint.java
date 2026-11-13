@@ -241,10 +241,13 @@ public class SentinelPanoramaEndpoint {
 
         AtengSentinelProperties.UrlCleanProperties urlClean = props.getUrlClean();
         List<String> excludePatterns = urlClean.getExcludePatterns() != null ? urlClean.getExcludePatterns() : Collections.emptyList();
+        int customPatternCount = urlClean.getCustomPatterns() != null ? urlClean.getCustomPatterns().size() : 0;
         SentinelPanoramaReport.UrlCleanReport cleanReport = new SentinelPanoramaReport.UrlCleanReport(
                 urlClean.isEnabled(),
                 urlClean.getNumberReplacement(),
                 urlClean.getUuidReplacement(),
+                urlClean.getHexReplacement(),
+                customPatternCount,
                 excludePatterns.size(),
                 excludePatterns
         );
@@ -254,17 +257,21 @@ public class SentinelPanoramaEndpoint {
                 originParser.getOriginHeader(),
                 originParser.getGatewayHeader(),
                 originParser.getDefaultOrigin(),
-                originParser.isEnableClientIpFallback()
+                originParser.isEnableClientIpFallback(),
+                originParser.isEnableTenantFallback(),
+                originParser.getTenantPrefix()
         );
 
         SentinelPanoramaReport.BlockHandlerReport handlerReport = new SentinelPanoramaReport.BlockHandlerReport(
                 props.getBlockHandler().isEnabled(),
-                props.getBlockHandler().isHttpStatusAlign()
+                props.getBlockHandler().isHttpStatusAlign(),
+                props.getBlockHandler().getRetryAfterSeconds()
         );
 
         SentinelPanoramaReport.BlockAdviceReport adviceReport = new SentinelPanoramaReport.BlockAdviceReport(
                 props.getBlockAdvice().isEnabled(),
-                props.getBlockAdvice().isHttpStatusAlign()
+                props.getBlockAdvice().isHttpStatusAlign(),
+                props.getBlockAdvice().getRetryAfterSeconds()
         );
 
         return new SentinelPanoramaReport.WebMvcConfigReport(cleanReport, originReport, handlerReport, adviceReport);

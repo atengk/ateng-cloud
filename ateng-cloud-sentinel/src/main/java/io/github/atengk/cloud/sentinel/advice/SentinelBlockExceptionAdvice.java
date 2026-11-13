@@ -1,10 +1,10 @@
 package io.github.atengk.cloud.sentinel.advice;
 
+import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOriginParser;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
-import io.github.atengk.cloud.sentinel.handler.AtengBlockExceptionHandler;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -24,7 +25,8 @@ import java.lang.reflect.UndeclaredThrowableException;
  * <p>
  * 专职捕获内部方法标注 {@code @SentinelResource} 且未配置 {@code blockHandler} 时抛出的
  * {@link BlockException} 及其被动态代理包装的 {@link UndeclaredThrowableException}，
- * 统一转译为 HTTP 429/503 与规范强类型 {@link Result} 响应体，杜绝未捕获异常转化为系统 500 虚假报警。
+ * 统一转译为 HTTP 429/503 与规范强类型 {@link Result} 响应体，输出 {@code X-Sentinel-Block-Rule}
+ * 及可选 {@code Retry-After} 响应头，杜绝未捕获异常转化为系统 500 虚假报警。
  *
  * @author Ateng
  * @since 2026-10-29
@@ -37,14 +39,23 @@ public class SentinelBlockExceptionAdvice {
 
     private final AtengSentinelProperties properties;
     private final SentinelBlockCounter blockCounter;
+    private final RequestOriginParser originParser;
 
     public SentinelBlockExceptionAdvice(AtengSentinelProperties properties) {
-        this(properties, null);
+        this(properties, null, null);
     }
 
     public SentinelBlockExceptionAdvice(AtengSentinelProperties properties, SentinelBlockCounter blockCounter) {
+        this(properties, blockCounter, null);
+    }
+
+    public SentinelBlockExceptionAdvice(
+            AtengSentinelProperties properties,
+            SentinelBlockCounter blockCounter,
+            RequestOriginParser originParser) {
         this.properties = properties != null ? properties : new AtengSentinelProperties();
         this.blockCounter = blockCounter;
+        this.originParser = originParser;
     }
 
     /**
@@ -72,24 +83,34 @@ public class SentinelBlockExceptionAdvice {
      * 构建统一错误响应与状态码
      */
     private ResponseEntity<Result<Void>> buildResponse(BlockException ex, HttpServletRequest request) {
-        SentinelResultCode resultCode = AtengBlockExceptionHandler.determineResultCode(ex);
-        HttpStatus targetStatus = AtengBlockExceptionHandler.determineHttpStatus(ex);
+        SentinelResultCode resultCode = SentinelServletUtil.determineResultCode(ex);
+        HttpStatus targetStatus = SentinelServletUtil.determineHttpStatus(ex);
+        String ruleType = SentinelServletUtil.determineRuleType(ex);
 
         boolean align = properties.getBlockAdvice().isHttpStatusAlign();
         HttpStatus httpStatus = align ? targetStatus : HttpStatus.OK;
 
         String path = request != null ? request.getRequestURI() : "unknown";
         String clientIp = SentinelServletUtil.resolveClientIp(request);
+        String origin = SentinelServletUtil.resolveOriginSafely(originParser, request);
+        String traceId = SentinelServletUtil.resolveTraceId();
         String resource = resolveResource(ex);
 
         if (blockCounter != null) {
-            blockCounter.recordBlock(ex, resource, clientIp);
+            blockCounter.recordBlock(ex, resource, clientIp, traceId, origin);
         }
 
-        log.warn("Sentinel @SentinelResource block triggered: resource='{}', rule={}, status={}, path='{}', clientIp='{}'",
-                resource, ex.getClass().getSimpleName(), httpStatus.value(), path, clientIp);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(SentinelServletUtil.HEADER_BLOCK_RULE, ruleType);
+        long retryAfterSeconds = properties.getBlockAdvice().getRetryAfter().toSeconds();
+        if (retryAfterSeconds > 0) {
+            headers.set(SentinelServletUtil.HEADER_RETRY_AFTER, String.valueOf(retryAfterSeconds));
+        }
 
-        return ResponseEntity.status(httpStatus).body(Result.fail(resultCode));
+        log.warn("Sentinel @SentinelResource block triggered: resource='{}', rule={}, code={}, status={}, path='{}', clientIp='{}', origin='{}', traceId='{}'",
+                resource, ruleType, resultCode.name(), httpStatus.value(), path, clientIp, origin, traceId);
+
+        return ResponseEntity.status(httpStatus).headers(headers).body(Result.fail(resultCode));
     }
 
     /**

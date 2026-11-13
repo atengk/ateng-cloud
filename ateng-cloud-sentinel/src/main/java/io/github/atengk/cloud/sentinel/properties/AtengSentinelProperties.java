@@ -3,6 +3,7 @@ package io.github.atengk.cloud.sentinel.properties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -63,7 +64,7 @@ public class AtengSentinelProperties {
     }
 
     public void setBlockHandler(BlockHandlerProperties blockHandler) {
-        this.blockHandler = blockHandler;
+        this.blockHandler = blockHandler != null ? blockHandler : new BlockHandlerProperties();
     }
 
     public UrlCleanProperties getUrlClean() {
@@ -71,7 +72,7 @@ public class AtengSentinelProperties {
     }
 
     public void setUrlClean(UrlCleanProperties urlClean) {
-        this.urlClean = urlClean;
+        this.urlClean = urlClean != null ? urlClean : new UrlCleanProperties();
     }
 
     public OriginParserProperties getOriginParser() {
@@ -79,7 +80,7 @@ public class AtengSentinelProperties {
     }
 
     public void setOriginParser(OriginParserProperties originParser) {
-        this.originParser = originParser;
+        this.originParser = originParser != null ? originParser : new OriginParserProperties();
     }
 
     public BlockAdviceProperties getBlockAdvice() {
@@ -87,7 +88,7 @@ public class AtengSentinelProperties {
     }
 
     public void setBlockAdvice(BlockAdviceProperties blockAdvice) {
-        this.blockAdvice = blockAdvice;
+        this.blockAdvice = blockAdvice != null ? blockAdvice : new BlockAdviceProperties();
     }
 
     public EndpointProperties getEndpoint() {
@@ -95,7 +96,7 @@ public class AtengSentinelProperties {
     }
 
     public void setEndpoint(EndpointProperties endpoint) {
-        this.endpoint = endpoint;
+        this.endpoint = endpoint != null ? endpoint : new EndpointProperties();
     }
 
     /**
@@ -114,6 +115,11 @@ public class AtengSentinelProperties {
          */
         private boolean httpStatusAlign = true;
 
+        /**
+         * 阻断响应附带的 Retry-After 退避时长 (小于等于 0 时不输出该响应头，默认 {@link Duration#ZERO})
+         */
+        private Duration retryAfter = Duration.ZERO;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -128,6 +134,29 @@ public class AtengSentinelProperties {
 
         public void setHttpStatusAlign(boolean httpStatusAlign) {
             this.httpStatusAlign = httpStatusAlign;
+        }
+
+        public Duration getRetryAfter() {
+            return retryAfter;
+        }
+
+        public void setRetryAfter(Duration retryAfter) {
+            this.retryAfter = (retryAfter != null && !retryAfter.isNegative()) ? retryAfter : Duration.ZERO;
+        }
+
+        /**
+         * 获取退避秒数 (兼容数值秒数配置与 {@link Duration} 的整数秒转换)
+         */
+        public int getRetryAfterSeconds() {
+            long seconds = retryAfter.toSeconds();
+            return seconds > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) seconds;
+        }
+
+        /**
+         * 设置退避秒数 (兼容 {@code retry-after-seconds} 配置绑定，小于等于 0 时归一为 {@link Duration#ZERO})
+         */
+        public void setRetryAfterSeconds(int retryAfterSeconds) {
+            this.retryAfter = retryAfterSeconds > 0 ? Duration.ofSeconds(retryAfterSeconds) : Duration.ZERO;
         }
     }
 
@@ -150,6 +179,16 @@ public class AtengSentinelProperties {
          * 路径中 UUID 字符串替换占位符 (默认 "{uuid}")
          */
         private String uuidReplacement = "{uuid}";
+
+        /**
+         * 路径中 24/32 位纯十六进制哈希 ID 替换占位符 (默认 "{id}")
+         */
+        private String hexReplacement = "{id}";
+
+        /**
+         * 自定义预编译路径收敛正则规则列表 (按声明顺序执行)
+         */
+        private List<CustomPattern> customPatterns = new ArrayList<>();
 
         /**
          * 排除白名单路径列表 (支持 AntPathMatcher 语法，匹配路径直接返回空字符串跳过创建资源节点)
@@ -187,12 +226,68 @@ public class AtengSentinelProperties {
             this.uuidReplacement = uuidReplacement;
         }
 
+        public String getHexReplacement() {
+            return hexReplacement;
+        }
+
+        public void setHexReplacement(String hexReplacement) {
+            this.hexReplacement = hexReplacement;
+        }
+
+        public List<CustomPattern> getCustomPatterns() {
+            return customPatterns;
+        }
+
+        public void setCustomPatterns(List<CustomPattern> customPatterns) {
+            this.customPatterns = customPatterns != null ? customPatterns : new ArrayList<>();
+        }
+
         public List<String> getExcludePatterns() {
             return excludePatterns;
         }
 
         public void setExcludePatterns(List<String> excludePatterns) {
             this.excludePatterns = excludePatterns != null ? excludePatterns : new ArrayList<>();
+        }
+
+        /**
+         * 自定义路径正则清洗规则
+         */
+        public static class CustomPattern {
+
+            /**
+             * 正则表达式模式
+             */
+            private String pattern;
+
+            /**
+             * 命中后的替换文本
+             */
+            private String replacement = "{custom}";
+
+            public CustomPattern() {
+            }
+
+            public CustomPattern(String pattern, String replacement) {
+                this.pattern = pattern;
+                this.replacement = replacement;
+            }
+
+            public String getPattern() {
+                return pattern;
+            }
+
+            public void setPattern(String pattern) {
+                this.pattern = pattern;
+            }
+
+            public String getReplacement() {
+                return replacement;
+            }
+
+            public void setReplacement(String replacement) {
+                this.replacement = replacement;
+            }
         }
     }
 
@@ -225,6 +320,16 @@ public class AtengSentinelProperties {
          * 当请求头缺失时是否回退至远端客户端 IP 作为来源标识 (默认 true)
          */
         private boolean enableClientIpFallback = true;
+
+        /**
+         * 当请求头缺失时是否开启多租户上下文回退溯源 (读取 TenantContextHolder，默认 false)
+         */
+        private boolean enableTenantFallback = false;
+
+        /**
+         * 多租户调用源命名空间前缀 (默认 "tenant:")
+         */
+        private String tenantPrefix = "tenant:";
 
         public boolean isEnabled() {
             return enabled;
@@ -279,6 +384,22 @@ public class AtengSentinelProperties {
         public void setEnableClientIpFallback(boolean enableClientIpFallback) {
             this.enableClientIpFallback = enableClientIpFallback;
         }
+
+        public boolean isEnableTenantFallback() {
+            return enableTenantFallback;
+        }
+
+        public void setEnableTenantFallback(boolean enableTenantFallback) {
+            this.enableTenantFallback = enableTenantFallback;
+        }
+
+        public String getTenantPrefix() {
+            return tenantPrefix;
+        }
+
+        public void setTenantPrefix(String tenantPrefix) {
+            this.tenantPrefix = tenantPrefix;
+        }
     }
 
     /**
@@ -296,6 +417,11 @@ public class AtengSentinelProperties {
          */
         private boolean httpStatusAlign = true;
 
+        /**
+         * 阻断响应附带的 Retry-After 退避时长 (小于等于 0 时不输出该响应头，默认 {@link Duration#ZERO})
+         */
+        private Duration retryAfter = Duration.ZERO;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -310,6 +436,29 @@ public class AtengSentinelProperties {
 
         public void setHttpStatusAlign(boolean httpStatusAlign) {
             this.httpStatusAlign = httpStatusAlign;
+        }
+
+        public Duration getRetryAfter() {
+            return retryAfter;
+        }
+
+        public void setRetryAfter(Duration retryAfter) {
+            this.retryAfter = (retryAfter != null && !retryAfter.isNegative()) ? retryAfter : Duration.ZERO;
+        }
+
+        /**
+         * 获取退避秒数 (兼容数值秒数配置与 {@link Duration} 的整数秒转换)
+         */
+        public int getRetryAfterSeconds() {
+            long seconds = retryAfter.toSeconds();
+            return seconds > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) seconds;
+        }
+
+        /**
+         * 设置退避秒数 (兼容 {@code retry-after-seconds} 配置绑定，小于等于 0 时归一为 {@link Duration#ZERO})
+         */
+        public void setRetryAfterSeconds(int retryAfterSeconds) {
+            this.retryAfter = retryAfterSeconds > 0 ? Duration.ofSeconds(retryAfterSeconds) : Duration.ZERO;
         }
     }
 

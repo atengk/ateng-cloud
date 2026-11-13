@@ -1,6 +1,8 @@
 package io.github.atengk.cloud.sentinel.parser;
 
+import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,8 +23,14 @@ class AtengRequestOriginParserTest {
 
     @BeforeEach
     void setUp() {
+        TenantContextHolder.clear();
         this.properties = new AtengSentinelProperties();
         this.parser = new AtengRequestOriginParser(properties);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContextHolder.clear();
     }
 
     @Test
@@ -108,5 +116,37 @@ class AtengRequestOriginParserTest {
 
         properties.getOriginParser().setDefaultOrigin("unknown-caller");
         assertThat(parser.parseOrigin(emptyRequest)).isEqualTo("unknown-caller");
+    }
+
+    @Test
+    @DisplayName("多租户上下文回退溯源：默认关闭，开启后在标头缺失时优先提取 TenantContextHolder 并附加 tenantPrefix")
+    void testTenantContextFallback() {
+        TenantContextHolder.setTenantId("1001");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/data");
+        request.addHeader("X-Forwarded-For", "203.0.113.195");
+
+        // 1. 默认关闭 enableTenantFallback，直接回退到客户端 IP
+        assertThat(properties.getOriginParser().isEnableTenantFallback()).isFalse();
+        assertThat(properties.getOriginParser().getTenantPrefix()).isEqualTo("tenant:");
+        assertThat(parser.parseOrigin(request)).isEqualTo("203.0.113.195");
+
+        // 2. 开启 enableTenantFallback，在标头缺失时返回 tenant:1001（优先于 IP）
+        properties.getOriginParser().setEnableTenantFallback(true);
+        assertThat(parser.parseOrigin(request)).isEqualTo("tenant:1001");
+
+        // 3. 自定义 tenantPrefix
+        properties.getOriginParser().setTenantPrefix("org-");
+        assertThat(parser.parseOrigin(request)).isEqualTo("org-1001");
+
+        // 4. 服务或网关标头优先级高于租户上下文
+        request.addHeader("X-Gateway-Caller", "edge-gateway");
+        assertThat(parser.parseOrigin(request)).isEqualTo("edge-gateway");
+
+        // 5. 租户上下文为空时平滑继续回退到 IP
+        TenantContextHolder.clear();
+        MockHttpServletRequest noHeaderRequest = new MockHttpServletRequest("GET", "/api/data");
+        noHeaderRequest.addHeader("X-Forwarded-For", "203.0.113.195");
+        assertThat(parser.parseOrigin(noHeaderRequest)).isEqualTo("203.0.113.195");
     }
 }

@@ -9,10 +9,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
+import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -32,9 +35,15 @@ class AtengBlockExceptionHandlerTest {
 
     @BeforeEach
     void setUp() {
+        MDC.clear();
         this.objectMapper = new ObjectMapper();
         this.properties = new AtengSentinelProperties();
         this.handler = new AtengBlockExceptionHandler(objectMapper, properties);
+    }
+
+    @AfterEach
+    void tearDown() {
+        MDC.clear();
     }
 
     @Test
@@ -77,6 +86,7 @@ class AtengBlockExceptionHandlerTest {
         handler.handle(request, response, "goods-resource", new ParamFlowException("goods-resource", "101"));
 
         assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader("X-Sentinel-Block-Rule")).isEqualTo("PARAM_FLOW");
         JsonNode json = objectMapper.readTree(response.getContentAsString());
         assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.PARAM_FLOW_LIMIT.getCode());
     }
@@ -90,6 +100,7 @@ class AtengBlockExceptionHandlerTest {
         handler.handle(request, response, "calc-resource", new SystemBlockException("heavy-calc", "cpu"));
 
         assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader("X-Sentinel-Block-Rule")).isEqualTo("SYSTEM");
         JsonNode json = objectMapper.readTree(response.getContentAsString());
         assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.SYSTEM_BLOCK.getCode());
     }
@@ -103,6 +114,7 @@ class AtengBlockExceptionHandlerTest {
         handler.handle(request, response, "admin-resource", new AuthorityException("admin-resource", "app-a"));
 
         assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader("X-Sentinel-Block-Rule")).isEqualTo("AUTHORITY");
         JsonNode json = objectMapper.readTree(response.getContentAsString());
         assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.AUTHORITY_BLOCK.getCode());
     }
@@ -161,5 +173,38 @@ class AtengBlockExceptionHandlerTest {
         assertThat(counter.getLastBlockEvent().resource()).isEqualTo("goods-detail");
         assertThat(counter.getLastBlockEvent().ruleType()).isEqualTo("PARAM_FLOW");
         assertThat(counter.getLastBlockEvent().clientIp()).isEqualTo("198.51.100.22");
+    }
+
+    @Test
+    @DisplayName("阻断响应标头与快照溯源：输出 X-Sentinel-Block-Rule、可选 Retry-After 及 traceId/origin")
+    void testBlockHeadersAndTraceOriginSnapshot() throws Exception {
+        MDC.put("traceId", "trace-handler-001");
+        properties.getBlockHandler().setRetryAfter(java.time.Duration.ofSeconds(30));
+
+        SentinelBlockCounter counter = new SentinelBlockCounter();
+        AtengRequestOriginParser originParser = new AtengRequestOriginParser(properties);
+        AtengBlockExceptionHandler fullHandler = new AtengBlockExceptionHandler(objectMapper, properties, counter, originParser);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        request.addHeader("X-Origin-Service", "gateway-edge");
+        request.addHeader("X-Forwarded-For", "198.51.100.22");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        fullHandler.handle(request, response, "order-resource", new FlowException("flow-limit"));
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader("X-Sentinel-Block-Rule")).isEqualTo("FLOW");
+        assertThat(response.getHeader("Retry-After")).isEqualTo("30");
+
+        assertThat(counter.getLastBlockEvent()).isNotNull();
+        assertThat(counter.getLastBlockEvent().traceId()).isEqualTo("trace-handler-001");
+        assertThat(counter.getLastBlockEvent().origin()).isEqualTo("gateway-edge");
+
+        // retryAfterSeconds <= 0 时不输出 Retry-After
+        properties.getBlockHandler().setRetryAfterSeconds(0);
+        MockHttpServletResponse noRetryResponse = new MockHttpServletResponse();
+        fullHandler.handle(request, noRetryResponse, "order-resource", new DegradeException("degrade"));
+        assertThat(noRetryResponse.getHeader("X-Sentinel-Block-Rule")).isEqualTo("DEGRADE");
+        assertThat(noRetryResponse.getHeader("Retry-After")).isNull();
     }
 }

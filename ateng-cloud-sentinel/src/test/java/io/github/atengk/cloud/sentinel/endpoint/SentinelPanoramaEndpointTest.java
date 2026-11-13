@@ -216,8 +216,16 @@ class SentinelPanoramaEndpointTest {
     void shouldMapWebMvcAndBlockMetricsAccurately() {
         AtengSentinelProperties properties = new AtengSentinelProperties();
         properties.getUrlClean().setExcludePatterns(List.of("/actuator/**", "/error"));
+        properties.getUrlClean().setHexReplacement("{hex}");
+        properties.getUrlClean().setCustomPatterns(List.of(
+                new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/PAY-[0-9]+", "/{payNo}")
+        ));
         properties.getOriginParser().setOriginHeader("X-Tenant-Origin");
+        properties.getOriginParser().setEnableTenantFallback(true);
+        properties.getOriginParser().setTenantPrefix("biz-tenant:");
         properties.getBlockHandler().setHttpStatusAlign(false);
+        properties.getBlockHandler().setRetryAfter(java.time.Duration.ofSeconds(30));
+        properties.getBlockAdvice().setRetryAfter(java.time.Duration.ofSeconds(15));
 
         @SuppressWarnings("unchecked")
         ObjectProvider<AtengSentinelProperties> propertiesProvider = mock(ObjectProvider.class);
@@ -238,8 +246,14 @@ class SentinelPanoramaEndpointTest {
         SentinelPanoramaReport.WebMvcConfigReport webMvc = report.webMvcConfig();
         assertThat(webMvc.urlClean().excludePatternCount()).isEqualTo(2);
         assertThat(webMvc.urlClean().excludePatterns()).contains("/actuator/**", "/error");
+        assertThat(webMvc.urlClean().hexReplacement()).isEqualTo("{hex}");
+        assertThat(webMvc.urlClean().customPatternCount()).isEqualTo(1);
         assertThat(webMvc.originParser().originHeader()).isEqualTo("X-Tenant-Origin");
+        assertThat(webMvc.originParser().enableTenantFallback()).isTrue();
+        assertThat(webMvc.originParser().tenantPrefix()).isEqualTo("biz-tenant:");
         assertThat(webMvc.blockHandler().httpStatusAlign()).isFalse();
+        assertThat(webMvc.blockHandler().retryAfterSeconds()).isEqualTo(30);
+        assertThat(webMvc.blockAdvice().retryAfterSeconds()).isEqualTo(15);
 
         // 验证阻断统计快照
         SentinelPanoramaReport.BlockMetricsReport metrics = report.blockMetrics();
@@ -250,5 +264,24 @@ class SentinelPanoramaEndpointTest {
         assertThat(metrics.lastBlockEvent().resource()).isEqualTo("/api/pay");
         assertThat(metrics.lastBlockEvent().clientIp()).isEqualTo("192.168.1.50");
         assertThat(metrics.lastBlockEvent().ruleType()).isEqualTo("FLOW");
+
+        // 验证四个子 Report 向后兼容旧构造器
+        SentinelPanoramaReport.UrlCleanReport legacyUrl =
+                new SentinelPanoramaReport.UrlCleanReport(true, "{id}", "{uuid}", 1, List.of("/actuator/**"));
+        assertThat(legacyUrl.hexReplacement()).isEqualTo("{id}");
+        assertThat(legacyUrl.customPatternCount()).isZero();
+
+        SentinelPanoramaReport.OriginParserReport legacyOrigin =
+                new SentinelPanoramaReport.OriginParserReport("X-Origin", "X-Gw", "default", true);
+        assertThat(legacyOrigin.enableTenantFallback()).isFalse();
+        assertThat(legacyOrigin.tenantPrefix()).isEqualTo("tenant:");
+
+        SentinelPanoramaReport.BlockHandlerReport legacyHandler =
+                new SentinelPanoramaReport.BlockHandlerReport(true, true);
+        assertThat(legacyHandler.retryAfterSeconds()).isZero();
+
+        SentinelPanoramaReport.BlockAdviceReport legacyAdvice =
+                new SentinelPanoramaReport.BlockAdviceReport(true, true);
+        assertThat(legacyAdvice.retryAfterSeconds()).isZero();
     }
 }

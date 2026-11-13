@@ -164,13 +164,25 @@ public record SentinelPanoramaReport(
             boolean enabled,
             String numberReplacement,
             String uuidReplacement,
+            String hexReplacement,
+            int customPatternCount,
             int excludePatternCount,
             List<String> excludePatterns
     ) implements Serializable {
         public UrlCleanReport {
-            if (excludePatterns == null) {
-                excludePatterns = Collections.emptyList();
-            }
+            excludePatterns = excludePatterns == null ? Collections.emptyList() : List.copyOf(excludePatterns);
+        }
+
+        /**
+         * 兼容存量 5 参数构造器
+         */
+        public UrlCleanReport(
+                boolean enabled,
+                String numberReplacement,
+                String uuidReplacement,
+                int excludePatternCount,
+                List<String> excludePatterns) {
+            this(enabled, numberReplacement, uuidReplacement, "{id}", 0, excludePatternCount, excludePatterns);
         }
     }
 
@@ -181,24 +193,56 @@ public record SentinelPanoramaReport(
             String originHeader,
             String gatewayHeader,
             String defaultOrigin,
-            boolean enableClientIpFallback
-    ) implements Serializable {}
+            boolean enableClientIpFallback,
+            boolean enableTenantFallback,
+            String tenantPrefix
+    ) implements Serializable {
+
+        /**
+         * 兼容存量 4 参数构造器
+         */
+        public OriginParserReport(
+                String originHeader,
+                String gatewayHeader,
+                String defaultOrigin,
+                boolean enableClientIpFallback) {
+            this(originHeader, gatewayHeader, defaultOrigin, enableClientIpFallback, false, "tenant:");
+        }
+    }
 
     /**
      * 阻断异常响应处理器配置
      */
     public record BlockHandlerReport(
             boolean enabled,
-            boolean httpStatusAlign
-    ) implements Serializable {}
+            boolean httpStatusAlign,
+            int retryAfterSeconds
+    ) implements Serializable {
+
+        /**
+         * 兼容存量 2 参数构造器
+         */
+        public BlockHandlerReport(boolean enabled, boolean httpStatusAlign) {
+            this(enabled, httpStatusAlign, 0);
+        }
+    }
 
     /**
      * @SentinelResource 切面兜底异常配置
      */
     public record BlockAdviceReport(
             boolean enabled,
-            boolean httpStatusAlign
-    ) implements Serializable {}
+            boolean httpStatusAlign,
+            int retryAfterSeconds
+    ) implements Serializable {
+
+        /**
+         * 兼容存量 2 参数构造器
+         */
+        public BlockAdviceReport(boolean enabled, boolean httpStatusAlign) {
+            this(enabled, httpStatusAlign, 0);
+        }
+    }
 
     /**
      * 阻断事件统计

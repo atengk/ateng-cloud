@@ -8,10 +8,13 @@ import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
+import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
 import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -35,11 +38,17 @@ class SentinelBlockExceptionAdviceTest {
 
     @BeforeEach
     void setUp() {
+        MDC.clear();
         properties = new AtengSentinelProperties();
         advice = new SentinelBlockExceptionAdvice(properties);
         request = new MockHttpServletRequest();
         request.setRequestURI("/api/resource/test");
         request.setRemoteAddr("192.168.1.100");
+    }
+
+    @AfterEach
+    void tearDown() {
+        MDC.clear();
     }
 
     @Test
@@ -72,6 +81,7 @@ class SentinelBlockExceptionAdviceTest {
         ResponseEntity<Result<Void>> response = advice.handleBlockException(ex, request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(response.getHeaders().getFirst("X-Sentinel-Block-Rule")).isEqualTo("PARAM_FLOW");
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getCode()).isEqualTo(SentinelResultCode.PARAM_FLOW_LIMIT.getCode());
     }
@@ -83,6 +93,7 @@ class SentinelBlockExceptionAdviceTest {
         ResponseEntity<Result<Void>> response = advice.handleBlockException(ex, request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(response.getHeaders().getFirst("X-Sentinel-Block-Rule")).isEqualTo("SYSTEM");
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getCode()).isEqualTo(SentinelResultCode.SYSTEM_BLOCK.getCode());
     }
@@ -94,6 +105,7 @@ class SentinelBlockExceptionAdviceTest {
         ResponseEntity<Result<Void>> response = advice.handleBlockException(ex, request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(response.getHeaders().getFirst("X-Sentinel-Block-Rule")).isEqualTo("AUTHORITY");
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getCode()).isEqualTo(SentinelResultCode.AUTHORITY_BLOCK.getCode());
     }
@@ -156,5 +168,27 @@ class SentinelBlockExceptionAdviceTest {
         assertThat(counter.getLastBlockEvent()).isNotNull();
         assertThat(counter.getLastBlockEvent().ruleType()).isEqualTo("DEGRADE");
         assertThat(counter.getLastBlockEvent().clientIp()).isEqualTo("192.168.1.100");
+    }
+
+    @Test
+    @DisplayName("切面阻断响应标头与溯源：输出 X-Sentinel-Block-Rule、可选 Retry-After 及 traceId/origin")
+    void testAdviceBlockHeadersAndTraceOrigin() {
+        MDC.put("traceId", "trace-advice-002");
+        properties.getBlockAdvice().setRetryAfter(java.time.Duration.ofSeconds(15));
+
+        SentinelBlockCounter counter = new SentinelBlockCounter();
+        AtengRequestOriginParser originParser = new AtengRequestOriginParser(properties);
+        SentinelBlockExceptionAdvice fullAdvice = new SentinelBlockExceptionAdvice(properties, counter, originParser);
+        request.addHeader("X-Origin-Service", "order-web");
+
+        ResponseEntity<Result<Void>> response = fullAdvice.handleBlockException(new FlowException("flow"), request);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(response.getHeaders().getFirst("X-Sentinel-Block-Rule")).isEqualTo("FLOW");
+        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("15");
+
+        assertThat(counter.getLastBlockEvent()).isNotNull();
+        assertThat(counter.getLastBlockEvent().traceId()).isEqualTo("trace-advice-002");
+        assertThat(counter.getLastBlockEvent().origin()).isEqualTo("order-web");
     }
 }

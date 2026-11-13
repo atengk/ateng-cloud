@@ -6,6 +6,8 @@ import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowException;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowException;
 import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
+import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
+import org.slf4j.MDC;
 
 import java.io.Serializable;
 import java.util.concurrent.atomic.AtomicLong;
@@ -51,31 +53,38 @@ public class SentinelBlockCounter {
      * @param clientIp 客户端来源 IP
      */
     public void recordBlock(BlockException ex, String resource, String clientIp) {
+        recordBlock(ex, resource, clientIp, null, null);
+    }
+
+    /**
+     * 记录一次阻断事件（包含全链路 traceId 与调用来源 origin）
+     *
+     * @param ex 阻断异常
+     * @param resource 资源名称
+     * @param clientIp 客户端来源 IP
+     * @param traceId 全链路追踪标识（缺省时自动从 MDC 读取）
+     * @param origin 请求调用源标识
+     */
+    public void recordBlock(BlockException ex, String resource, String clientIp, String traceId, String origin) {
         if (ex == null) {
             return;
         }
 
         totalBlocked.incrementAndGet();
 
-        String ruleType;
+        String ruleType = SentinelServletUtil.determineRuleType(ex);
         if (ex instanceof FlowException) {
             flowCount.incrementAndGet();
-            ruleType = "FLOW";
         } else if (ex instanceof DegradeException) {
             degradeCount.incrementAndGet();
-            ruleType = "DEGRADE";
         } else if (ex instanceof ParamFlowException) {
             paramFlowCount.incrementAndGet();
-            ruleType = "PARAM_FLOW";
         } else if (ex instanceof SystemBlockException) {
             systemCount.incrementAndGet();
-            ruleType = "SYSTEM";
         } else if (ex instanceof AuthorityException) {
             authorityCount.incrementAndGet();
-            ruleType = "AUTHORITY";
         } else {
             otherCount.incrementAndGet();
-            ruleType = "UNKNOWN";
         }
 
         String safeResource = (resource != null && !resource.trim().isEmpty()) ? resource.trim() : "unknown";
@@ -86,7 +95,17 @@ public class SentinelBlockCounter {
         if (message == null || message.trim().isEmpty()) {
             message = ex.getClass().getSimpleName();
         }
-        lastBlockEvent.set(new BlockEventSnapshot(System.currentTimeMillis(), safeResource, ruleType, clientIp, message));
+        String safeTraceId = normalizeBlankToNull(traceId);
+        if (safeTraceId == null) {
+            safeTraceId = normalizeBlankToNull(MDC.get("traceId"));
+        }
+        String safeOrigin = normalizeBlankToNull(origin);
+        lastBlockEvent.set(new BlockEventSnapshot(
+                System.currentTimeMillis(), safeResource, ruleType, clientIp, message, safeTraceId, safeOrigin));
+    }
+
+    private static String normalizeBlankToNull(String value) {
+        return (value != null && !value.trim().isEmpty()) ? value.trim() : null;
     }
 
     /**
@@ -153,6 +172,16 @@ public class SentinelBlockCounter {
             String resource,
             String ruleType,
             String clientIp,
-            String message
-    ) implements Serializable {}
+            String message,
+            String traceId,
+            String origin
+    ) implements Serializable {
+
+        /**
+         * 兼容存量 5 参数构造器（默认自动提取当前 MDC traceId）
+         */
+        public BlockEventSnapshot(long timestamp, String resource, String ruleType, String clientIp, String message) {
+            this(timestamp, resource, ruleType, clientIp, message, normalizeBlankToNull(MDC.get("traceId")), null);
+        }
+    }
 }

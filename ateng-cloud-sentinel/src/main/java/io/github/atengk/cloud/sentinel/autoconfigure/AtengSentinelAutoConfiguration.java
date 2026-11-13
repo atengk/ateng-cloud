@@ -16,6 +16,8 @@ import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -31,6 +33,8 @@ import org.springframework.core.env.Environment;
  * @since 2026-10-29
  */
 @AutoConfiguration
+@AutoConfigureAfter(name = "org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration")
+@AutoConfigureBefore(name = "com.alibaba.cloud.sentinel.SentinelWebAutoConfiguration")
 @ConditionalOnClass({BlockException.class, BlockExceptionHandler.class})
 @ConditionalOnProperty(prefix = "ateng.cloud.sentinel", name = "enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(AtengSentinelProperties.class)
@@ -54,11 +58,13 @@ public class AtengSentinelAutoConfiguration {
     public AtengBlockExceptionHandler atengBlockExceptionHandler(
             ObjectProvider<ObjectMapper> objectMapperProvider,
             AtengSentinelProperties properties,
-            ObjectProvider<SentinelBlockCounter> counterProvider) {
+            ObjectProvider<SentinelBlockCounter> counterProvider,
+            ObjectProvider<RequestOriginParser> originParserProvider) {
         return new AtengBlockExceptionHandler(
                 objectMapperProvider.getIfAvailable(ObjectMapper::new),
                 properties,
-                counterProvider.getIfAvailable());
+                counterProvider.getIfAvailable(),
+                originParserProvider.getIfAvailable());
     }
 
     /**
@@ -89,8 +95,12 @@ public class AtengSentinelAutoConfiguration {
     @ConditionalOnProperty(prefix = "ateng.cloud.sentinel.block-advice", name = "enabled", havingValue = "true", matchIfMissing = true)
     public SentinelBlockExceptionAdvice sentinelBlockExceptionAdvice(
             AtengSentinelProperties properties,
-            ObjectProvider<SentinelBlockCounter> counterProvider) {
-        return new SentinelBlockExceptionAdvice(properties, counterProvider.getIfAvailable());
+            ObjectProvider<SentinelBlockCounter> counterProvider,
+            ObjectProvider<RequestOriginParser> originParserProvider) {
+        return new SentinelBlockExceptionAdvice(
+                properties,
+                counterProvider.getIfAvailable(),
+                originParserProvider.getIfAvailable());
     }
 
     /**

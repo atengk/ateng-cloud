@@ -7,18 +7,23 @@ import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.cloud.sentinel.cleaner.AtengUrlCleaner;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import io.github.atengk.cloud.sentinel.parser.AtengRequestOriginParser;
+import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.context.request.RequestContextHolder;
 
 import java.util.Collections;
 import java.util.List;
@@ -49,10 +54,21 @@ class SentinelUrlCleanAuthorityTest {
     @Autowired
     private AtengRequestOriginParser originParser;
 
+    @Autowired
+    private AtengSentinelProperties sentinelProperties;
+
+    @Autowired
+    private SentinelBlockCounter blockCounter;
+
     @AfterEach
     void tearDown() {
         FlowRuleManager.loadRules(Collections.emptyList());
         AuthorityRuleManager.loadRules(Collections.emptyList());
+        TenantContextHolder.clear();
+        MDC.clear();
+        RequestContextHolder.resetRequestAttributes();
+        blockCounter.reset();
+        sentinelProperties.getOriginParser().setEnableTenantFallback(false);
     }
 
     @Test
@@ -155,5 +171,59 @@ class SentinelUrlCleanAuthorityTest {
         MockHttpServletRequest requestFallbackIp = new MockHttpServletRequest();
         requestFallbackIp.addHeader("X-Forwarded-For", "203.0.113.195, 10.0.0.1");
         assertThat(originParser.parseOrigin(requestFallbackIp)).isEqualTo("203.0.113.195");
+    }
+
+    @Test
+    @DisplayName("尾部斜杠与十六进制路径收敛：/orders/1001/ 命中 /orders/{id} 流控，24/32 位 Hex 收敛为 {id}")
+    void testTrailingSlashAndHexUrlClean() throws Exception {
+        FlowRule rule = new FlowRule();
+        rule.setResource("/sample/cloud/sentinel/security/orders/{id}");
+        rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
+        rule.setCount(0);
+        rule.setLimitApp("default");
+        FlowRuleManager.loadRules(List.of(rule));
+
+        // 24 位 Hex 路径请求命中 /orders/{id} 资源限流，且输出 X-Sentinel-Block-Rule
+        mockMvc.perform(get("/sample/cloud/sentinel/security/orders/507f1f77bcf86cd799439011"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("X-Sentinel-Block-Rule", "FLOW"));
+
+        assertThat(urlCleaner.clean("/")).isEqualTo("/");
+        assertThat(urlCleaner.clean("/sample/cloud/sentinel/security/orders/1001/")).isEqualTo("/sample/cloud/sentinel/security/orders/{id}");
+        assertThat(urlCleaner.clean("/api/docs/507f1f77bcf86cd799439011")).isEqualTo("/api/docs/{id}");
+        assertThat(urlCleaner.clean("/api/tokens/550e8400e29b41d4a716446655440000/")).isEqualTo("/api/tokens/{id}");
+
+        // 验证自定义正则清洗构造与优先级生效
+        AtengSentinelProperties customProps = new AtengSentinelProperties();
+        customProps.getUrlClean().setCustomPatterns(List.of(
+                new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/PAY-[0-9]+(?=/|$)", "/{payNo}")
+        ));
+        AtengUrlCleaner customCleaner = new AtengUrlCleaner(customProps);
+        assertThat(customCleaner.clean("/sample/cloud/sentinel/payment/status/PAY-1001/"))
+                .isEqualTo("/sample/cloud/sentinel/payment/status/{payNo}");
+    }
+
+    @Test
+    @DisplayName("多租户来源端到端授权：开启 enableTenantFallback 后基于 TenantContextHolder 执行白名单授权控制")
+    void testTenantFallbackAuthorityEndToEnd() throws Exception {
+        sentinelProperties.getOriginParser().setEnableTenantFallback(true);
+        AuthorityRule rule = new AuthorityRule();
+        rule.setResource("/sample/cloud/sentinel/security/admin/dashboard");
+        rule.setStrategy(RuleConstant.AUTHORITY_WHITE);
+        rule.setLimitApp("tenant:vip-1001");
+        AuthorityRuleManager.loadRules(List.of(rule));
+
+        // 未授权租户被拦截
+        TenantContextHolder.setTenantId("free-2002");
+        mockMvc.perform(get("/sample/cloud/sentinel/security/admin/dashboard"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("X-Sentinel-Block-Rule", "AUTHORITY"));
+
+        // 白名单租户正常放行
+        TenantContextHolder.setTenantId("vip-1001");
+        mockMvc.perform(get("/sample/cloud/sentinel/security/admin/dashboard"))
+                .andExpect(status().isOk());
     }
 }

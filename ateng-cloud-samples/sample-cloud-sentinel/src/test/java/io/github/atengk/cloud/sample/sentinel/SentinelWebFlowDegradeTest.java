@@ -9,9 +9,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.cloud.sample.sentinel.model.seckill.SecKillOrderDTO;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
+import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 
@@ -43,11 +47,20 @@ class SentinelWebFlowDegradeTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private AtengSentinelProperties sentinelProperties;
+
+    @Autowired
+    private SentinelBlockCounter blockCounter;
+
     @AfterEach
     void tearDown() {
         // 测试后确定性清理，杜绝规则与线程污染
         FlowRuleManager.loadRules(Collections.emptyList());
         DegradeRuleManager.loadRules(Collections.emptyList());
+        blockCounter.reset();
+        MDC.clear();
+        sentinelProperties.getBlockHandler().setRetryAfter(Duration.ZERO);
     }
 
     @Test
@@ -113,8 +126,37 @@ class SentinelWebFlowDegradeTest {
                 .andExpect(status().isServiceUnavailable())
                 .andReturn();
 
+        assertThat(mvcResult.getResponse().getHeader("X-Sentinel-Block-Rule")).isEqualTo("DEGRADE");
         JsonNode json = objectMapper.readTree(mvcResult.getResponse().getContentAsString());
         assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.DEGRADE.getCode());
         assertThat(json.get("msg").asText()).isEqualTo(SentinelResultCode.DEGRADE.getMsg());
+    }
+
+    @Test
+    @DisplayName("端到端阻断响应头与快照溯源：验证 X-Sentinel-Block-Rule、Retry-After 与 traceId/origin")
+    void testBlockHeadersRetryAfterAndSnapshotTraceOrigin() throws Exception {
+        sentinelProperties.getBlockHandler().setRetryAfter(Duration.ofSeconds(20));
+        FlowRule rule = new FlowRule();
+        rule.setResource("/sample/cloud/sentinel/seckill/order");
+        rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
+        rule.setCount(0);
+        rule.setLimitApp("default");
+        FlowRuleManager.loadRules(List.of(rule));
+
+        SecKillOrderDTO orderDTO = new SecKillOrderDTO(1001L, 2001L, 2);
+        MvcResult mvcResult = mockMvc.perform(post("/sample/cloud/sentinel/seckill/order")
+                        .header("X-Origin-Service", "mobile-bff")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(orderDTO)))
+                .andExpect(status().isTooManyRequests())
+                .andReturn();
+
+        assertThat(mvcResult.getResponse().getHeader("X-Sentinel-Block-Rule")).isEqualTo("FLOW");
+        assertThat(mvcResult.getResponse().getHeader("Retry-After")).isEqualTo("20");
+        String responseTraceId = mvcResult.getResponse().getHeader("X-Trace-Id");
+        assertThat(responseTraceId).isNotBlank();
+        assertThat(blockCounter.getLastBlockEvent()).isNotNull();
+        assertThat(blockCounter.getLastBlockEvent().traceId()).isEqualTo(responseTraceId);
+        assertThat(blockCounter.getLastBlockEvent().origin()).isEqualTo("mobile-bff");
     }
 }

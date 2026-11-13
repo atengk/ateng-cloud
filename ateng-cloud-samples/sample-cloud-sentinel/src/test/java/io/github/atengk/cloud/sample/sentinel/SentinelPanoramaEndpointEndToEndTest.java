@@ -9,10 +9,12 @@ import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRuleManager;
 import com.alibaba.csp.sentinel.slots.system.SystemRuleManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -42,6 +44,9 @@ class SentinelPanoramaEndpointEndToEndTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private SentinelBlockCounter blockCounter;
+
     @BeforeEach
     @AfterEach
     void cleanup() {
@@ -50,6 +55,8 @@ class SentinelPanoramaEndpointEndToEndTest {
         ParamFlowRuleManager.loadRules(Collections.emptyList());
         SystemRuleManager.loadRules(Collections.emptyList());
         AuthorityRuleManager.loadRules(Collections.emptyList());
+        blockCounter.reset();
+        MDC.clear();
     }
 
     @Test
@@ -71,11 +78,17 @@ class SentinelPanoramaEndpointEndToEndTest {
         JsonNode webMvc = root.get("webMvcConfig");
         assertThat(webMvc).isNotNull();
         assertThat(webMvc.get("urlClean").get("enabled").asBoolean()).isTrue();
+        assertThat(webMvc.get("urlClean").get("hexReplacement").asText()).isEqualTo("{id}");
+        assertThat(webMvc.get("urlClean").get("customPatternCount").asInt()).isGreaterThanOrEqualTo(0);
         assertThat(webMvc.get("urlClean").get("excludePatterns").toString()).contains("/actuator/**", "/v3/api-docs/**");
         assertThat(webMvc.get("originParser").get("originHeader").asText()).isEqualTo("X-Origin-Service");
         assertThat(webMvc.get("originParser").get("gatewayHeader").asText()).isEqualTo("X-Gateway-From");
         assertThat(webMvc.get("originParser").get("enableClientIpFallback").asBoolean()).isTrue();
+        assertThat(webMvc.get("originParser").get("enableTenantFallback").asBoolean()).isFalse();
+        assertThat(webMvc.get("originParser").get("tenantPrefix").asText()).isEqualTo("tenant:");
         assertThat(webMvc.get("blockHandler").get("httpStatusAlign").asBoolean()).isTrue();
+        assertThat(webMvc.get("blockHandler").get("retryAfterSeconds").asInt()).isZero();
+        assertThat(webMvc.get("blockAdvice").get("retryAfterSeconds").asInt()).isZero();
 
         // 3. 内存规则快照
         JsonNode inMemory = root.get("inMemoryRules");
@@ -101,8 +114,12 @@ class SentinelPanoramaEndpointEndToEndTest {
         FlowRuleManager.loadRules(List.of(rule));
 
         // 2. 模拟发起业务请求 -> 触发 429 阻断
-        mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
-                .andExpect(status().isTooManyRequests());
+        MvcResult blockedResult = mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel")
+                        .header("X-Origin-Service", "smoke-caller"))
+                .andExpect(status().isTooManyRequests())
+                .andReturn();
+        String responseTraceId = blockedResult.getResponse().getHeader("X-Trace-Id");
+        assertThat(responseTraceId).isNotBlank();
 
         // 3. 访问诊断端点 -> 验证内存规则与阻断统计均准确记录
         MvcResult endpointResult = mockMvc.perform(get("/actuator/sentinel-panorama"))
@@ -116,7 +133,7 @@ class SentinelPanoramaEndpointEndToEndTest {
         assertThat(inMemory.get("flowRuleCount").asInt()).isEqualTo(1);
         assertThat(inMemory.get("flowRules").get(0).get("resource").asText()).isEqualTo("/sample/cloud/sentinel/seckill/vip-channel");
 
-        // 强断言：阻断统计计数器已原子递增并捕获最近一次事件
+        // 强断言：阻断统计计数器已原子递增并捕获最近一次事件（含 traceId 与 origin）
         JsonNode metrics = root.get("blockMetrics");
         assertThat(metrics.get("blockedTotal").asLong()).isGreaterThanOrEqualTo(1);
         assertThat(metrics.get("totalBlocked").asLong()).isGreaterThanOrEqualTo(1);
@@ -126,5 +143,7 @@ class SentinelPanoramaEndpointEndToEndTest {
         assertThat(lastEvent).isNotNull();
         assertThat(lastEvent.get("resource").asText()).isEqualTo("/sample/cloud/sentinel/seckill/vip-channel");
         assertThat(lastEvent.get("ruleType").asText()).isEqualTo("FLOW");
+        assertThat(lastEvent.get("traceId").asText()).isEqualTo(responseTraceId);
+        assertThat(lastEvent.get("origin").asText()).isEqualTo("smoke-caller");
     }
 }
