@@ -32,27 +32,25 @@
      `TrafficTagServiceInstanceListSupplier` (灰度版本隔离) ➔ `ZonePreferenceServiceInstanceListSupplier` (机房亲和) ➔ `NacosWarmupLoadBalancer` (平滑预热加权轮询)；
    - 业务版本隔离级优先于物理机房亲和级，机房亲和级优先于启动预热加权级。
 4. **轻量内聚规则引擎与一致性哈希粘性切流 (Sticky Hash & Lightweight Matcher)**：
-   - 交付强类型 `TrafficRule` 与 `TrafficCondition` 模型，支持 `EXACT`、`IN`、`PREFIX`、`REGEX` 高效谓词；坚决杜绝引入 SpEL 等重量级脚本引擎；
-   - 百分比抽样基于 `MurmurHash3` / 一致性哈希实现，支持指定 hash 依据（userId、IP、Cookie），保障同一实体在放量过程中的会话粘性稳定。
-5. **Nacos 规则分级热更与离线韧性自洽 (Dynamic Rule Bridge & Hermetic Offline)**：
-   - 动态监听应用专属规则 `${spring.application.name}-traffic-rules.json` 与全局通用规则 `traffic-rules.json`；
-   - 内存采用 `AtomicReference<List<TrafficRule>>` 快照实现零锁原子无感热更；
-   - 缺省韧性自检：在配置中心未开启或网络不可达时，自动捕获降级，不阻塞 Spring 容器启动并退化为纯 Header 透传模式，保障本地开发与 CI 离线自洽。
-6. **平滑降级与跨跳泳道穿透保持 (Resilient Fallback & Lane Continuity)**：
+   - 交付强类型 `TrafficRule` 与 `TrafficCondition` 模型，支持 `EXACT`、`NOT_EXACT`、`IN`、`NOT_IN`、`PREFIX`、`SUFFIX`、`CONTAINS`、`REGEX`（内建线程安全有界 LRU 预编译缓存）高效谓词；坚决杜绝引入 SpEL 等重量级脚本引擎；反向谓词（`NOT_EXACT` / `NOT_IN`）在请求缺失该字段（`null`）时按“不属于排除集合”判定为 `true`；
+   - 百分比抽样基于 `MurmurHash3` 一致性哈希实现，以 **100 桶（`0 ~ 99`）** 作为单值 `percentage` 与区间 `percentageRange: [min, max)` 的统一基准空间，支持指定 hash 依据（userId、IP、Cookie、Header、Query），确保从单值放量演进为多金丝雀分桶时 100% 零横跳且与 `/actuator/traffic/simulate` 的 `hashBucket` 完全自洽。
+5. **三级规则分级消解与 Nacos 原子热更 (Hierarchical Rule Resolution & Hermetic Offline)**：
+   - 构建「Nacos 应用专属规则 `${spring.application.name}-traffic-rules.json` ➔ Nacos 全局通用规则 `traffic-rules.json` ➔ 本地 YAML 静态保底规则 `ateng.cloud.traffic.rules`」三级规则供给体系；
+   - 在 `OVERWRITE` 策略下按三级瀑布非空回退，在 `MERGE` 策略下合并三级规则并按 `priority` 升序排序；内存采用 `AtomicReference<List<TrafficRule>>` 快照实现零锁原子无感热更；
+   - 缺省韧性自检：在配置中心未开启或网络不可达时，自动退化至本地静态规则（`PropertiesTrafficRuleProvider`）与 Header 透传模式，保障本地开发与 CI 离线自洽。
+6. **平滑降级、严格隔离与跨跳泳道穿透保持 (Resilient Fallback, Strict Isolation & Lane Continuity)**：
    - 默认策略 `fallbackToDefault: true`：目标灰度实例列表为空时平滑降级至基线实例，杜绝 503 报警；
-   - 强隔离策略 `strictLane: true`：未匹配灰度实例时直接抛出受管业务异常（Fail-Fast 503）；
+   - 金融级严格隔离可选策略 `strictLane: true`：若强隔离开启且未匹配灰度实例，直接抛出受管业务异常（`4210 STRICT_LANE_BLOCK` Fail-Fast），确保业务流量绝不“误写基线表”；
    - 跨跳泳道穿透保持（Lane Continuity）：中间服务降级至基线后，维持入站上下文携带的原始 `TrafficTag`，后续向外出站调用继续优先检索该标签的下游实例。
 7. **声明式泳道绑定与确定性恢复 (Declarative Lane Binding & Safe Recovery)**：
    - 交付 `@TrafficTag` 声明式注解与轻量 AOP 切面，支持在方法或类上显式绑定流量标签（支持常数字符串与 `${...}` 属性占位符，坚决杜绝 SpEL 动态求值以防范 RCE）；
    - 支持通过 `override = true/false` 控制覆盖与继承语义；出口 `finally` 块 100% 还原上级上下文。
 8. **多金丝雀版本分桶切流与区间放量 (Multi-Canary Partitioning & Range Slicing)**：
-   - 规则模型扩展 `percentageRange: [min, max)` 半开区间，与 MurmurHash3 算法深度协同，无侵入支持多灰度分支互斥放量与并行验证；向后兼容旧版单值 `percentage`；对越界非法范围执行解析级防御隔离。
-9. **Feign 东西向通信独立按需装配与零冲突让位 (Standalone Feign Interceptor)**：
-   - 内置 `TrafficFeignRequestInterceptor`，在未引入 `ateng-cloud-feign` 时自动激活并以最高优先级注入 `X-Traffic-Tag`，在 `ateng-cloud-feign` 存在时平滑让位，达成 Starter 独立正交自洽。
-10. **全景可观测性端点与防伪造白名单防线 (Observability & Whitelist Guard)**：
-    - 提供 `/actuator/traffic` 端点展示当前内存生效规则快照，并提供 POST `/actuator/traffic/simulate` 纳秒级无副作用沙箱匹配接口；
-    - 接入 Micrometer 5 大状态度量指标（`ateng.cloud.traffic.requests.total` 等）；
-    - 引入 `allowed-tags` 白名单机制与 `STRIP | REJECT` 处置策略，构筑应用层防伪造安全屏障；谓词操作符扩充支持 `SUFFIX` 与 `CONTAINS`。
+   - 规则模型扩展 `percentageRange: [min, max)` 半开区间，与 MurmurHash3 100 桶基准深度协同，无侵入支持多灰度分支互斥放量与并行验证；向后兼容单值 `percentage`；对越界非法范围执行解析级防御隔离。
+9. **全景可观测性端点与内外部纵深防伪白名单 (Observability & Defense-in-Depth Whitelist Guard)**：
+    - 提供 `/actuator/traffic` 端点展示当前内存生效规则快照（含 Nacos 应用/全局与本地静态规则统计），并提供 POST `/actuator/traffic/simulate` 纳秒级无副作用沙箱匹配接口；
+    - 接入 Micrometer 多维状态度量指标（`ateng.cloud.traffic.requests.total`、`ateng.cloud.traffic.rules.active`）；
+    - 引入 `allowed-tags` 白名单机制与 `STRIP | REJECT` 处置策略，对外部入站 Header/Query 及动态规则产出的 `targetTag` 执行统一纵深校验，构筑应用层防伪造与防误配安全屏障。
 
 ## Consequences
 

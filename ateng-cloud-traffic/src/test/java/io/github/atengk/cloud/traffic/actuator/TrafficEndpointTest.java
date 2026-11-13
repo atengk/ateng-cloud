@@ -82,6 +82,7 @@ class TrafficEndpointTest {
         properties.setAllowedTags(Set.of("vip-v2", "beta"));
         properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
         properties.setStrictLane(true);
+        properties.setRules(List.of(rule1));
 
         metricsManager.recordGrayHit("order-service", "vip-v2");
 
@@ -105,6 +106,7 @@ class TrafficEndpointTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> rules = (Map<String, Object>) overview.get("rules");
         assertThat(rules.get("activeRulesCount")).isEqualTo(1);
+        assertThat(rules.get("localRulesCount")).isEqualTo(1);
 
         // 验证 metrics 统计
         @SuppressWarnings("unchecked")

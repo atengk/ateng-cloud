@@ -174,12 +174,15 @@ public class TrafficContextFilter extends OncePerRequestFilter {
                 ServletTrafficEvaluationContext context = ServletTrafficEvaluationContext.from(request);
                 TrafficRule matchedRule = ruleMatcher.matchRule(rules, context);
                 if (matchedRule != null && StringUtils.hasText(matchedRule.getTargetTag())) {
-                    String matchedTag = matchedRule.getTargetTag().trim();
-                    if (log.isDebugEnabled()) {
-                        log.debug("[TrafficFilter] 入站请求通过动态流量规则成功染色: tag={}, ruleId={}, uri={}",
-                                matchedTag, matchedRule.getId(), request.getRequestURI());
+                    String matchedTag = validateAndSanitizeTag(matchedRule.getTargetTag().trim(), request);
+                    if (StringUtils.hasText(matchedTag)) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("[TrafficFilter] 入站请求通过动态流量规则成功染色: tag={}, ruleId={}, uri={}",
+                                    matchedTag, matchedRule.getId(), request.getRequestURI());
+                        }
+                        return TrafficContext.of(matchedTag, null, matchedRule.getId());
                     }
-                    return TrafficContext.of(matchedTag, null, matchedRule.getId());
+                    return null;
                 }
             }
         }

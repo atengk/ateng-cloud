@@ -7,7 +7,7 @@ import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,14 +20,14 @@ import org.springframework.core.env.Environment;
  * <p>
  * 遵循防御性自动装配契约：
  * 1. 条件守卫：必须在 Classpath 存在 NacosTemplate 与 ConfigService 且开启配置时生效；
- * 2. 顺序守卫：在基础流量装配类 AtengTrafficAutoConfiguration 之后装配；
+ * 2. 顺序守卫：在基础流量装配类 AtengTrafficAutoConfiguration 之前装配，确保动态规则引擎优先于本地静态兜底提供者注册；
  * 3. 缺省守卫：对外暴露 Bean 标配 @ConditionalOnMissingBean，支持下游应用随时平滑接管。
  *
  * @author Ateng
  * @since 2026-10-29
  */
 @AutoConfiguration
-@AutoConfigureAfter(AtengTrafficAutoConfiguration.class)
+@AutoConfigureBefore(AtengTrafficAutoConfiguration.class)
 @ConditionalOnClass({NacosTemplate.class, ConfigService.class})
 @ConditionalOnProperty(prefix = "ateng.cloud.traffic.nacos", name = "enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(AtengTrafficProperties.class)

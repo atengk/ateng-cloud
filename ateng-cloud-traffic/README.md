@@ -23,14 +23,15 @@
 | `TrafficTagServiceInstanceListSupplier` | 负载均衡供应商 | 灰度版本隔离第一层责任链，按 `metadata.tag` 精准过滤 | 支持全下线平滑降级（`fallbackToDefault`）与严格隔离阻断（`strictLane`） |
 | `StickyHashPartitioner` | 核心分发器 | 基于 MurmurHash3 的一致性哈希百分比分发器 | 支持单值比例放量与多版本 percentageRange [min, max) 互斥分桶切流，保障会话粘性 |
 | `TrafficRule` | 核心模型类 | 流量染色与金丝雀分流规则领域模型 | 支持多维谓词条件、percentage 单值切流与 percentageRange 互斥区间分桶 |
-| `TrafficPredicateMatcher` | 核心匹配器 | 无 SpEL 纳秒级轻量字段谓词匹配引擎 | 支持 EXACT、IN、PREFIX、SUFFIX、CONTAINS、REGEX（内建正则预编译 LRU 缓存） |
-| `TrafficRuleMatcher` | 核心决策器 | 流量分流规则综合判定决策引擎 | 结合谓词匹配器与哈希分发器对入站请求进行标签判定 |
+| `TrafficPredicateMatcher` | 核心匹配器 | 无 SpEL 纳秒级轻量字段谓词匹配引擎 | 支持 EXACT、NOT_EXACT、IN、NOT_IN、PREFIX、SUFFIX、CONTAINS、REGEX（内建 `ReentrantLock` 守护的 256 容量 LRU 预编译缓存） |
+| `TrafficRuleMatcher` | 核心决策器 | 流量分流规则综合判定决策引擎 | 结合谓词匹配器与 100 桶哈希分发器对入站请求进行标签判定 |
 | `TrafficRuleProvider` | 扩展点 SPI | 流量分流生效规则统一提取提供者 SPI 契约 | 标配 `@ConditionalOnMissingBean`，支持下游通过 SPI 或测试桩平滑接管 |
-| `NacosTrafficRuleListener` | 规则监听器 | Nacos 应用专属与全局流量规则双级动态监听器 | 基于 `AtomicReference` 零锁原子热替换，具备非法 JSON 防御与脱网离线自洽 |
+| `PropertiesTrafficRuleProvider` | 本地规则提供者 | 基于 `ateng.cloud.traffic.rules` 的静态分流规则缺省实现 | 当未启用 Nacos 或未自定义 `TrafficRuleProvider` Bean 时自动装配兜底 |
+| `NacosTrafficRuleListener` | 规则监听器 | Nacos 应用/全局动态监听与三级规则消解引擎 | 基于 `AtomicReference` 零锁热替换，支持 `appRules -> globalRules -> localRules` 三级消解与脱网本地兜底 |
 | `TrafficContextSnapshotProvider` | 上下文快照器 | 受管异步线程池上下文快照提供者 | 注册至 `ateng-boot-core` 的 `AsyncContextSnapshotProvider` SPI |
 | `TrafficTag` | 声明式注解 | 方法/类级声明式流量染色与泳道绑定注解 | 支持静态标签与 `${...}` 占位符，支持 override 继承控制 |
 | `TrafficTagAspect` | 核心切面类 | 声明式流量染色 AOP 环绕拦截与确定性恢复切面 | 当 Classpath 存在 ProceedingJoinPoint 时激活，出口 `finally` 100% 还原上下文 |
-| `AtengTrafficEnvironmentPostProcessor` | 环境后置处理器 | 预设缓存时效至 3s 并解耦 Nacos 默认客户端 Supplier | 注册于 `META-INF/spring.factories`，挂载至最低优先级确保业务显式声明优先 |
+| `AtengTrafficEnvironmentPostProcessor` | 环境后置处理器 | 预设缓存时效至 3s 并解耦 Nacos 默认客户端 Supplier | 按 Spring Boot 3.3 规范仅于 `spring.factories` 注册 `EnvironmentPostProcessor`，`@AutoConfiguration` 严格收敛于 `AutoConfiguration.imports` |
 | `TrafficResultCode` | 强类型错误码 | 统一定义流量治理业务错误码（区段 4210~4219） | 实现 `IResultCode`，定义 4210 `STRICT_LANE_BLOCK`、4211 `TRAFFIC_ROUTING_ERROR`、4212 `UNAUTHORIZED_TRAFFIC_TAG` |
 | `TrafficRoutingException` | 业务异常 | 金融级严格泳道强隔离未命中灰度实例时抛出 | 继承自 `BusinessException`，携带服务名与未命中灰度标签 |
 | `TrafficEndpoint` | Actuator 端点 | `/actuator/traffic` 全景状态查询与模拟沙箱端点 | GET 查询只读全景状态，POST `/simulate` 纳秒级无副作用沙箱模拟演练 |
@@ -50,15 +51,16 @@
 | `ateng.cloud.traffic.lane-continuity` | `boolean` | `true` | 是否开启跨跳泳道穿透保持语义（中间节点降级后，下游节点依然优先重回灰度泳道） |
 | `ateng.cloud.traffic.filter-order` | `int` | `HIGHEST_PRECEDENCE + 50` | 入站流量染色过滤器执行顺序（位于链路追踪 Filter 之后） |
 | `ateng.cloud.traffic.cache-ttl` | `Duration` | `3s` | 客户端负载均衡本地实例缓存收敛时效（消除灰度切流时的盲区） |
-| `ateng.cloud.traffic.allowed-tags` | `Set<String>` | `[]` | 允许放行的合法流量染色标签白名单集合（为空表示不校验白名单，全量放行） |
+| `ateng.cloud.traffic.allowed-tags` | `Set<String>` | `[]` | 允许放行的合法流量染色标签白名单集合（为空表示不校验白名单；非空时对 Header/Query 与动态规则 `targetTag` 统一校验） |
 | `ateng.cloud.traffic.whitelist-action` | `TrafficWhitelistAction` | `STRIP` | 未授权流量染色标签的安全处置策略：`STRIP`（安全剥离降级至基线）、`REJECT`（抛出 4212 业务异常直接阻断） |
-| `ateng.cloud.traffic.actuator.enabled` | `boolean` | `true` | 是否启用 `/actuator/traffic` 运维诊断端点与沙箱演练接口 |
+| `ateng.cloud.traffic.rules` | `List<TrafficRule>` | `[]` | 本地静态配置的流量分流规则列表（未启用 Nacos 时作为默认规则源，启用 Nacos 时作为三级兜底/合并源） |
+| `ateng.cloud.traffic.actuator.enabled` | `boolean` | `true` | 是否启用 `/actuator/traffic` 运维诊断端点（`rules` 快照含 `localRulesCount`）与沙箱演练接口 |
 | `ateng.cloud.traffic.nacos.enabled` | `boolean` | `true` | 是否启用 Nacos 动态流量分流规则监听 |
 | `ateng.cloud.traffic.nacos.group` | `String` | `"DEFAULT_GROUP"` | Nacos 动态规则配置分组 GroupId |
 | `ateng.cloud.traffic.nacos.global-data-id` | `String` | `"traffic-rules.json"` | 全局公共流量分流规则 DataId |
 | `ateng.cloud.traffic.nacos.app-data-id` | `String` | `null` | 应用专属流量分流规则 DataId（缺省时平滑回退至 `${spring.application.name}-traffic-rules.json`） |
-| `ateng.cloud.traffic.nacos.prefer-app-rule` | `boolean` | `true` | 是否优先加载应用专属规则（true 时若专属规则存在则优先应用，缺省时平滑回退至全局规则） |
-| `ateng.cloud.traffic.nacos.merge-strategy` | `TrafficRuleMergeStrategy` | `OVERWRITE` | 规则合并策略: `OVERWRITE` (应用规则覆盖全局规则), `MERGE` (应用规则与全局规则合并按优先级排序) |
+| `ateng.cloud.traffic.nacos.prefer-app-rule` | `boolean` | `true` | 是否优先加载应用专属规则（true 时若专属规则存在则优先应用，缺省时依次回退全局与本地静态规则） |
+| `ateng.cloud.traffic.nacos.merge-strategy` | `TrafficRuleMergeStrategy` | `OVERWRITE` | 规则合并策略: `OVERWRITE` (`appRules -> globalRules -> localRules` 三级瀑布覆盖), `MERGE` (三层规则合并按优先级升序排序) |
 
 ---
 

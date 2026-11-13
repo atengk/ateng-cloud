@@ -3,6 +3,7 @@ package io.github.atengk.cloud.traffic.filter;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
+import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.properties.TrafficWhitelistAction;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
@@ -464,5 +465,112 @@ class TrafficContextFilterTest {
 
         // 基线标签不触发 REJECT，上下文安全置空
         assertThat(tagInsideChain.get()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试动态规则白名单闭环：未授权 targetTag 在 STRIP 模式下剥离并递增 whitelist_stripped 指标")
+    void testDynamicRuleWhitelist_StripAndMetric() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2"));
+        properties.setWhitelistAction(TrafficWhitelistAction.STRIP);
+        TrafficMetricsManager metricsManager = new TrafficMetricsManager(null, null);
+
+        TrafficRule unauthorizedRule = TrafficRule.builder()
+                .id("rule-rogue-tag")
+                .priority(1)
+                .targetTag("forged-rule-tag")
+                .enabled(true)
+                .conditions(java.util.List.of(
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Client-Channel")
+                                .operator(TrafficMatchOperator.EXACT)
+                                .expectedValue("beta")
+                                .build()
+                ))
+                .build();
+        TrafficRuleProvider provider = () -> java.util.List.of(unauthorizedRule);
+        filter = new TrafficContextFilter(properties, new TrafficRuleMatcher(), provider, metricsManager);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        request.addHeader("X-Client-Channel", "beta");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicReference<String> tagInsideChain = new AtomicReference<>("init");
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                tagInsideChain.set(TrafficContextHolder.getTag());
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(tagInsideChain.get()).isNull();
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_WHITELIST_STRIPPED)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("测试动态规则白名单闭环：未授权 targetTag 在 REJECT 模式下阻断并返回 4212 及递增 whitelist_rejected 指标")
+    void testDynamicRuleWhitelist_RejectAndMetric() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2"));
+        properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+        TrafficMetricsManager metricsManager = new TrafficMetricsManager(null, null);
+
+        TrafficRule unauthorizedRule = TrafficRule.builder()
+                .id("rule-rogue-reject")
+                .priority(1)
+                .targetTag("forged-rule-tag")
+                .enabled(true)
+                .build();
+        TrafficRuleProvider provider = () -> java.util.List.of(unauthorizedRule);
+        filter = new TrafficContextFilter(properties, new TrafficRuleMatcher(), provider, metricsManager);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        MockFilterChain filterChain = new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                chainCalled.set(true);
+            }
+        };
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(chainCalled.get()).isFalse();
+        assertThat(response.getContentAsString()).contains("4212").contains("forged-rule-tag");
+        assertThat(metricsManager.getStatusCount(TrafficMetricsManager.STATUS_WHITELIST_REJECTED)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("测试动态规则白名单闭环：基线语义 targetTag (default/baseline/none) 归一化为 null 且不触发 REJECT")
+    void testDynamicRuleWhitelist_BaselineNormalization() throws ServletException, IOException {
+        properties.setAllowedTags(Set.of("v2"));
+        properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+
+        for (String baselineTag : java.util.List.of("default", "baseline", "none")) {
+            TrafficRule baselineRule = TrafficRule.builder()
+                    .id("rule-baseline-" + baselineTag)
+                    .priority(1)
+                    .targetTag(baselineTag)
+                    .enabled(true)
+                    .build();
+            TrafficRuleProvider provider = () -> java.util.List.of(baselineRule);
+            filter = new TrafficContextFilter(properties, new TrafficRuleMatcher(), provider);
+
+            MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            AtomicReference<String> tagInsideChain = new AtomicReference<>("init");
+            MockFilterChain filterChain = new MockFilterChain() {
+                @Override
+                public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                    tagInsideChain.set(TrafficContextHolder.getTag());
+                }
+            };
+
+            filter.doFilter(request, response, filterChain);
+
+            assertThat(tagInsideChain.get()).isNull();
+        }
     }
 }

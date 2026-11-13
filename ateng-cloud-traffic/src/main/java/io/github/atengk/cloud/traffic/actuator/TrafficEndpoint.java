@@ -100,6 +100,11 @@ public class TrafficEndpoint {
         rulesSnapshot.put("activeRulesCount", activeRules != null ? activeRules.size() : 0);
         rulesSnapshot.put("activeRules", activeRules != null ? activeRules : Collections.emptyList());
 
+        int localRulesCount = ruleProvider instanceof NacosTrafficRuleListener nacosListenerForLocal
+                ? nacosListenerForLocal.getLocalRules().size()
+                : properties.resolveLocalRules().size();
+        rulesSnapshot.put("localRulesCount", localRulesCount);
+
         if (ruleProvider instanceof NacosTrafficRuleListener nacosListener) {
             Map<String, Object> nacosSnapshot = new LinkedHashMap<>();
             nacosSnapshot.put("strategy", nacosListener.getStrategy() != null ? nacosListener.getStrategy().name() : "OVERWRITE");

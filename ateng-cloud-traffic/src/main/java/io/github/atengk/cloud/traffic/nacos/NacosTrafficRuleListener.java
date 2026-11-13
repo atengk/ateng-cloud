@@ -86,7 +86,8 @@ public class NacosTrafficRuleListener implements TrafficRuleProvider, Initializi
 
         NacosTemplate nacosTemplate = nacosTemplateProvider.getIfAvailable();
         if (nacosTemplate == null || !nacosTemplate.isConfigAvailable()) {
-            log.warn("[TrafficNacos] Nacos 配置中心不可用或未启用，流量分流规则监听平滑降级为离线纯静态模式 (Hermetic Offline Mode)");
+            log.warn("[TrafficNacos] Nacos 配置中心不可用或未启用，流量分流规则监听平滑降级为本地静态规则兜底模式 (Hermetic Offline Mode)");
+            recomputeActiveRules();
             return;
         }
 
@@ -94,7 +95,8 @@ public class NacosTrafficRuleListener implements TrafficRuleProvider, Initializi
             initListeners(nacosTemplate);
             initialized.set(true);
         } catch (Exception ex) {
-            log.warn("[TrafficNacos] 初始化 Nacos 流量分流规则监听器失败，平滑降级 [cause={}]", ex.getMessage(), ex);
+            log.warn("[TrafficNacos] 初始化 Nacos 流量分流规则监听器失败，平滑降级为本地静态规则兜底 [cause={}]", ex.getMessage(), ex);
+            recomputeActiveRules();
         }
     }
 
@@ -232,27 +234,41 @@ public class NacosTrafficRuleListener implements TrafficRuleProvider, Initializi
 
         List<TrafficRule> currentAppRules = appRules.get();
         List<TrafficRule> currentGlobalRules = globalRules.get();
+        List<TrafficRule> currentLocalRules = getLocalRules();
 
         List<TrafficRule> merged;
         if (mergeStrategy == TrafficRuleMergeStrategy.MERGE) {
-            // 合并应用规则与全局规则并按优先级升序排序
-            List<TrafficRule> combined = new ArrayList<>(currentAppRules.size() + currentGlobalRules.size());
+            // 合并应用规则、全局规则与本地静态规则并按优先级升序排序 (同优先级保留 app -> global -> local 顺序)
+            List<TrafficRule> combined = new ArrayList<>(
+                    currentAppRules.size() + currentGlobalRules.size() + currentLocalRules.size());
             combined.addAll(currentAppRules);
             combined.addAll(currentGlobalRules);
+            combined.addAll(currentLocalRules);
             combined.sort(Comparator.comparingInt(TrafficRule::getPriority));
             merged = Collections.unmodifiableList(combined);
         } else {
-            // 默认 OVERWRITE: 优先应用专属规则，存在专属规则即采用；若专属规则为空则回退至全局规则
+            // 默认 OVERWRITE: 三级回退链 appRules -> globalRules -> localRules
             if (preferAppRule && !currentAppRules.isEmpty()) {
                 merged = Collections.unmodifiableList(new ArrayList<>(currentAppRules));
-            } else {
+            } else if (!currentGlobalRules.isEmpty()) {
                 merged = Collections.unmodifiableList(new ArrayList<>(currentGlobalRules));
+            } else {
+                merged = currentLocalRules;
             }
         }
 
         activeRules.set(merged);
-        log.info("[TrafficNacos] 流量分流生效规则已无锁原子热更新 [activeRulesCount={}, preferApp={}, strategy={}]",
-                merged.size(), preferAppRule, mergeStrategy);
+        log.info("[TrafficNacos] 流量分流生效规则已无锁原子热更新 [activeRulesCount={}, appRulesCount={}, globalRulesCount={}, localRulesCount={}, preferApp={}, strategy={}]",
+                merged.size(), currentAppRules.size(), currentGlobalRules.size(), currentLocalRules.size(), preferAppRule, mergeStrategy);
+    }
+
+    /**
+     * 获取本地静态配置的三级兜底流量规则快照
+     *
+     * @return 本地静态配置规则列表 (永不为 null)
+     */
+    public List<TrafficRule> getLocalRules() {
+        return properties.resolveLocalRules();
     }
 
     @Override

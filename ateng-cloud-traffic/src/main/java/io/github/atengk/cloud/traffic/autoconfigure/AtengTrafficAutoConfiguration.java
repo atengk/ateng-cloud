@@ -11,12 +11,14 @@ import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
 import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
+import io.github.atengk.cloud.traffic.rule.provider.PropertiesTrafficRuleProvider;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -34,6 +36,7 @@ import org.springframework.core.env.Environment;
  * @since 2026-10-29
  */
 @AutoConfiguration
+@AutoConfigureAfter(AtengTrafficNacosAutoConfiguration.class)
 @EnableConfigurationProperties(AtengTrafficProperties.class)
 @ConditionalOnProperty(prefix = TrafficConstants.PROPERTIES_PREFIX, name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AtengTrafficAutoConfiguration {
@@ -150,6 +153,18 @@ public class AtengTrafficAutoConfiguration {
     @ConditionalOnClass(ProceedingJoinPoint.class)
     public TrafficTagAspect trafficTagAspect(Environment environment) {
         return new TrafficTagAspect(environment);
+    }
+
+    /**
+     * 注册基于本地配置属性的静态流量规则兜底提供者 (当未启用 Nacos 或未自定义提供者时生效)
+     *
+     * @param properties 流量治理配置属性
+     * @return PropertiesTrafficRuleProvider
+     */
+    @Bean
+    @ConditionalOnMissingBean(TrafficRuleProvider.class)
+    public PropertiesTrafficRuleProvider propertiesTrafficRuleProvider(AtengTrafficProperties properties) {
+        return new PropertiesTrafficRuleProvider(properties);
     }
 
     /**

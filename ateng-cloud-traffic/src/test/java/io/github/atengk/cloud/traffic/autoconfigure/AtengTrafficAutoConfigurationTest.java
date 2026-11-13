@@ -7,6 +7,8 @@ import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.rule.hash.StickyHashPartitioner;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
+import io.github.atengk.cloud.traffic.rule.provider.PropertiesTrafficRuleProvider;
+import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -41,6 +43,8 @@ class AtengTrafficAutoConfigurationTest {
             assertThat(context).hasSingleBean(TrafficRuleMatcher.class);
             assertThat(context).hasSingleBean(TrafficMetricsManager.class);
             assertThat(context).hasSingleBean(TrafficEndpoint.class);
+            assertThat(context).hasSingleBean(TrafficRuleProvider.class);
+            assertThat(context).hasSingleBean(PropertiesTrafficRuleProvider.class);
             assertThat(context).doesNotHaveBean(FilterRegistrationBean.class);
         });
     }
@@ -92,6 +96,24 @@ class AtengTrafficAutoConfigurationTest {
                 .withClassLoader(new org.springframework.boot.test.context.FilteredClassLoader(io.micrometer.core.instrument.MeterRegistry.class))
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(TrafficMetricsManager.class);
+                });
+    }
+
+    @Test
+    @DisplayName("测试通过 ateng.cloud.traffic.rules 绑定本地静态规则并自动注入 PropertiesTrafficRuleProvider")
+    void testPropertiesTrafficRuleProviderBinding() {
+        nonWebRunner
+                .withPropertyValues(
+                        "ateng.cloud.traffic.rules[0].id=local-canary",
+                        "ateng.cloud.traffic.rules[0].priority=5",
+                        "ateng.cloud.traffic.rules[0].target-tag=v2"
+                )
+                .run(context -> {
+                    assertThat(context).hasSingleBean(PropertiesTrafficRuleProvider.class);
+                    TrafficRuleProvider provider = context.getBean(TrafficRuleProvider.class);
+                    assertThat(provider.getRules()).hasSize(1);
+                    assertThat(provider.getRules().get(0).getId()).isEqualTo("local-canary");
+                    assertThat(provider.getRules().get(0).getTargetTag()).isEqualTo("v2");
                 });
     }
 }

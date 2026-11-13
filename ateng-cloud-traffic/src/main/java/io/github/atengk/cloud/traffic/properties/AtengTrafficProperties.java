@@ -1,12 +1,16 @@
 package io.github.atengk.cloud.traffic.properties;
 
 import io.github.atengk.cloud.traffic.constant.TrafficConstants;
+import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.core.Ordered;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -73,6 +77,12 @@ public class AtengTrafficProperties {
      */
     @NestedConfigurationProperty
     private TrafficNacosProperties nacos = new TrafficNacosProperties();
+
+    /**
+     * 本地静态配置的流量分流规则列表 (Hierarchical Rule Resolution 第三级本地兜底源)
+     */
+    @NestedConfigurationProperty
+    private List<TrafficRule> rules = new ArrayList<>();
 
     /**
      * Actuator 诊断与沙箱端点配置
@@ -166,6 +176,32 @@ public class AtengTrafficProperties {
 
     public void setNacos(TrafficNacosProperties nacos) {
         this.nacos = nacos;
+    }
+
+    public List<TrafficRule> getRules() {
+        return rules;
+    }
+
+    public void setRules(List<TrafficRule> rules) {
+        this.rules = rules != null ? new ArrayList<>(rules) : new ArrayList<>();
+    }
+
+    /**
+     * 解析本地静态分流规则列表，统一过滤空元素并返回不可变只读视图
+     *
+     * @return 不可变本地静态规则列表 (永不为 null)
+     */
+    public List<TrafficRule> resolveLocalRules() {
+        if (rules == null || rules.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<TrafficRule> sanitized = new ArrayList<>(rules.size());
+        for (TrafficRule rule : rules) {
+            if (rule != null) {
+                sanitized.add(rule);
+            }
+        }
+        return sanitized.isEmpty() ? Collections.emptyList() : Collections.unmodifiableList(sanitized);
     }
 
     public TrafficActuatorProperties getActuator() {

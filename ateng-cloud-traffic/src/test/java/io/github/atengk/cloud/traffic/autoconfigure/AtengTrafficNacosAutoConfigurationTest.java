@@ -2,6 +2,8 @@ package io.github.atengk.cloud.traffic.autoconfigure;
 
 import io.github.atengk.cloud.nacos.template.NacosTemplate;
 import io.github.atengk.cloud.traffic.nacos.NacosTrafficRuleListener;
+import io.github.atengk.cloud.traffic.rule.provider.PropertiesTrafficRuleProvider;
+import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -33,11 +35,13 @@ class AtengTrafficNacosAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(AtengTrafficNacosAutoConfiguration.class);
                     assertThat(context).hasSingleBean(NacosTrafficRuleListener.class);
+                    assertThat(context).hasSingleBean(TrafficRuleProvider.class);
+                    assertThat(context).doesNotHaveBean(PropertiesTrafficRuleProvider.class);
                 });
     }
 
     @Test
-    @DisplayName("配置 ateng.cloud.traffic.nacos.enabled=false 时装配类条件跳过")
+    @DisplayName("配置 ateng.cloud.traffic.nacos.enabled=false 时装配类条件跳过并自动回退至 PropertiesTrafficRuleProvider")
     void testDisabledConfiguration() {
         NacosTemplate mockNacosTemplate = mock(NacosTemplate.class);
         contextRunner
@@ -46,6 +50,8 @@ class AtengTrafficNacosAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(AtengTrafficNacosAutoConfiguration.class);
                     assertThat(context).doesNotHaveBean(NacosTrafficRuleListener.class);
+                    assertThat(context).hasSingleBean(PropertiesTrafficRuleProvider.class);
+                    assertThat(context).hasSingleBean(TrafficRuleProvider.class);
                 });
     }
 

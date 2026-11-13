@@ -219,4 +219,83 @@ class NacosTrafficRuleListenerTest {
         verify(nacosTemplate).removeConfigListener(eq("order-service-traffic-rules.json"), eq("DEFAULT_GROUP"), any(Listener.class));
         verify(nacosTemplate).removeConfigListener(eq("traffic-rules.json"), eq("DEFAULT_GROUP"), any(Listener.class));
     }
+
+    @Test
+    @DisplayName("离线降级时从 ateng.cloud.traffic.rules 激活第三级本地静态兜底规则")
+    void testOfflineFallbackLoadsLocalRules() {
+        TrafficRule localRule = TrafficRule.builder()
+                .id("local-fallback")
+                .priority(100)
+                .targetTag("local-v2")
+                .build();
+        properties.setRules(List.of(localRule));
+        when(nacosTemplateProvider.getIfAvailable()).thenReturn(nacosTemplate);
+        when(nacosTemplate.isConfigAvailable()).thenReturn(false);
+
+        NacosTrafficRuleListener listener = new NacosTrafficRuleListener(nacosTemplateProvider, properties, environment);
+        listener.afterPropertiesSet();
+
+        assertThat(listener.getLocalRules()).hasSize(1);
+        assertThat(listener.getRules()).extracting(TrafficRule::getId).containsExactly("local-fallback");
+        assertThat(listener.getRules().get(0).getTargetTag()).isEqualTo("local-v2");
+    }
+
+    @Test
+    @DisplayName("OVERWRITE 三级回退链：appRules -> globalRules -> localRules 逐级兜底与恢复")
+    void testOverwriteThreeTierResolution() {
+        TrafficRule localRule = TrafficRule.builder().id("local-r").priority(30).targetTag("local-tag").build();
+        TrafficRule globalRule = TrafficRule.builder().id("global-r").priority(20).targetTag("global-tag").build();
+        TrafficRule appRule = TrafficRule.builder().id("app-r").priority(10).targetTag("app-tag").build();
+        properties.setRules(List.of(localRule));
+
+        when(nacosTemplateProvider.getIfAvailable()).thenReturn(nacosTemplate);
+        when(nacosTemplate.isConfigAvailable()).thenReturn(true);
+        when(nacosTemplate.findConfig(anyString(), anyString())).thenReturn(Optional.empty());
+
+        NacosTrafficRuleListener listener = new NacosTrafficRuleListener(nacosTemplateProvider, properties, environment);
+        listener.afterPropertiesSet();
+
+        // 1. Nacos 双空 -> 兜底至 localRules
+        assertThat(listener.getRules()).extracting(TrafficRule::getId).containsExactly("local-r");
+
+        // 2. Global 上线 -> 覆盖 localRules
+        listener.receiveGlobalConfig(JsonUtil.toJsonString(List.of(globalRule)));
+        assertThat(listener.getRules()).extracting(TrafficRule::getId).containsExactly("global-r");
+
+        // 3. App 上线 -> 覆盖 globalRules
+        listener.receiveAppConfig(JsonUtil.toJsonString(List.of(appRule)));
+        assertThat(listener.getRules()).extracting(TrafficRule::getId).containsExactly("app-r");
+
+        // 4. App 与 Global 依次清空 -> 依次回退至 localRules
+        listener.receiveAppConfig("[]");
+        assertThat(listener.getRules()).extracting(TrafficRule::getId).containsExactly("global-r");
+        listener.receiveGlobalConfig("[]");
+        assertThat(listener.getRules()).extracting(TrafficRule::getId).containsExactly("local-r");
+    }
+
+    @Test
+    @DisplayName("MERGE 三级合并策略：聚合 app/global/local 按 priority 升序，同优先级保持 app -> global -> local")
+    void testMergeThreeTierOrderingAndTieBreaking() {
+        properties.getNacos().setMergeStrategy(TrafficRuleMergeStrategy.MERGE);
+
+        TrafficRule localTie = TrafficRule.builder().id("local-tie").priority(10).targetTag("t-local").build();
+        TrafficRule localFirst = TrafficRule.builder().id("local-first").priority(1).targetTag("t-local-1").build();
+        TrafficRule globalTie = TrafficRule.builder().id("global-tie").priority(10).targetTag("t-global").build();
+        TrafficRule appTie = TrafficRule.builder().id("app-tie").priority(10).targetTag("t-app").build();
+        properties.setRules(List.of(localTie, localFirst));
+
+        when(nacosTemplateProvider.getIfAvailable()).thenReturn(nacosTemplate);
+        when(nacosTemplate.isConfigAvailable()).thenReturn(true);
+        when(nacosTemplate.findConfig(anyString(), anyString())).thenReturn(Optional.empty());
+
+        NacosTrafficRuleListener listener = new NacosTrafficRuleListener(nacosTemplateProvider, properties, environment);
+        listener.afterPropertiesSet();
+
+        listener.receiveAppConfig(JsonUtil.toJsonString(List.of(appTie)));
+        listener.receiveGlobalConfig(JsonUtil.toJsonString(List.of(globalTie)));
+
+        assertThat(listener.getRules())
+                .extracting(TrafficRule::getId)
+                .containsExactly("local-first", "app-tie", "global-tie", "local-tie");
+    }
 }
