@@ -12,7 +12,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.servlet.HandlerMapping;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -181,6 +183,7 @@ public class AtengUrlCleaner implements UrlCleaner {
 
     private void validateCustomReplacement(Pattern pattern, String replacement) {
         int groupCount = pattern.matcher("").groupCount();
+        Set<String> namedGroups = extractNamedGroups(pattern.pattern());
         for (int i = 0; i < replacement.length(); i++) {
             char ch = replacement.charAt(i);
             if (ch == '\\') {
@@ -204,7 +207,7 @@ public class AtengUrlCleaner implements UrlCleaner {
                         throw new IllegalArgumentException("Unclosed named group reference in custom url-clean replacement: " + replacement);
                     }
                     String groupName = replacement.substring(i + 2, endIdx);
-                    if (!pattern.namedGroups().containsKey(groupName)) {
+                    if (!namedGroups.contains(groupName)) {
                         throw new IllegalArgumentException("No named capturing group '" + groupName + "' for custom url-clean replacement: " + replacement);
                     }
                     i = endIdx;
@@ -213,6 +216,64 @@ public class AtengUrlCleaner implements UrlCleaner {
                 }
             }
         }
+    }
+
+    /**
+     * 基于 JDK 17 兼容语法从正则源码提取已声明的命名捕获组 {@code (?<name>...)}，避免依赖 JDK 20+ {@code Pattern.namedGroups()}
+     */
+    private static Set<String> extractNamedGroups(String regex) {
+        Set<String> names = new HashSet<>();
+        boolean inCharClass = false;
+        for (int i = 0; i < regex.length(); i++) {
+            char ch = regex.charAt(i);
+            if (ch == '\\') {
+                if (i + 1 < regex.length() && regex.charAt(i + 1) == 'Q') {
+                    int endQuote = regex.indexOf("\\E", i + 2);
+                    i = endQuote >= 0 ? endQuote + 1 : regex.length() - 1;
+                } else {
+                    i++;
+                }
+                continue;
+            }
+            if (inCharClass) {
+                if (ch == ']') {
+                    inCharClass = false;
+                }
+                continue;
+            }
+            if (ch == '[') {
+                inCharClass = true;
+                if (i + 1 < regex.length() && regex.charAt(i + 1) == '^') {
+                    i++;
+                }
+                if (i + 1 < regex.length() && regex.charAt(i + 1) == ']') {
+                    i++;
+                }
+                continue;
+            }
+            if (ch == '(' && i + 3 < regex.length() && regex.charAt(i + 1) == '?' && regex.charAt(i + 2) == '<') {
+                char first = regex.charAt(i + 3);
+                if (isAsciiAlpha(first)) {
+                    int end = i + 4;
+                    while (end < regex.length() && isAsciiAlphaNumeric(regex.charAt(end))) {
+                        end++;
+                    }
+                    if (end < regex.length() && regex.charAt(end) == '>') {
+                        names.add(regex.substring(i + 3, end));
+                        i = end;
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    private static boolean isAsciiAlpha(char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+    }
+
+    private static boolean isAsciiAlphaNumeric(char ch) {
+        return isAsciiAlpha(ch) || (ch >= '0' && ch <= '9');
     }
 
     /**

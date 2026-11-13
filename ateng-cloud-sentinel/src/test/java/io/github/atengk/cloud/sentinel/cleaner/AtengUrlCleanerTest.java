@@ -199,6 +199,13 @@ class AtengUrlCleanerTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         properties.getUrlClean().setCustomPatterns(List.of(
+                new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/(?<ver>v\\d+)/PAY-[0-9]+", "/${missing}")
+        ));
+        assertThatThrownBy(() -> new AtengUrlCleaner(properties))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("missing");
+
+        properties.getUrlClean().setCustomPatterns(List.of(
                 new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/v/\\d+", "/bad\\")
         ));
         assertThatThrownBy(() -> new AtengUrlCleaner(properties))
@@ -208,15 +215,19 @@ class AtengUrlCleanerTest {
         AtengSentinelProperties validProps = new AtengSentinelProperties();
         AtengSentinelProperties.UrlCleanProperties.CustomPattern validCapture =
                 new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/v(\\d+)/PAY-[0-9]+", "/v$1/{pay}");
+        AtengSentinelProperties.UrlCleanProperties.CustomPattern validNamedCapture =
+                new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/(?<ver>v\\d+)/ORD-[0-9]+", "/${ver}/{ord}");
         AtengSentinelProperties.UrlCleanProperties.CustomPattern nullReplacement =
                 new AtengSentinelProperties.UrlCleanProperties.CustomPattern("/temp", null);
         AtengSentinelProperties.UrlCleanProperties.CustomPattern blankPattern =
                 new AtengSentinelProperties.UrlCleanProperties.CustomPattern("   ", "/ignored");
-        validProps.getUrlClean().setCustomPatterns(java.util.Arrays.asList(null, blankPattern, validCapture, nullReplacement));
+        validProps.getUrlClean().setCustomPatterns(java.util.Arrays.asList(
+                null, blankPattern, validCapture, validNamedCapture, nullReplacement));
         validProps.getUrlClean().setHexReplacement("$hex");
 
         AtengUrlCleaner safeCleaner = new AtengUrlCleaner(validProps);
         assertThat(safeCleaner.clean("/v2/PAY-1001")).isEqualTo("/v2/{pay}");
+        assertThat(safeCleaner.clean("/v3/ORD-2026")).isEqualTo("/v3/{ord}");
         assertThat(safeCleaner.clean("/temp/items/100")).isEqualTo("/items/{id}");
 
         // 4. 含 {x} 混合路径仍被内置正则收敛 (不旁路防爆) 且 $ 占位符不会触发 IllegalArgumentException
