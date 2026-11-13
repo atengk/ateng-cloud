@@ -33,7 +33,7 @@
 | `TrafficClientHttpRequestInterceptor` | 同步出站拦截器 | `RestTemplate` 与 Spring 6 `RestClient` 共享出站请求头透传拦截器 | 开启 `lane-continuity=true` 时自动注入当前 `tag`，不覆盖调用方显式有效标头 |
 | `TrafficExchangeFilterFunction` | 响应式出站拦截器 | `WebClient` 跨调度器线程出站流量染色透传过滤器 | 优先经 `Mono.deferContextual` 读取 `TrafficContext`，兜底 `TrafficContextHolder` |
 | `TrafficFeignRequestInterceptor` | Feign 拦截器 | OpenFeign 出站流量染色标头透传拦截器 | 独立引入 Feign 时激活，最高优先级透传有效标签并清洗脏值 |
-| `TrafficTagServiceInstanceListSupplier` | 负载均衡过滤器 | 三层复合调度第一层，按 `metadata.tag` 精准过滤灰度实例 | 支持平滑降级（`fallbackToDefault`）与全局/服务/标签多粒度强隔离（`4210`） |
+| `TrafficTagServiceInstanceListSupplier` | LoadBalancer 调度器 | 三层复合调度第一层，按 `metadata.tag` 精准过滤灰度实例 | 支持平滑降级（`fallbackToDefault`）与全局/服务/标签多粒度强隔离（`4210`） |
 | `TrafficTag` | 声明式注解 | 方法/类级声明式流量染色与泳道绑定注解 | 支持静态文本与 `${...}` 占位符及 `override` 继承控制 |
 | `TrafficTagAspect` | 声明式切面类 | `@TrafficTag` AOP 环绕拦截与 `finally` 确定性上下文还原 | 仅解析字面量与 `${...}` 占位符，严禁 SpEL 以防 RCE |
 | `TrafficEvaluationContext` | 评估上下文接口 | 规则评估抽象视图与 `resolveUserId`/`TenantId`/`ClientIp` 公共辅助 | 统一屏蔽 Servlet 与 Reactive 底层请求对象差异 |
@@ -317,20 +317,20 @@ public interface InventoryFeignClient {
 @GetMapping("/feign-dispatch")
 public Result<OrderFulfillmentVO> feignDispatch(
         @RequestParam(value = "orderNo", required = false) String orderNo) {
+    String effectiveOrderNo = TrafficDownstreamClientSupport.normalizeOrderNo(orderNo, "ORD-20261103-FEIGN");
     String currentTag = TrafficContextHolder.getTag();
-    String currentUserId = UserContextHolder.getUserId();
-    String currentTenantId = TenantContextHolder.getTenantId();
 
     log.info("[FeignDispatch] 收到声明式 Feign 订单调度请求 [orderNo='{}', tag='{}', userId='{}', tenantId='{}']",
-            orderNo, currentTag, currentUserId, currentTenantId);
+            effectiveOrderNo, currentTag, UserContextHolder.getUserId(), TenantContextHolder.getTenantId());
 
-    String effectiveOrderNo = (orderNo != null && !orderNo.isBlank()) ? orderNo : "ORD-20261103-FEIGN";
     OrderFulfillmentVO vo;
     if (inventoryFeignClient != null) {
         Result<OrderFulfillmentVO> result = inventoryFeignClient.processOrder(effectiveOrderNo, null, null);
-        vo = (result != null && result.getData() != null) ? result.getData() : new OrderFulfillmentVO();
+        vo = (result != null && result.getData() != null)
+                ? result.getData()
+                : TrafficDownstreamClientSupport.buildEmptyFulfillmentVO(currentTag, effectiveOrderNo);
     } else {
-        vo = new OrderFulfillmentVO();
+        vo = TrafficDownstreamClientSupport.buildEmptyFulfillmentVO(currentTag, effectiveOrderNo);
     }
     vo.prependVisitedNode("FeignGateway[tag=" + (currentTag != null ? currentTag : "none") + "]");
     if (vo.getOrderNo() == null) {
@@ -1052,7 +1052,7 @@ ateng:
 | 9 | `testOrderDispatchUserIdPredicateMatching` | 根据 `X-User-Id` 谓词规则匹配实现 VIP 用户精准分流与基线隔离 |
 | 10 | `testOrderDispatchNacosRuleHotReload` | Nacos 动态流量分流规则秒级原子热更与回退验证 |
 | 11 | `testOrderDispatchSuffixAndContainsPredicateRouting` | 零分配 `SUFFIX` 与 `CONTAINS` 谓词规则匹配切流 |
-| 12 | `testPolicyDeclarativeTagAspect` | 声明式 `@TrafficTag("v2")` 注解绑定泳道并触发跨跳穿透与出口还原 |
+| 12 | `testPolicyDeclarativeTagAspect` | 声明式 `@TrafficTag("v2")` 注解绑定泳道并触发跨跳泳道穿透与出口还原 |
 | 13 | `testPolicyWhitelistDefense` | 应用层外部标签白名单防线（`STRIP` 剥离清洗与 `REJECT` 4212 阻断） |
 | 14 | `testPolicyStrictLaneIsolationFailFast` | 全局严格泳道强隔离阻断（未命中灰度返回 `4210` `STRICT_LANE_BLOCK`） |
 | 15 | `testPolicyGranularStrictLaneByServiceAndTag` | 按服务名（`strict-lane-services`）与按标签（`strict-lane-tags`）细粒度严格泳道隔离 |

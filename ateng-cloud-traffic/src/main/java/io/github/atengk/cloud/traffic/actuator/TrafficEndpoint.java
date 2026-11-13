@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.traffic.actuator;
 
 import io.github.atengk.boot.core.util.JsonUtil;
+import io.github.atengk.cloud.traffic.filter.TrafficInboundTagResolver;
 import io.github.atengk.cloud.traffic.metrics.TrafficMetricsManager;
 import io.github.atengk.cloud.traffic.nacos.NacosTrafficRuleListener;
 import io.github.atengk.cloud.traffic.properties.AtengTrafficProperties;
@@ -252,10 +253,14 @@ public class TrafficEndpoint {
                 result.put("hashBucket", bucket);
             }
 
-            // 白名单状态预测
+            // 白名单状态预测（与 TrafficInboundTagResolver 基线保留字归一化语义完全对齐）
+            String rawTargetTag = matchedRule.getTargetTag();
+            String trimmedTargetTag = rawTargetTag != null ? rawTargetTag.trim() : null;
             Set<String> allowedTags = properties.getAllowedTags();
             if (allowedTags != null && !allowedTags.isEmpty()) {
-                boolean allowed = allowedTags.contains(matchedRule.getTargetTag());
+                boolean allowed = !StringUtils.hasText(trimmedTargetTag)
+                        || TrafficInboundTagResolver.isBaselineTag(trimmedTargetTag)
+                        || allowedTags.contains(trimmedTargetTag);
                 result.put("whitelistAllowed", allowed);
                 result.put("whitelistAction", properties.getWhitelistAction().name());
             } else {

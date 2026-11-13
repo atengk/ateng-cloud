@@ -11,6 +11,7 @@ import io.github.atengk.cloud.traffic.rule.matcher.TrafficPredicateMatcher;
 import io.github.atengk.cloud.traffic.rule.matcher.TrafficRuleMatcher;
 import io.github.atengk.cloud.traffic.rule.provider.PropertiesTrafficRuleProvider;
 import io.github.atengk.cloud.traffic.rule.provider.TrafficRuleProvider;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -42,6 +43,11 @@ class AtengTrafficAutoConfigurationTest {
 
     private final WebApplicationContextRunner servletRunner = new WebApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(AtengTrafficAutoConfiguration.class));
+
+    @AfterEach
+    void tearDown() {
+        TrafficContextHolder.clear();
+    }
 
     @Test
     @DisplayName("测试非 Web 环境下装配核心基础设施")

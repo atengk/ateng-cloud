@@ -182,9 +182,15 @@ public final class TrafficInboundTagResolver {
         return null;
     }
 
-    private static boolean isBaselineTag(String tag) {
-        return TrafficConstants.DEFAULT_TAG.equalsIgnoreCase(tag)
+    /**
+     * 判断给定流量标签是否为内置基线保留字（{@code default}、{@code baseline}、{@code none}）
+     *
+     * @param tag 流量标签
+     * @return 为基线保留字时返回 {@code true}
+     */
+    public static boolean isBaselineTag(String tag) {
+        return tag != null && (TrafficConstants.DEFAULT_TAG.equalsIgnoreCase(tag)
                 || TrafficConstants.TAG_BASELINE.equalsIgnoreCase(tag)
-                || TrafficConstants.TAG_NONE.equalsIgnoreCase(tag);
+                || TrafficConstants.TAG_NONE.equalsIgnoreCase(tag));
     }
 }

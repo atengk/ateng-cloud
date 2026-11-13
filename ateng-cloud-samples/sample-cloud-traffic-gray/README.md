@@ -31,7 +31,7 @@ mvn spring-boot:run -pl ateng-cloud-samples/sample-cloud-traffic-gray -Dspring-b
 | 功能场景 | 核心代码锚点 | 请求方式与路由 | 快速体验 cURL 命令 |
 | :--- | :--- | :--- | :--- |
 | **电商订单调度（普通基线）** | `TrafficOrderDispatchController#dispatchOrder` | `GET /sample/cloud/traffic/order/dispatch?orderNo={no}` | `curl "http://localhost:8080/sample/cloud/traffic/order/dispatch?orderNo=ORD-1001"` |
-| **静态 Header 染色与跨跳穿透** | `TrafficOrderDispatchController#dispatchOrder` | `GET /sample/cloud/traffic/order/dispatch?orderNo={no}` | `curl -H "X-Traffic-Tag: v2" "http://localhost:8080/sample/cloud/traffic/order/dispatch?orderNo=ORD-1002"` |
+| **静态 Header 染色与跨跳泳道穿透** | `TrafficOrderDispatchController#dispatchOrder` | `GET /sample/cloud/traffic/order/dispatch?orderNo={no}` | `curl -H "X-Traffic-Tag: v2" "http://localhost:8080/sample/cloud/traffic/order/dispatch?orderNo=ORD-1002"` |
 | **URL Query 参数染色透传** | `TrafficOrderDispatchController#dispatchOrder` | `GET /sample/cloud/traffic/order/dispatch?traffic_tag=v2&orderNo={no}` | `curl "http://localhost:8080/sample/cloud/traffic/order/dispatch?traffic_tag=v2&orderNo=ORD-1003"` |
 | **Spring 6 `RestClient` 灰度透传** | `TrafficOrderDispatchController#restClientDispatch` | `GET /sample/cloud/traffic/order/restclient-dispatch?orderNo={no}` | `curl -H "X-Traffic-Tag: v2" "http://localhost:8080/sample/cloud/traffic/order/restclient-dispatch?orderNo=ORD-RC-2001"` |
 | **OpenFeign 跨微服务出站透传** | `TrafficOrderDispatchController#feignDispatch` | `GET /sample/cloud/traffic/order/feign-dispatch?orderNo={no}` | `curl -H "X-Traffic-Tag: v2" "http://localhost:8080/sample/cloud/traffic/order/feign-dispatch?orderNo=ORD-FEIGN-001"` |

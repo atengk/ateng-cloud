@@ -231,6 +231,33 @@ class TrafficEndpointTest {
     }
 
     @Test
+    @DisplayName("测试模拟沙箱：动态规则目标为基线保留字时与运行时归一化对齐放行")
+    void testSimulate_BaselineTargetTagNormalizedWithWhitelist() {
+        properties.setAllowedTags(Set.of("v2"));
+        properties.setWhitelistAction(TrafficWhitelistAction.REJECT);
+
+        TrafficRule baselineRule = TrafficRule.builder()
+                .id("rule-force-baseline")
+                .targetTag("baseline")
+                .priority(1)
+                .enabled(true)
+                .build();
+        TrafficRuleProvider provider = () -> List.of(baselineRule);
+
+        TrafficEndpoint endpoint = new TrafficEndpoint(
+                properties, provider, ruleMatcher, stickyHashPartitioner, predicateMatcher, metricsManager, environment
+        );
+
+        Map<String, Object> result = endpoint.simulate(
+                null, null, null, "/api/orders", "user-10086", null, null
+        );
+
+        assertThat(result.get("matched")).isEqualTo(true);
+        assertThat(result.get("targetTag")).isEqualTo("baseline");
+        assertThat(result.get("whitelistAllowed")).isEqualTo(true);
+    }
+
+    @Test
     @DisplayName("测试 simulateWithAction 路径指令参数校验")
     void testSimulateWithAction() {
         TrafficEndpoint endpoint = new TrafficEndpoint(
