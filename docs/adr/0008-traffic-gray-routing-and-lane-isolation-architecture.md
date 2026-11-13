@@ -47,7 +47,10 @@
    - 支持通过 `override = true/false` 控制覆盖与继承语义；出口 `finally` 块 100% 还原上级上下文。
 8. **多金丝雀版本分桶切流与区间放量 (Multi-Canary Partitioning & Range Slicing)**：
    - 规则模型扩展 `percentageRange: [min, max)` 半开区间，与 MurmurHash3 100 桶基准深度协同，无侵入支持多灰度分支互斥放量与并行验证；向后兼容单值 `percentage`；对越界非法范围执行解析级防御隔离。
-9. **全景可观测性端点与内外部纵深防伪白名单 (Observability & Defense-in-Depth Whitelist Guard)**：
+9. **双栈物理隔离评估与全客户端东西向透传 (Dual-Stack Evaluation & Universal Client Propagation)**：
+   - **Servlet 阻塞栈**：自动装配 `TrafficContextFilter`、`RestTemplateCustomizer` 与 Spring 6 `RestClientCustomizer`（复用 `TrafficClientHttpRequestInterceptor`），以及按需独立装配并在 `ateng-cloud-feign` 存在时平滑让位的 `TrafficFeignRequestInterceptor`；
+   - **WebFlux 响应式栈（编译期 `optional` 物理隔离）**：在 `ConditionalOnWebApplication.Type.REACTIVE` 下通过 `AtengTrafficReactiveAutoConfiguration` 独立装配 `ReactiveTrafficContextWebFilter`（适配 `ReactiveTrafficEvaluationContext`）与 `WebClientCustomizer`（`TrafficExchangeFilterFunction`），复用无栈 `TrafficInboundTagResolver` 并通过 Mutated `ServerHttpRequest` Header 与 Reactor `Context` 双通道对称透传流量标签，严守 ADR-0006 零 Servlet 污染铁律。
+10. **全景可观测性端点与内外部纵深防伪白名单 (Observability & Defense-in-Depth Whitelist Guard)**：
     - 提供 `/actuator/traffic` 端点展示当前内存生效规则快照（含 Nacos 应用/全局与本地静态规则统计），并提供 POST `/actuator/traffic/simulate` 纳秒级无副作用沙箱匹配接口；
     - 接入 Micrometer 多维状态度量指标（`ateng.cloud.traffic.requests.total`、`ateng.cloud.traffic.rules.active`）；
     - 引入 `allowed-tags` 白名单机制与 `STRIP | REJECT` 处置策略，对外部入站 Header/Query 及动态规则产出的 `targetTag` 执行统一纵深校验，构筑应用层防伪造与防误配安全屏障。

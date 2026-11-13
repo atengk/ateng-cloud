@@ -11,14 +11,17 @@
 | 类 / 接口 | 类型 | 核心职责 | 默认行为 / 装配条件 |
 | :--- | :--- | :--- | :--- |
 | `AtengTrafficAutoConfiguration` | 自动装配类 | 全链路流量治理与灰度调度自动装配总入口 | 当配置 `ateng.cloud.traffic.enabled=true` 时激活 |
+| `AtengTrafficReactiveAutoConfiguration` | 自动装配类 | WebFlux 响应式过滤器与 `WebClientCustomizer` 自动装配 | 仅在 `REACTIVE` 环境且 Classpath 存在 WebFilter/WebClient 时激活，与 Servlet 物理隔离 |
 | `AtengTrafficLoadBalancerAutoConfiguration` | 自动装配类 | Spring Cloud LoadBalancer 复合责任链自动装配 | 在 `AtengNacosLoadBalancerAutoConfiguration` 之前装配并注入默认配置 |
 | `AtengTrafficLoadBalancerClientConfiguration` | 客户端配置类 | 子上下文三层责任链构建器（Tag ➔ Zone ➔ Warmup） | 标配 `@Primary`，支持根据 `cache.enabled` 动态启闭缓存 |
 | `AtengTrafficNacosAutoConfiguration` | 自动装配类 | Nacos 动态流量分流规则双级监听器自动装配 | 当 Classpath 存在 Nacos 且 `ateng.cloud.traffic.nacos.enabled=true` 时激活 |
 | `AtengTrafficFeignAutoConfiguration` | 自动装配类 | Feign 出站流量染色拦截器独立自动装配 | 当 Classpath 存在 `RequestInterceptor` 且缺失全量 Feign 拦截器时激活 |
 | `TrafficContextHolder` | 核心门面类 | 流量染色与泳道状态线程上下文持有者 | 双向联动 TTL 与 MDC，具备 MDC 兜底平滑回填与确定性清理 |
 | `TrafficContext` | 不可变模型 | 强类型流量染色上下文值对象 | 封装流量标签 `tag` 与毫秒级创建时间戳 |
-| `TrafficContextFilter` | 核心过滤器 | 入站 HTTP 流量染色提取与 `finally` 幂等清理 | 注册为 `FilterRegistrationBean`，延迟从 `TrafficRuleProvider` 获取动态规则 |
+| `TrafficContextFilter` | 核心过滤器 | Servlet 入站 HTTP 流量染色提取与 `finally` 幂等清理 | 注册为 `FilterRegistrationBean`，延迟从 `TrafficRuleProvider` 获取动态规则 |
+| `ReactiveTrafficContextWebFilter` | 响应式过滤器 | WebFlux 入站流量染色提取、白名单防护与双通道绑定 | 仅在 `REACTIVE` 环境激活，注入 `ServerHttpRequest` Header 与 Reactor `Context`（与 Servlet 物理隔离） |
 | `TrafficClientHttpRequestInterceptor` | 核心拦截器 | 出站 RestTemplate / RestClient 请求头流量染色自动注入 | 当开启 `lane-continuity=true` 时自动透传当前流量标签，不覆盖调用方显式有效标头 |
+| `TrafficExchangeFilterFunction` | 响应式拦截器 | WebClient 跨调度线程出站流量染色自动注入 | 经由 `trafficWebClientCustomizer` 装配，优先从 Reactor `Context` 提取并兜底 `TrafficContextHolder` |
 | `TrafficFeignRequestInterceptor` | 核心拦截器 | 出站 Feign 请求头流量染色标头注入 | 独立引入 Feign 时激活，最高优先级透传当前流量标签并清洗脏值 |
 | `TrafficTagServiceInstanceListSupplier` | 负载均衡供应商 | 灰度版本隔离第一层责任链，按 `metadata.tag` 精准过滤 | 支持全下线平滑降级（`fallbackToDefault`）与严格隔离阻断（`strictLane`） |
 | `StickyHashPartitioner` | 核心分发器 | 基于 MurmurHash3 的一致性哈希百分比分发器 | 支持单值比例放量与多版本 percentageRange [min, max) 互斥分桶切流，保障会话粘性 |

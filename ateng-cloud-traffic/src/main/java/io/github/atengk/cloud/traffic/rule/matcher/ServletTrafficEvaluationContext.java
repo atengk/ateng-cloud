@@ -1,7 +1,5 @@
 package io.github.atengk.cloud.traffic.rule.matcher;
 
-import io.github.atengk.boot.core.context.TenantContextHolder;
-import io.github.atengk.boot.core.context.UserContextHolder;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -62,34 +60,16 @@ public class ServletTrafficEvaluationContext implements TrafficEvaluationContext
 
     @Override
     public String getUserId() {
-        String uid = UserContextHolder.getUserId();
-        if (uid != null && !uid.isBlank()) {
-            return uid;
-        }
-        if (request != null) {
-            String headerUid = request.getHeader("X-User-Id");
-            if (headerUid != null && !headerUid.isBlank()) {
-                return headerUid.trim();
-            }
-            return request.getParameter("userId");
-        }
-        return null;
+        return TrafficEvaluationContext.resolveUserId(
+                request != null ? request.getHeader("X-User-Id") : null,
+                request != null ? request.getParameter("userId") : null);
     }
 
     @Override
     public String getTenantId() {
-        String tid = TenantContextHolder.getTenantId();
-        if (tid != null && !tid.isBlank()) {
-            return tid;
-        }
-        if (request != null) {
-            String headerTid = request.getHeader("X-Tenant-Id");
-            if (headerTid != null && !headerTid.isBlank()) {
-                return headerTid.trim();
-            }
-            return request.getParameter("tenantId");
-        }
-        return null;
+        return TrafficEvaluationContext.resolveTenantId(
+                request != null ? request.getHeader("X-Tenant-Id") : null,
+                request != null ? request.getParameter("tenantId") : null);
     }
 
     @Override
@@ -97,15 +77,9 @@ public class ServletTrafficEvaluationContext implements TrafficEvaluationContext
         if (request == null) {
             return null;
         }
-        String xForwardedFor = request.getHeader("X-Forwarded-For");
-        if (xForwardedFor != null && !xForwardedFor.isBlank() && !"unknown".equalsIgnoreCase(xForwardedFor)) {
-            int index = xForwardedFor.indexOf(',');
-            return index != -1 ? xForwardedFor.substring(0, index).trim() : xForwardedFor.trim();
-        }
-        String xRealIp = request.getHeader("X-Real-IP");
-        if (xRealIp != null && !xRealIp.isBlank() && !"unknown".equalsIgnoreCase(xRealIp)) {
-            return xRealIp.trim();
-        }
-        return request.getRemoteAddr();
+        return TrafficEvaluationContext.resolveClientIp(
+                request.getHeader("X-Forwarded-For"),
+                request.getHeader("X-Real-IP"),
+                request.getRemoteAddr());
     }
 }

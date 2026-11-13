@@ -8,7 +8,7 @@
 - [Dubbo](./ateng-cloud-dubbo/CONTEXT.md) — 高性能 RPC 通信与治理、Triple/TCP 双核协议、四维上下文透传、双模契约校验与慢调用可观测性（[ADR-0005](./docs/adr/0005-dubbo-triple-context-propagation-and-contract-architecture.md)）
 - [Gateway](./ateng-cloud-gateway/CONTEXT.md) — WebFlux 纯响应式网关、Sa-Token 集中鉴权、零信任 Same-Token 签发、动态路由与文档聚合（[ADR-0006](./docs/adr/0006-gateway-reactive-architecture-and-zero-trust-defense.md)）
 - [Sentinel](./ateng-cloud-sentinel/CONTEXT.md) — 流量防卫、熔断降级、受管降级工厂、Web 异常追踪桥接、路径防爆清洗、多维调用溯源与 Nacos 5 大规则全家桶持久化及全景自省诊断（[ADR-0007](./docs/adr/0007-sentinel-traffic-defense-and-managed-fallback-architecture.md)）
-- [Traffic](./ateng-cloud-traffic/CONTEXT.md) — 全链路流量染色、多粒度泳道强隔离、三级规则消解、100 桶粘性切流、三层复合调度责任链与 Nacos 动态切流热更（[ADR-0008](./docs/adr/0008-traffic-gray-routing-and-lane-isolation-architecture.md)）
+- [Traffic](./ateng-cloud-traffic/CONTEXT.md) — 全链路流量染色、Servlet/WebFlux 双栈评估、多粒度泳道强隔离、三级规则消解、100 桶粘性切流、三层复合调度责任链与 Nacos 动态切流热更（[ADR-0008](./docs/adr/0008-traffic-gray-routing-and-lane-isolation-architecture.md)）
 - [Seata](./ateng-cloud-seata/CONTEXT.md) — 分布式事务增强、AT/TCC 双核驱动、TCC 防悬挂业务屏障、XID 全链路透传与假切源守卫协同（[ADR-0009](./docs/adr/0009-seata-distributed-transaction-and-tcc-fence-architecture.md)）
 - [All](./ateng-cloud-all/CONTEXT.md) — 通用微服务骨干构件聚合全家桶、响应式网关隔离与裁剪边界（[ADR-0010](./docs/adr/0010-microservice-all-in-one-smoke-test-and-ci-agile-matrix-architecture.md)）
 - [Samples](./ateng-cloud-samples/CONTEXT.md) — 1:1 真实微服务场景验证展厅（`sample-cloud-*`）、双模联调测试套件与全家桶冒烟工程（[ADR-0010](./docs/adr/0010-microservice-all-in-one-smoke-test-and-ci-agile-matrix-architecture.md)）

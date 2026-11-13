@@ -42,6 +42,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring WebFlux (编译期可选支持，用于响应式网关与 WebClient 流量染色评估，与 Servlet 栈物理隔离) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Spring AOP 声明式切面支持 (编译期可选支持，用于 @TrafficTag 注解切面) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

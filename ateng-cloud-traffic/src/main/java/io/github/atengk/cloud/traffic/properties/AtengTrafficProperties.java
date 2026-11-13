@@ -116,12 +116,34 @@ public class AtengTrafficProperties {
         this.headerName = headerName;
     }
 
+    /**
+     * 解析当前生效的流量染色 HTTP 请求头键名（缺省回退至标准常量 {@code X-Traffic-Tag}）
+     *
+     * @return 规范化后的请求头键名
+     */
+    public String resolveHeaderName() {
+        return headerName != null && !headerName.isBlank()
+                ? headerName.trim()
+                : TrafficConstants.HEADER_TRAFFIC_TAG;
+    }
+
     public String getParamName() {
         return paramName;
     }
 
     public void setParamName(String paramName) {
         this.paramName = paramName;
+    }
+
+    /**
+     * 解析当前生效的流量染色 URL Query 参数键名（缺省回退至标准常量 {@code traffic_tag}）
+     *
+     * @return 规范化后的查询参数键名
+     */
+    public String resolveParamName() {
+        return paramName != null && !paramName.isBlank()
+                ? paramName.trim()
+                : TrafficConstants.PARAM_TRAFFIC_TAG;
     }
 
     public boolean isFallbackToDefault() {

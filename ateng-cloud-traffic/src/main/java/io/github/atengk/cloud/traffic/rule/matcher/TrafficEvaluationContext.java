@@ -1,5 +1,8 @@
 package io.github.atengk.cloud.traffic.rule.matcher;
 
+import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
+
 /**
  * 流量规则评估请求上下文抽象契约
  * <p>
@@ -61,4 +64,59 @@ public interface TrafficEvaluationContext {
      * @return 客户端真实 IP
      */
     String getClientIp();
+
+    /**
+     * 统一解析当前用户 ID（优先业务上下文，次选 Header {@code X-User-Id}，最后回退 Query {@code userId}）
+     *
+     * @param headerUserId 请求头中的用户标识
+     * @param queryUserId  查询参数中的用户标识
+     * @return 规范化后的用户 ID，无则返回 null
+     */
+    static String resolveUserId(String headerUserId, String queryUserId) {
+        String uid = UserContextHolder.getUserId();
+        if (uid != null && !uid.isBlank()) {
+            return uid;
+        }
+        if (headerUserId != null && !headerUserId.isBlank()) {
+            return headerUserId.trim();
+        }
+        return queryUserId;
+    }
+
+    /**
+     * 统一解析当前租户 ID（优先业务上下文，次选 Header {@code X-Tenant-Id}，最后回退 Query {@code tenantId}）
+     *
+     * @param headerTenantId 请求头中的租户标识
+     * @param queryTenantId  查询参数中的租户标识
+     * @return 规范化后的租户 ID，无则返回 null
+     */
+    static String resolveTenantId(String headerTenantId, String queryTenantId) {
+        String tid = TenantContextHolder.getTenantId();
+        if (tid != null && !tid.isBlank()) {
+            return tid;
+        }
+        if (headerTenantId != null && !headerTenantId.isBlank()) {
+            return headerTenantId.trim();
+        }
+        return queryTenantId;
+    }
+
+    /**
+     * 统一解析客户端真实 IP（按 {@code X-Forwarded-For} 首个非 unknown 节点 ➔ {@code X-Real-IP} ➔ 远端直连地址顺序解析）
+     *
+     * @param xForwardedFor {@code X-Forwarded-For} 请求头值
+     * @param xRealIp       {@code X-Real-IP} 请求头值
+     * @param remoteAddress 底层网络连接远端地址
+     * @return 客户端 IP，无法解析返回 null
+     */
+    static String resolveClientIp(String xForwardedFor, String xRealIp, String remoteAddress) {
+        if (xForwardedFor != null && !xForwardedFor.isBlank() && !"unknown".equalsIgnoreCase(xForwardedFor)) {
+            int index = xForwardedFor.indexOf(',');
+            return index != -1 ? xForwardedFor.substring(0, index).trim() : xForwardedFor.trim();
+        }
+        if (xRealIp != null && !xRealIp.isBlank() && !"unknown".equalsIgnoreCase(xRealIp)) {
+            return xRealIp.trim();
+        }
+        return remoteAddress;
+    }
 }
