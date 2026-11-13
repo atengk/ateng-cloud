@@ -3,8 +3,12 @@ package io.github.atengk.cloud.traffic.autoconfigure;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.support.SpringFactoriesLoader;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -40,5 +44,18 @@ class AtengTrafficEnvironmentPostProcessorTest {
         } finally {
             environment.getSystemProperties().remove("ateng.cloud.traffic.cache-ttl");
         }
+    }
+
+    @Test
+    @DisplayName("测试通过 spring.factories 注册 EnvironmentPostProcessor 且未混入 EnableAutoConfiguration")
+    void testRegisteredViaSpringFactoriesWithoutAutoConfiguration() {
+        ClassLoader cl = AtengTrafficEnvironmentPostProcessor.class.getClassLoader();
+        List<String> envProcessors = SpringFactoriesLoader.loadFactoryNames(EnvironmentPostProcessor.class, cl);
+        assertThat(envProcessors).contains(AtengTrafficEnvironmentPostProcessor.class.getName());
+
+        List<String> legacyAutoConfigs = SpringFactoriesLoader.loadFactoryNames(
+                org.springframework.boot.autoconfigure.EnableAutoConfiguration.class, cl);
+        assertThat(legacyAutoConfigs)
+                .noneMatch(name -> name.startsWith("io.github.atengk.cloud.traffic."));
     }
 }

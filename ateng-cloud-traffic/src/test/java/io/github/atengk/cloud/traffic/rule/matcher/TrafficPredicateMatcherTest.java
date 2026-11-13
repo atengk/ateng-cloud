@@ -6,7 +6,12 @@ import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -211,5 +216,132 @@ class TrafficPredicateMatcherTest {
                 .expectedValue(null)
                 .build();
         assertThat(matcher.matches(nullContains, "test")).isFalse();
+    }
+
+    @Test
+    @DisplayName("NOT_EXACT 反向精确匹配测试 (含 null 字段排除语义与大小写控制)")
+    void testNotExactMatch() {
+        TrafficCondition caseSensitive = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.NOT_EXACT)
+                .expectedValue("crawler")
+                .caseSensitive(true)
+                .build();
+
+        assertThat(matcher.matches(caseSensitive, "crawler")).isFalse();
+        assertThat(matcher.matches(caseSensitive, "Crawler")).isTrue();
+        assertThat(matcher.matches(caseSensitive, "browser")).isTrue();
+        // 未携带字段（null）视为不等于非空排除目标
+        assertThat(matcher.matches(caseSensitive, null)).isTrue();
+
+        TrafficCondition caseInsensitive = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.NOT_EXACT)
+                .expectedValue("crawler")
+                .caseSensitive(false)
+                .build();
+
+        assertThat(matcher.matches(caseInsensitive, "CRAWLER")).isFalse();
+        assertThat(matcher.matches(caseInsensitive, "browser")).isTrue();
+        assertThat(matcher.matches(caseInsensitive, null)).isTrue();
+
+        TrafficCondition nullExpected = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.NOT_EXACT)
+                .expectedValue(null)
+                .build();
+        assertThat(matcher.matches(nullExpected, null)).isFalse();
+        assertThat(matcher.matches(nullExpected, "present")).isTrue();
+    }
+
+    @Test
+    @DisplayName("NOT_IN 反向集合排除匹配测试 (列表模式、逗号模式与 null 字段语义)")
+    void testNotInMatch() {
+        TrafficCondition listCondition = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.NOT_IN)
+                .expectedValues(List.of("bot", "crawler"))
+                .caseSensitive(true)
+                .build();
+
+        assertThat(matcher.matches(listCondition, "bot")).isFalse();
+        assertThat(matcher.matches(listCondition, "crawler")).isFalse();
+        assertThat(matcher.matches(listCondition, "BOT")).isTrue();
+        assertThat(matcher.matches(listCondition, "app")).isTrue();
+        assertThat(matcher.matches(listCondition, null)).isTrue();
+
+        TrafficCondition commaCondition = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.NOT_IN)
+                .expectedValue("INTERNAL, QA , STAGING")
+                .caseSensitive(false)
+                .build();
+
+        assertThat(matcher.matches(commaCondition, "internal")).isFalse();
+        assertThat(matcher.matches(commaCondition, "qa")).isFalse();
+        assertThat(commaCondition.getExpectedValue()).contains("STAGING");
+        assertThat(matcher.matches(commaCondition, "prod")).isTrue();
+        assertThat(matcher.matches(commaCondition, null)).isTrue();
+    }
+
+    @Test
+    @DisplayName("REGEX 有界 LRU 缓存淘汰与并发安全测试 (容量上限 256)")
+    void testRegexBoundedLruCache() throws Exception {
+        TrafficPredicateMatcher lruMatcher = new TrafficPredicateMatcher();
+        int capacity = TrafficPredicateMatcher.MAX_PATTERN_CACHE_SIZE;
+        assertThat(capacity).isEqualTo(256);
+
+        // 1. 填充至上限 256 个不同正则
+        for (int i = 0; i < capacity; i++) {
+            TrafficCondition cond = TrafficCondition.builder()
+                    .operator(TrafficMatchOperator.REGEX)
+                    .expectedValue("^pattern_" + i + "$")
+                    .build();
+            assertThat(lruMatcher.matches(cond, "pattern_" + i)).isTrue();
+        }
+        assertThat(lruMatcher.getPatternCacheSize()).isEqualTo(capacity);
+
+        // 2. 再次访问最早插入的 pattern_0，使其跃升为最近使用 (MRU)
+        TrafficCondition pattern0 = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.REGEX)
+                .expectedValue("^pattern_0$")
+                .build();
+        assertThat(lruMatcher.matches(pattern0, "pattern_0")).isTrue();
+
+        // 3. 插入第 257 个正则，应精准淘汰最久未访问的 pattern_1，而保留 pattern_0
+        TrafficCondition extra = TrafficCondition.builder()
+                .operator(TrafficMatchOperator.REGEX)
+                .expectedValue("^pattern_extra$")
+                .build();
+        assertThat(lruMatcher.matches(extra, "pattern_extra")).isTrue();
+
+        assertThat(lruMatcher.getPatternCacheSize()).isEqualTo(capacity);
+        assertThat(lruMatcher.isPatternCached("^pattern_1$", true)).isFalse();
+        assertThat(lruMatcher.isPatternCached("^pattern_0$", true)).isTrue();
+        assertThat(lruMatcher.isPatternCached("^pattern_extra$", true)).isTrue();
+
+        // 4. 并发访问写入 500 个正则验证 ReentrantLock 守护零异常与严格容量上界
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        try {
+            for (int t = 0; t < 4; t++) {
+                final int threadId = t;
+                futures.add(pool.submit(() -> {
+                    startLatch.await();
+                    for (int i = 0; i < 150; i++) {
+                        String regex = "^concurrent_" + threadId + "_" + i + "$";
+                        TrafficCondition c = TrafficCondition.builder()
+                                .operator(TrafficMatchOperator.REGEX)
+                                .expectedValue(regex)
+                                .build();
+                        assertThat(lruMatcher.matches(c, "concurrent_" + threadId + "_" + i)).isTrue();
+                    }
+                    return null;
+                }));
+            }
+            startLatch.countDown();
+            for (Future<?> f : futures) {
+                f.get();
+            }
+            assertThat(lruMatcher.getPatternCacheSize()).isLessThanOrEqualTo(capacity);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 }

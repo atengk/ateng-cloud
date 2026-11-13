@@ -14,9 +14,19 @@ public enum TrafficMatchOperator {
     EXACT,
 
     /**
+     * 反向精确匹配 (不等于指定值；当实际值为 null 且期望值非 null 时判定为 true)
+     */
+    NOT_EXACT,
+
+    /**
      * 集合包含匹配 (实际值在指定集合或逗号分隔列表中)
      */
     IN,
+
+    /**
+     * 反向集合排除匹配 (实际值不在指定集合或逗号分隔列表中；当实际值为 null 时判定为 true)
+     */
+    NOT_IN,
 
     /**
      * 前缀匹配 (实际值以指定字符串开头)

@@ -22,9 +22,9 @@ public class StickyHashPartitioner {
     private static final int DEFAULT_SEED = 0;
 
     /**
-     * 默认基准哈希桶数量 (10000 桶，对应 0.01% 粒度)
+     * 默认基准哈希桶数量 (统一 100 桶: 0 ~ 99，与 percentageRange [min, max) 数学完全等价)
      */
-    private static final int SCALE = 10000;
+    private static final int SCALE = 100;
 
     private final int seed;
 
@@ -39,12 +39,24 @@ public class StickyHashPartitioner {
     /**
      * 判定给定哈希种子键是否命中指定的整型百分比切流 (0 ~ 100)
      *
+     * <p>基于统一 100 桶（0 ~ 99）离散基准计算，与 {@link #isHitRange(String, int, int)} 的 {@code [0, percentage)}
+     * 及 {@link #partition(String) partition(hashKey) < percentage} 严格数学等价，确保单值放量平滑演进为区间分桶时零横跳。</p>
+     *
      * @param hashKey    哈希种子键 (如 userId, IP 等)
      * @param percentage 百分比 (0 ~ 100)
      * @return true 表示命中灰度放量，false 表示未命中走基线
      */
     public boolean isHit(String hashKey, int percentage) {
-        return isHit(hashKey, (double) percentage);
+        if (hashKey == null || hashKey.isBlank()) {
+            return false;
+        }
+        if (percentage <= 0) {
+            return false;
+        }
+        if (percentage >= 100) {
+            return true;
+        }
+        return isHitRange(hashKey, 0, percentage);
     }
 
     /**
@@ -55,20 +67,19 @@ public class StickyHashPartitioner {
      * @return true 表示命中灰度放量，false 表示未命中走基线
      */
     public boolean isHit(String hashKey, double percentage) {
+        if (hashKey == null || hashKey.isBlank()) {
+            return false;
+        }
         if (percentage <= 0.0) {
             return false;
         }
         if (percentage >= 100.0) {
             return true;
         }
-        if (hashKey == null || hashKey.isBlank()) {
-            return false;
-        }
 
-        // 计算 0 ~ 9999 的均匀离散桶号
+        // 基于统一 100 桶（0 ~ 99）离散基准判定
         int bucket = calculateBucket(hashKey, SCALE);
-        long threshold = Math.round(percentage * (SCALE / 100.0));
-        return bucket < threshold;
+        return bucket < percentage;
     }
 
     /**
@@ -103,7 +114,7 @@ public class StickyHashPartitioner {
         if (hashKey == null || hashKey.isBlank()) {
             return false;
         }
-        int bucket = calculateBucket(hashKey, 100);
+        int bucket = calculateBucket(hashKey, SCALE);
         return bucket >= min && bucket < max;
     }
 
@@ -114,7 +125,7 @@ public class StickyHashPartitioner {
      * @return 落在的百分比分桶号 (0 ~ 99)
      */
     public int partition(String hashKey) {
-        return calculateBucket(hashKey, 100);
+        return calculateBucket(hashKey, SCALE);
     }
 
     /**

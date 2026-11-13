@@ -747,9 +747,10 @@ class SampleCloudTrafficIntegrationTest {
     }
 
     /**
-     * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫)
+     * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫，仅非 local Profile 激活)
      */
     @TestConfiguration
+    @org.springframework.context.annotation.Profile("!local")
     static class OfflineMockConfig {
 
         @Bean

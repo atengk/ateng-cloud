@@ -5,18 +5,18 @@ import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
  * 纳秒级高性能多维谓词轻量匹配器
  * <p>
- * 支持 EXACT、IN、PREFIX、REGEX 纯原生匹配，坚决杜绝引入 SpEL 等重量级脚本引擎以保障极速判定与执行安全。
+ * 支持 EXACT、NOT_EXACT、IN、NOT_IN、PREFIX、SUFFIX、CONTAINS、REGEX（内建有界 LRU 预编译缓存）纯原生匹配，
+ * 坚决杜绝引入 SpEL 等重量级脚本引擎以保障极速判定与执行安全。
  *
  * @author Ateng
  * @since 2026-10-29
@@ -26,14 +26,24 @@ public class TrafficPredicateMatcher {
     private static final Logger log = LoggerFactory.getLogger(TrafficPredicateMatcher.class);
 
     /**
-     * 预编译正则表达式缓存容量上限 (防御规则热更或动态正则导致的内存泄漏)
+     * 预编译正则表达式 LRU 缓存容量上限 (防御规则热更或动态正则导致的内存泄漏)
      */
-    private static final int MAX_PATTERN_CACHE_SIZE = 1024;
+    static final int MAX_PATTERN_CACHE_SIZE = 256;
 
     /**
-     * 正则表达式编译缓存: key = pattern:caseSensitive
+     * 守护有界 LRU 正则缓存的互斥锁 (使用 ReentrantLock 替代 synchronized，杜绝虚拟线程 Carrier Pinning)
      */
-    private final ConcurrentMap<String, Pattern> patternCache = new ConcurrentHashMap<>();
+    private final ReentrantLock cacheLock = new ReentrantLock();
+
+    /**
+     * 正则表达式有界 LRU 编译缓存: key = pattern:caseSensitive
+     */
+    private final Map<String, Pattern> patternCache = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Pattern> eldest) {
+            return size() > MAX_PATTERN_CACHE_SIZE;
+        }
+    };
 
     /**
      * 执行单条件谓词匹配判断
@@ -54,7 +64,9 @@ public class TrafficPredicateMatcher {
 
         return switch (operator) {
             case EXACT -> matchExact(condition, actualValue);
+            case NOT_EXACT -> !matchExact(condition, actualValue);
             case IN -> matchIn(condition, actualValue);
+            case NOT_IN -> !matchIn(condition, actualValue);
             case PREFIX -> matchPrefix(condition, actualValue);
             case SUFFIX -> matchSuffix(condition, actualValue);
             case CONTAINS -> matchContains(condition, actualValue);
@@ -200,25 +212,61 @@ public class TrafficPredicateMatcher {
     }
 
     /**
-     * 从缓存获取或编译正则表达式
+     * 从 LRU 缓存获取或编译正则表达式
      */
     private Pattern getOrCreatePattern(String regex, boolean caseSensitive) {
-        String cacheKey = regex + ":" + caseSensitive;
-        Pattern pattern = patternCache.get(cacheKey);
-        if (pattern != null) {
-            return pattern;
+        String cacheKey = buildCacheKey(regex, caseSensitive);
+        cacheLock.lock();
+        try {
+            Pattern cached = patternCache.get(cacheKey);
+            if (cached != null) {
+                return cached;
+            }
+        } finally {
+            cacheLock.unlock();
         }
 
+        Pattern compiled;
         try {
             int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
-            Pattern compiled = Pattern.compile(regex, flags);
-            if (patternCache.size() < MAX_PATTERN_CACHE_SIZE) {
-                patternCache.putIfAbsent(cacheKey, compiled);
-            }
-            return compiled;
+            compiled = Pattern.compile(regex, flags);
         } catch (PatternSyntaxException e) {
             log.warn("[TrafficPredicateMatcher] 正则表达式语法非法，忽略该规则判定 [regex='{}', caseSensitive={}]", regex, caseSensitive);
             return null;
+        }
+
+        cacheLock.lock();
+        try {
+            Pattern existing = patternCache.get(cacheKey);
+            if (existing != null) {
+                return existing;
+            }
+            patternCache.put(cacheKey, compiled);
+            return compiled;
+        } finally {
+            cacheLock.unlock();
+        }
+    }
+
+    private static String buildCacheKey(String regex, boolean caseSensitive) {
+        return regex + ":" + caseSensitive;
+    }
+
+    int getPatternCacheSize() {
+        cacheLock.lock();
+        try {
+            return patternCache.size();
+        } finally {
+            cacheLock.unlock();
+        }
+    }
+
+    boolean isPatternCached(String regex, boolean caseSensitive) {
+        cacheLock.lock();
+        try {
+            return patternCache.containsKey(buildCacheKey(regex, caseSensitive));
+        } finally {
+            cacheLock.unlock();
         }
     }
 
@@ -226,6 +274,11 @@ public class TrafficPredicateMatcher {
      * 清理正则编译缓存
      */
     public void clearCache() {
-        patternCache.clear();
+        cacheLock.lock();
+        try {
+            patternCache.clear();
+        } finally {
+            cacheLock.unlock();
+        }
     }
 }

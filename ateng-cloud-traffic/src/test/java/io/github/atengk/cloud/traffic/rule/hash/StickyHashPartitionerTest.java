@@ -214,4 +214,34 @@ class StickyHashPartitionerTest {
             assertThat(partitioner.isHitRange(userId, 15, 35)).isEqualTo(firstResult);
         }
     }
+
+    @Test
+    @DisplayName("100 桶统一基准测试：isHit(key, N) 与 isHitRange(key, 0, N) 及 partition(key) < N 100% 数学等价")
+    void testSinglePercentageAndRangeEquivalence() {
+        int[] percentages = {0, 1, 10, 20, 33, 50, 75, 99, 100};
+        for (int pct : percentages) {
+            // 空与空白键等价性
+            assertThat(partitioner.isHit(null, pct)).isEqualTo(partitioner.isHitRange(null, 0, pct));
+            assertThat(partitioner.isHit("", pct)).isEqualTo(partitioner.isHitRange("", 0, pct));
+            assertThat(partitioner.isHit("  ", pct)).isEqualTo(partitioner.isHitRange("  ", 0, pct));
+
+            for (int i = 0; i < 1000; i++) {
+                String key = "equiv_user_" + i;
+                boolean singleHit = partitioner.isHit(key, pct);
+                boolean rangeHit = partitioner.isHitRange(key, 0, pct);
+                boolean bucketHit = partitioner.partition(key) < pct;
+                boolean doubleHit = partitioner.isHit(key, (double) pct);
+
+                assertThat(singleHit)
+                        .as("key=%s, pct=%d 时 isHit 必须与 isHitRange(0, %d) 一致", key, pct, pct)
+                        .isEqualTo(rangeHit);
+                assertThat(singleHit)
+                        .as("key=%s, pct=%d 时 isHit 必须与 partition < %d 一致", key, pct, pct)
+                        .isEqualTo(bucketHit);
+                assertThat(doubleHit)
+                        .as("key=%s, pct=%d 时 double 重载必须与 int 重载一致", key, pct)
+                        .isEqualTo(singleHit);
+            }
+        }
+    }
 }
