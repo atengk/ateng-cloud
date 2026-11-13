@@ -30,9 +30,10 @@
 | `SeataTenantLineHandlerWrapper` | 租户装饰器 | 租户处理器装饰器，动态放行内部事务日志表 | 拦截 `ignoreTable`，彻底杜绝多租户污染 `undo_log` 与防卫表 |
 | `SeataDynamicDataSourcePropertiesCustomizer` | 属性定制器 | 协同动态数据源开启原生 Seata 代理与事务模式 | 条件装配于 `DynamicDataSourceProperties` 存在时 |
 | `SeataDynamicDataSourceCoordinator` | 协同协调器 | 启动时自检物理连接池是否被 Seata 代理包装 | 条件装配于 `DynamicRoutingDataSource` 存在时 |
-| `SeataDynamicDatasourceGuard` | 切源守卫 | 协调全局分布式事务跨库切源与拦截本地假切源 | 默认开启，当存在全局 XID 时放行跨库合法切源 |
+| `SeataDynamicDatasourceGuard` | 切源守卫 | 协调全局分布式事务跨库切源与拦截本地单连接假切源 | 默认开启；活跃全局 XID/`@DSTransactional`/`REQUIRES_NEW` 放行，假切源默认抛出 `5105`（false 则输出 WARN） |
+| `SeataDynamicDatasourceGuardAspect` | 声明式切面 | 以 `Ordered.HIGHEST_PRECEDENCE` 优先级拦截 `@DS` 方法与类，先于切源压栈完成假切源校验 | 类路径存在 `DS` 与 `ProceedingJoinPoint` 且 `guard-enabled=true` 时装配 |
 | `SeataGlobalLockAspect` | 声明式切面 | 拦截 `@GlobalLock` 声明式全局行级排他锁 | 标配 `@ConditionalOnClass(GlobalLock.class)` |
-| `SeataGlobalLockTemplate` | 编程式模板 | 编程式高并发轻量全局排他锁防脏读执行模板 | 提供 `execute` 与 `executeWithRetry` 门面接口 |
+| `SeataGlobalLockTemplate` | 编程式模板 | 编程式高并发轻量全局排他锁防脏读执行模板 | 提供 `execute`、`executeWithRetry` 与 `executeWithoutResult` 门面接口 |
 | `GlobalLockCallback<T>` | 函数式接口 | 全局排他锁业务代码执行回调接口 | 抛出 `Throwable` 支持捕获受管业务异常 |
 | `TccFenceBarrier` | 业务防卫屏障 | TCC 两阶段防空回滚、防业务悬挂与幂等状态机 | 基于本地数据库日志表实现刚性原子防卫 |
 | `SeataTccFenceTemplate` | 编程式模板 | 编程式 TCC Fence 业务防卫执行模板 | 提供 `executePrepare`、`executeCommit`、`executeRollback` |
@@ -70,8 +71,8 @@
 | `ateng.cloud.seata.dynamic-datasource.enabled` | `boolean` | `true` | 是否开启 Baomidou dynamic-datasource 多数据源协同增强 |
 | `ateng.cloud.seata.dynamic-datasource.mode` | `String` | `"AT"` | 动态数据源 Seata 事务代理模式（支持 `AT` 或 `XA`，默认 `AT`） |
 | `ateng.cloud.seata.dynamic-datasource.auto-proxy` | `boolean` | `true` | 是否自动对 DynamicRoutingDataSource 中各物理连接池进行 Seata 代理包装 |
-| `ateng.cloud.seata.dynamic-datasource.guard-enabled` | `boolean` | `true` | 是否开启切源安全守卫协同（感知 Seata 全局分布式事务并放行合法跨库切源） |
-| `ateng.cloud.seata.dynamic-datasource.fail-on-false-switch` | `boolean` | `true` | 检测到 Spring 单连接假切源时是否抛出异常阻断执行（false 则降级为 warn 告警） |
+| `ateng.cloud.seata.dynamic-datasource.guard-enabled` | `boolean` | `true` | 是否开启假切源安全守卫与声明式 `@DS` 防卫切面 |
+| `ateng.cloud.seata.dynamic-datasource.fail-on-false-switch` | `boolean` | `true` | 检测到 Spring 单连接假切源时是否抛出 `5105` 异常阻断执行（`false` 则降级为 `WARN` 告警） |
 
 ---
 
@@ -83,6 +84,7 @@
 | `SEATA_LOCK_CONFLICT` | `5102` | `200 OK (Result) / 409` | 分布式全局行锁冲突：获取全局排他锁超时或竞争失败，避免脏写 |
 | `SEATA_TC_UNAVAILABLE` | `5103` | `200 OK (Result) / 503` | 分布式事务协调器 (TC) 不可达、网络断连或超时，刚性 Fail-Fast 阻断 |
 | `SEATA_DEGRADE_BLOCKED` | `5104` | `200 OK (Result) / 500` | 下游跨微服务调用触发熔断降级，全局活跃事务强制阻断原子回滚 |
+| `SEATA_FALSE_DATASOURCE_SWITCH` | `5105` | `200 OK (Result) / 409` | Spring 单连接本地事务非法跨库假切源阻断（防静默忽略切源造成串库） |
 | `TCC_FENCE_SUSPENDED` | `5110` | `200 OK (Result) / 409` | TCC 分支已被业务悬挂拦截：Cancel 先行到达并插旗阻断，延迟 Try 被拒绝 |
 | `TCC_FENCE_EMPTY_ROLLBACK` | `5111` | `200 OK (Result) / 200` | TCC 分支已被空回滚拦截：一阶段 Try 未曾执行，二阶段 Cancel 静默放行 |
 | `TCC_FENCE_DUPLICATE_CALL` | `5112` | `200 OK (Result) / 200` | TCC 分支重复调用已幂等放行：二阶段 Confirm 或 Cancel 重复调用安全返回 |
@@ -263,36 +265,54 @@ package io.github.atengk.cloud.sample.seata.controller;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.seata.model.dto.PurchaseOrderDTO;
 import io.github.atengk.cloud.sample.seata.model.vo.PurchaseOrderVO;
+import io.github.atengk.cloud.sample.seata.service.AccountService;
 import io.github.atengk.cloud.sample.seata.service.OrderService;
+import io.github.atengk.cloud.sample.seata.service.StorageService;
 import jakarta.validation.Valid;
 import org.apache.seata.core.context.RootContext;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Validated
 @RestController
 @RequestMapping("/sample/cloud/seata/purchase")
 public class SeataPurchaseOrderController {
 
     private final OrderService orderService;
+    private final StorageService storageService;
+    private final AccountService accountService;
 
-    public SeataPurchaseOrderController(OrderService orderService) {
+    public SeataPurchaseOrderController(OrderService orderService,
+                                        StorageService storageService,
+                                        AccountService accountService) {
         this.orderService = orderService;
+        this.storageService = storageService;
+        this.accountService = accountService;
     }
 
     @PostMapping("/submit")
-    public Result<PurchaseOrderVO> submitOrder(@Valid @RequestBody PurchaseOrderDTO dto) {
-        Long orderId = orderService.createOrder(dto.getUserId(), dto.getCommodityCode(), dto.getOrderCount(), false);
-        return Result.success(PurchaseOrderVO.builder()
-                .orderId(orderId)
-                .userId(dto.getUserId())
-                .commodityCode(dto.getCommodityCode())
-                .orderCount(dto.getOrderCount())
-                .orderMoney(dto.getOrderCount() * 100.0)
-                .status("SUCCESS")
-                .xid(RootContext.getXID())
-                .build());
+    public Result<PurchaseOrderVO> submitPurchaseOrder(@Valid @RequestBody PurchaseOrderDTO dto) {
+        Long orderId = orderService.createOrder(
+                dto.getUserId(),
+                dto.getCommodityCode(),
+                dto.getCount(),
+                Boolean.TRUE.equals(dto.getForceRollback())
+        );
+
+        PurchaseOrderVO vo = new PurchaseOrderVO();
+        vo.setOrderId(orderId);
+        vo.setUserId(dto.getUserId());
+        vo.setCommodityCode(dto.getCommodityCode());
+        vo.setCount(dto.getCount());
+        vo.setOrderMoney(dto.getCount() * OrderService.DEFAULT_UNIT_PRICE);
+        vo.setStockRemaining(storageService.getStock(dto.getCommodityCode()));
+        vo.setBalanceRemaining(accountService.getBalance(dto.getUserId()));
+        vo.setXid(RootContext.getXID() != null ? RootContext.getXID() : "HERMETIC_LOCAL_TX");
+        vo.setStatus("COMMITTED");
+        return Result.success(vo);
     }
 }
 ```
@@ -305,7 +325,7 @@ public class SeataPurchaseOrderController {
 
 ---
 
-### 3.2 动态多数据源协同与切源安全守卫
+### 3.2 动态多数据源协同与假切源安全守卫 (`False Datasource Switch Guard`)
 
 #### ① 专属 YAML 配置片段
 
@@ -314,18 +334,76 @@ ateng:
   cloud:
     seata:
       dynamic-datasource:
-        enabled: true           # 开启 Baomidou dynamic-datasource 协同增强
-        mode: AT                # 事务代理模式：AT 或 XA
-        auto-proxy: true        # 自动对连接池进行 SeataDataSourceProxy 包装
-        guard-enabled: true     # 开启切源安全守卫
-        fail-on-false-switch: true # 拦截单连接假切源并阻断抛出异常
+        enabled: true              # 开启 Baomidou dynamic-datasource 原生代理协同
+        mode: AT                   # 事务代理模式：AT 或 XA
+        auto-proxy: true           # 自动对连接池进行 SeataDataSourceProxy 包装
+        guard-enabled: true        # 开启声明式 @DS 假切源安全守卫与切面
+        fail-on-false-switch: true # 单连接假切源抛出 5105 阻断（false 则降级 WARN 放行）
 ```
 
-#### ② 守卫原理与实战机制
+#### ② 实战 Java 示例代码
 
-在微服务分库场景下，`SeataDynamicDatasourceGuard` 协同拦截各类潜在切源风险：
-- **跨库切源合法放行**：当检测到全局分布式事务开启（`RootContext.getXID() != null`）时，守卫识别为分布式跨库操作，予以合法放行；
-- **本地单连接假切源刚性拦截**：当检测到当前处于 Spring 本地单连接事务（`DataSourceTransactionManager`）且无全局 XID 时，若开发者尝试使用 `@DS` 跨库切源，守卫直接刚性拦截并抛出受管业务异常，坚决杜绝静默假切源造成的严重串库资损。
+以下代码 1:1 提取自 `sample-cloud-seata` 场景工程源码：
+
+**声明式从库目标服务 (`SeataSlaveDatasourceService.java`) 与编排服务 (`SeataDatasourceGuardService.java`)**：
+```java
+@Service
+public class SeataSlaveDatasourceService {
+
+    @DS("slave")
+    public String executeOnSlave() {
+        return "slave";
+    }
+}
+```
+
+```java
+@Service
+public class SeataDatasourceGuardService {
+
+    private final SeataSlaveDatasourceService slaveDatasourceService;
+
+    public SeataDatasourceGuardService(SeataSlaveDatasourceService slaveDatasourceService) {
+        this.slaveDatasourceService = slaveDatasourceService;
+    }
+
+    /**
+     * 活跃 Seata 全局事务下合法放行 @DS("slave") 跨库切源
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public DatasourceGuardVO executeSwitchInGlobalTx(String xid) {
+        RootContext.bind(xid);
+        DynamicDataSourceContextHolder.push("master");
+        try {
+            String targetDs = slaveDatasourceService.executeOnSlave();
+            return new DatasourceGuardVO("master", targetDs, RootContext.getXID(), true, "活跃全局事务放行");
+        } finally {
+            DynamicDataSourceContextHolder.clear();
+            RootContext.unbind();
+        }
+    }
+
+    /**
+     * 普通 Spring 单物理连接本地事务下触发 @DS("slave") -> 自动拦截并抛出 5105
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public DatasourceGuardVO executeFalseSwitchInLocalTx() {
+        DynamicDataSourceContextHolder.push("master");
+        try {
+            String targetDs = slaveDatasourceService.executeOnSlave();
+            return new DatasourceGuardVO("master", targetDs, null, true, "未触发阻断");
+        } finally {
+            DynamicDataSourceContextHolder.clear();
+        }
+    }
+}
+```
+
+#### ③ 核心机制与防假切源边界
+
+- **前置最高优先级切面 (`SeataDynamicDatasourceGuardAspect`)**：实现 `Ordered` 返回 `Ordered.HIGHEST_PRECEDENCE` 并以 `@Around` 拦截 `@DS` 方法与类，确保在 Baomidou `DynamicDataSourceAnnotationInterceptor` 将新数据源压入线程栈之前，先基于当前 Spring 事务绑定的原始数据源完成风险校验（借助 `MethodClassKey` + `ConcurrentReferenceHashMap` 缓存解析「实现方法 → 声明方法 → 接口方法 → 目标类 → 声明类」层级注解）；
+- **四重合法放行通道**：当存在活跃 Seata 全局事务（`RootContext.inGlobalTransaction()`）、处于 Baomidou `@DSTransactional` 多源协调事务、目标方法/类声明了 `@Transactional(propagation = Propagation.REQUIRES_NEW)` 独立事务、或目标数据源与当前事务已绑定数据源相同时，守卫自动放行；
+- **5105 刚性阻断与降级策略**：若处于 Spring 单物理连接事务且发生跨库切换，`fail-on-false-switch=true`（默认）直接抛出 `BusinessException(SeataResultCode.SEATA_FALSE_DATASOURCE_SWITCH [5105])` 阻断并避免 `Log-and-Throw`；若配置为 `false` 则输出 `WARN` 降级日志并放行。
 
 ---
 
@@ -492,25 +570,37 @@ ateng:
 
 ```java
 @PostMapping("/empty-rollback")
-public Result<Boolean> emptyRollback(@RequestParam("actionId") String actionId) {
-    BusinessActionContext context = new BusinessActionContext();
-    context.setXid("127.0.0.1:8091:202611038888");
-    context.setBranchId(3003L);
-    // 未曾执行 Try，直接触发 Cancel -> 自动插入 SUSPENDED，静默放行，不执行补偿
+public Result<TccActionVO> emptyRollback(@Valid @RequestBody TccDebitDTO dto) {
+    String xid = resolveXid(dto);
+    Long branchId = resolveBranchId(dto);
+    BusinessActionContext context = createActionContext(xid, branchId, dto.getUserId(), dto.getMoney());
+
+    // 未执行 Try，直接调用 Cancel -> 自动插入 SUSPENDED，静默跳过补偿
     boolean success = accountService.rollback(context);
-    return Result.success(success);
+    String recordStatus = tccFenceBarrier.getRepository()
+            .findByXidAndBranchId(xid, branchId)
+            .map(TccFenceRecord::getStatus)
+            .map(Enum::name)
+            .orElse("UNKNOWN");
+
+    return Result.success(new TccActionVO(
+            xid, branchId, dto.getUserId(), recordStatus,
+            accountService.getBalance(dto.getUserId()),
+            success ? "空回滚防卫成功：已插入 SUSPENDED 标记并静默跳过业务补偿" : "空回滚防卫失败"
+    ));
 }
 
 @PostMapping("/hanging-defense")
-public Result<Boolean> hangingDefense(@Valid @RequestBody TccDebitDTO dto) throws Throwable {
-    BusinessActionContext context = new BusinessActionContext();
-    context.setXid("127.0.0.1:8091:202611038888");
-    context.setBranchId(3004L);
-    // 先触发空回滚插旗 SUSPENDED
+public Result<TccActionVO> hangingDefense(@Valid @RequestBody TccDebitDTO dto) throws Throwable {
+    String xid = resolveXid(dto);
+    Long branchId = resolveBranchId(dto);
+    BusinessActionContext context = createActionContext(xid, branchId, dto.getUserId(), dto.getMoney());
+
+    // 1. Cancel 先行到达，触发空回滚占位插入 SUSPENDED
     accountService.rollback(context);
-    // 迟到的 Try 到达 -> 屏障识别到 SUSPENDED 标记，刚性抛出 TccFenceHangingException(5110)
-    accountService.prepareDebitTcc(context, dto.getUserId(), dto.getAmount().intValue());
-    return Result.success(true);
+    // 2. 延迟 Try 随后到达 -> 屏障识别 SUSPENDED 标记，刚性拦截抛出 TccFenceHangingException (5110)
+    accountService.prepareDebitTcc(context, dto.getUserId(), dto.getMoney());
+    return Result.success();
 }
 ```
 
@@ -537,18 +627,22 @@ ateng:
 
 ```java
 @PostMapping("/duplicate-commit")
-public Result<Boolean> duplicateCommit(@Valid @RequestBody TccDebitDTO dto) throws Throwable {
-    BusinessActionContext context = new BusinessActionContext();
-    context.setXid("127.0.0.1:8091:202611038888");
-    context.setBranchId(3005L);
+public Result<TccActionVO> duplicateCommit(@Valid @RequestBody TccDebitDTO dto) throws Throwable {
+    String xid = resolveXid(dto);
+    Long branchId = resolveBranchId(dto);
+    BusinessActionContext context = createActionContext(xid, branchId, dto.getUserId(), dto.getMoney());
 
-    // 1. 正常执行 Try 与 Confirm
-    accountService.prepareDebitTcc(context, dto.getUserId(), dto.getAmount().intValue());
-    accountService.commit(context);
-
-    // 2. 模拟网络抖动导致重复 Confirm -> 屏障检测到 COMMITTED 状态，直接幂等放行 (5112)
+    // 1. 正常执行一阶段 Try
+    accountService.prepareDebitTcc(context, dto.getUserId(), dto.getMoney());
+    // 2. 第一次与第二次 Confirm（模拟重传）-> 屏障检测到 COMMITTED 状态，幂等放行
+    boolean firstCommit = accountService.commit(context);
     boolean secondCommit = accountService.commit(context);
-    return Result.success(secondCommit);
+
+    return Result.success(new TccActionVO(
+            xid, branchId, dto.getUserId(), "COMMITTED",
+            accountService.getBalance(dto.getUserId()),
+            (firstCommit && secondCommit) ? "重复提交幂等放行成功，状态保持 COMMITTED 且资金不重复扣减" : "Confirm 异常"
+    ));
 }
 ```
 
@@ -573,7 +667,19 @@ ateng:
         auto-init-table: false               # 生产环境默认 false，沙箱可开启自愈建表
 ```
 
-#### ② 分级生命周期策略与自愈机制
+#### ② 实战 Java 示例代码
+
+在 `SeataTccFenceController.java` 中演示通过受管调度器 `TccFenceLogCleanScheduler#clean()` 触发分级物理清理：
+
+```java
+@PostMapping("/clean")
+public Result<TccFenceCleanResult> cleanExpiredFenceLogs() {
+    log.info("触发 TCC 防卫日志分级生命周期清理");
+    return Result.success(cleanScheduler.clean());
+}
+```
+
+#### ③ 分级生命周期策略与自愈机制
 
 为杜绝 TCC 防卫日志无限膨胀压垮磁盘与查询性能，框架基于 Spring `SmartLifecycle` 提供受管分级清理调度器 (`TccFenceLogCleanScheduler`)：
 1. **终态业务记录（`COMMITTED` 与 `ROLLBACKED`）**：
@@ -607,41 +713,21 @@ ateng:
 
 #### ② 实战 Java 示例代码
 
-在商品详情页库存查询、高频读取或无需全局事务回滚补偿的场景中，若直接标注 `@GlobalTransactional` 会带来生成 `undo_log` 与反向补偿镜像的高额开销。
+在商品详情页库存查询、高频读取或无需全局事务回滚补偿的场景中，若直接标注 `@GlobalTransactional` 会带来生成 `undo_log` 与反向补偿镜像的高额开销。以下代码 `1:1` 提取自 `sample-cloud-seata` 场景工程：
 
 **声明式使用 (`StorageService.java`)**：
 ```java
-package io.github.atengk.cloud.sample.seata.service;
-
-import org.apache.seata.spring.annotation.GlobalLock;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
-@Service
-public class StorageService {
-
-    private static final Logger log = LoggerFactory.getLogger(StorageService.class);
-    private final JdbcTemplate jdbcTemplate;
-
-    public StorageService(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
-
-    /**
-     * 声明式 @GlobalLock 轻量全局排他锁防脏读 (无 undo_log 开销)
-     */
-    @GlobalLock
-    public boolean checkAndLockStockDeclarative(String commodityCode, int count) {
-        log.info("声明式 @GlobalLock 校验商品库存: [{}]", commodityCode);
-        Integer stock = jdbcTemplate.queryForObject(
-                "SELECT count FROM storage_tbl WHERE commodity_code = ?",
-                Integer.class,
-                commodityCode
-        );
-        return stock != null && stock >= count;
-    }
+/**
+ * 声明式 @GlobalLock 轻量全局排他锁防脏读
+ *
+ * @param commodityCode 商品编码
+ * @param count         需求数量
+ * @return 库存充裕返回 true
+ */
+@GlobalLock
+public boolean checkAndLockStockDeclarative(String commodityCode, int count) {
+    log.info("声明式 @GlobalLock 校验商品库存: [{}]", commodityCode);
+    return getStock(commodityCode) >= count;
 }
 ```
 
@@ -649,16 +735,17 @@ public class StorageService {
 ```java
 @GetMapping("/declarative-check")
 public Result<Boolean> declarativeCheck(@RequestParam("commodityCode") String commodityCode,
-                                        @RequestParam("count") int count) {
-    boolean available = storageService.checkAndLockStockDeclarative(commodityCode, count);
-    return Result.success(available);
+                                       @RequestParam(value = "count", defaultValue = "1") Integer count) {
+    log.info("执行声明式 @GlobalLock 库存校验: 商品 [{}], 数量 [{}]", commodityCode, count);
+    boolean hasStock = storageService.checkAndLockStockDeclarative(commodityCode, count);
+    return Result.success(hasStock);
 }
 ```
 
 #### ③ 核心机制与防脏读优势
 
 - **运行机制**：仅在本地事务提交前向 TC 校验或申请该行记录的全局锁，若未发生冲突则直接提交本地事务；一旦检测到冲突立即抛出 `5102 (SEATA_LOCK_CONFLICT)`；
-- **性能飞跃**：彻底免除 `undo_log` 镜像解析与反向日志落库，高并发读写吞吐提升 3~5 倍。
+- **性能飞跃**：彻底免除 `undo_log` 镜像解析与反向日志落库，高并发读写吞吐提升 `3~5` 倍。
 
 ---
 
@@ -679,41 +766,33 @@ ateng:
 
 **编程式模板与重试 (`StorageService.java`)**：
 ```java
-package io.github.atengk.cloud.sample.seata.service;
+/**
+ * 编程式 SeataGlobalLockTemplate 校验并扣减商品库存（启用锁冲突退避重试）
+ *
+ * @param commodityCode 商品编码
+ * @param count         扣减数量
+ * @return 扣减成功返回 true
+ * @throws Throwable 执行异常
+ */
+public boolean updateStockProgrammatic(String commodityCode, int count) throws Throwable {
+    return globalLockTemplate.executeWithRetry(() -> {
+        log.info("编程式 GlobalLock 模板带退避重试校验并扣减商品库存: [{}] 扣减 [{}]", commodityCode, count);
+        int current = getStock(commodityCode);
+        BusinessAssert.isTrue(current >= count, "库存不足: %s", commodityCode);
+        jdbcTemplate.update("UPDATE storage_tbl SET count = count - ? WHERE commodity_code = ?", count, commodityCode);
+        return true;
+    });
+}
+```
 
-import io.github.atengk.boot.core.util.BusinessAssert;
-import io.github.atengk.cloud.seata.lock.SeataGlobalLockTemplate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
-@Service
-public class StorageService {
-
-    private static final Logger log = LoggerFactory.getLogger(StorageService.class);
-    private final JdbcTemplate jdbcTemplate;
-    private final SeataGlobalLockTemplate globalLockTemplate;
-
-    public StorageService(JdbcTemplate jdbcTemplate, SeataGlobalLockTemplate globalLockTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.globalLockTemplate = globalLockTemplate;
-    }
-
-    /**
-     * 编程式 SeataGlobalLockTemplate 执行带重试的排他更新
-     */
-    public boolean updateStockProgrammatic(String commodityCode, int count) throws Throwable {
-        return globalLockTemplate.executeWithRetry(() -> {
-            log.info("编程式 GlobalLock 模板带重试更新商品库存: [{}], 增加 [{}]", commodityCode, count);
-            int updated = jdbcTemplate.update(
-                    "UPDATE storage_tbl SET count = count + ? WHERE commodity_code = ?",
-                    count, commodityCode
-            );
-            BusinessAssert.isTrue(updated > 0, "更新库存失败: %s", commodityCode);
-            return true;
-        });
-    }
+**Controller 端点 (`SeataGlobalLockController.java`)**：
+```java
+@PostMapping("/programmatic-update")
+public Result<Boolean> programmaticUpdate(@RequestParam("commodityCode") String commodityCode,
+                                         @RequestParam(value = "count", defaultValue = "1") Integer count) throws Throwable {
+    log.info("执行编程式 SeataGlobalLockTemplate#executeWithRetry 退避重试扣减库存: 商品 [{}], 数量 [{}]", commodityCode, count);
+    boolean success = storageService.updateStockProgrammatic(commodityCode, count);
+    return Result.success(success);
 }
 ```
 
@@ -775,21 +854,81 @@ sequenceDiagram
 
 ### 6.2 SLF4J MDC 黄金关联与受管异步线程池快照穿透
 
-#### ① MDC 日志排查范式
+#### ① 专属 YAML 配置片段
+
+`ateng-cloud-seata` 通过 `META-INF/services/io.github.atengk.boot.core.context.AsyncContextSnapshotProvider` 自动注册 `SeataAsyncContextSnapshotProvider`，与 HTTP/Dubbo 拦截器协同生效：
+
+```yaml
+ateng:
+  cloud:
+    seata:
+      enabled: true # 开启 Web/Dubbo XID 透传、MDC "xid" 注入及受管异步 XID 快照穿透
+```
+
+#### ② 实战 Java 示例代码
 
 微服务调用链中，`SeataWebHandlerInterceptor` 与 `SeataDubboFilter` 自动将当前活跃事务 `RootContext.getXID()` 同步写入 SLF4J MDC 键名 `xid`：
+
 ```text
 2026-11-03T18:00:52.563+08:00 [xid:127.0.0.1:8091:202611038888] INFO [sample-cloud-seata] [main] i.g.a.c.s.seata.service.OrderService : 开启下单事务...
 ```
-在生产日志检索平台（如 ELK、Loki）中，只需按 `xid` 即可一键串联所有微服务节点的事务日志。
 
-#### ② 受管异步线程池上下文快照穿透 (`SeataAsyncContextSnapshotProvider`)
+以下代码 `1:1` 提取自 `sample-cloud-seata` 场景工程 [`SeataAsyncPropagationController.java`](../ateng-cloud-samples/sample-cloud-seata/src/main/java/io/github/atengk/cloud/sample/seata/controller/SeataAsyncPropagationController.java)：
 
-微服务中通过异步线程池（如 `@Async` 或 `ThreadPoolTaskExecutor`）并行执行任务时，Seata 原生 `RootContext` 绑定于 `ThreadLocal`，跨线程会导致 XID 丢失：
-- 框架内建 `SeataAsyncContextSnapshotProvider`，自动实现 `ateng-boot-core` 的 `AsyncContextSnapshotProvider` SPI；
-- 在主线程提交异步任务前自动捕获当前 XID 快照；
-- 子线程执行前自动安全绑定 `RootContext.bind(xid)` 并联动 SLF4J MDC；
-- 任务执行完毕后在 `finally` 块中强制 `RootContext.unbind()` 与 MDC 还原，彻底杜绝跨请求串行污染。
+```java
+@PostMapping("/propagate")
+public Result<AsyncXidPropagationVO> propagateAsyncXid(@RequestParam(value = "xid", required = false) String xid) {
+    String effectiveXid = StringUtils.hasText(xid)
+            ? xid
+            : "127.0.0.1:8091:async-xid-" + System.currentTimeMillis();
+
+    boolean manuallyBound = false;
+    String previousMdcXid = MDC.get(SeataConstants.MDC_KEY_XID);
+    if (!RootContext.inGlobalTransaction()) {
+        RootContext.bind(effectiveXid);
+        manuallyBound = true;
+    }
+    String masterXid = RootContext.getXID();
+    MDC.put(SeataConstants.MDC_KEY_XID, masterXid);
+    log.info("主线程发起受管异步 XID 穿透演示: masterXid=[{}]", masterXid);
+
+    try {
+        CompletableFuture<AsyncXidPropagationVO> future = AsyncUtil.supply(() -> {
+            String workerXid = RootContext.getXID();
+            String workerMdcXid = MDC.get(SeataConstants.MDC_KEY_XID);
+            boolean propagated = Objects.equals(masterXid, workerXid) && Objects.equals(masterXid, workerMdcXid);
+            return new AsyncXidPropagationVO(
+                    masterXid,
+                    Thread.currentThread().getName(),
+                    workerXid,
+                    workerMdcXid,
+                    propagated
+            );
+        });
+        return Result.success(future.get(ASYNC_WAIT_SECONDS, TimeUnit.SECONDS));
+    } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new BusinessException(SeataResultCode.SEATA_TRANSACTION_FAILED, "受管异步任务等待被中断", ex);
+    } catch (TimeoutException | ExecutionException ex) {
+        throw new BusinessException(SeataResultCode.SEATA_TRANSACTION_FAILED, "受管异步任务 XID 穿透执行失败", ex);
+    } finally {
+        if (StringUtils.hasText(previousMdcXid)) {
+            MDC.put(SeataConstants.MDC_KEY_XID, previousMdcXid);
+        } else {
+            MDC.remove(SeataConstants.MDC_KEY_XID);
+        }
+        if (manuallyBound && RootContext.inGlobalTransaction()) {
+            RootContext.unbind();
+        }
+    }
+}
+```
+
+#### ③ 核心机制与上下文清零原则
+
+- **SPI 自动挂载**：框架内建 `SeataAsyncContextSnapshotProvider` 实现 `ateng-boot-core` 的 `AsyncContextSnapshotProvider` SPI；
+- **提交前快照捕获**：主线程通过 `AsyncUtil.supply(...)` 或受管 `ThreadPoolTaskExecutor` 提交任务前，自动捕获当前活跃 `RootContext.getXID()` 快照；
+- **子线程恢复与强制清理**：工作线程执行前自动调用 `RootContext.bind(xid)` 并联动写入 SLF4J MDC `xid`；任务结束后在 `finally` 块中严格 `RootContext.unbind()` 并还原工作线程原有上下文与 MDC，彻底杜绝线程池复用导致的串行污染。
 
 ---
 
@@ -806,49 +945,57 @@ ateng:
 
 #### ② 实战 Java 示例代码
 
-以下代码 1:1 提取自 `sample-cloud-seata` 场景工程源码：
+以下代码 `1:1` 提取自 `sample-cloud-seata` 场景工程 [`SeataFallbackDefenseController.java`](../ateng-cloud-samples/sample-cloud-seata/src/main/java/io/github/atengk/cloud/sample/seata/controller/SeataFallbackDefenseController.java) 与 [`OrderService.java`](../ateng-cloud-samples/sample-cloud-seata/src/main/java/io/github/atengk/cloud/sample/seata/service/OrderService.java)：
 
 **Controller 演示端点 (`SeataFallbackDefenseController.java`)**：
 ```java
-package io.github.atengk.cloud.sample.seata.controller;
+/**
+ * 演示在活跃分布式事务下，下游触发熔断降级时强制抛出 5104 阻断假提交以保证全局回滚
+ */
+@PostMapping("/with-active-tx")
+public Result<String> withActiveTransaction(
+        @RequestParam(value = "userId", defaultValue = "user_fallback_001") String userId,
+        @RequestParam(value = "commodityCode", defaultValue = "product_fallback_001") String commodityCode,
+        @RequestParam(value = "count", defaultValue = "2") Integer count) {
+    log.info("模拟在活跃全局事务下发起带熔断降级的下游调用: 用户 [{}], 商品 [{}]", userId, commodityCode);
 
-import io.github.atengk.boot.core.model.Result;
-import io.github.atengk.cloud.sample.seata.service.OrderService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-@RestController
-@RequestMapping("/sample/cloud/seata/fallback")
-public class SeataFallbackDefenseController {
-
-    private final OrderService orderService;
-
-    public SeataFallbackDefenseController(OrderService orderService) {
-        this.orderService = orderService;
+    boolean manuallyBound = false;
+    if (!RootContext.inGlobalTransaction()) {
+        RootContext.bind("127.0.0.1:8091:fallback-test-tx-" + System.currentTimeMillis());
+        manuallyBound = true;
     }
 
-    /**
-     * 场景一：活跃分布式全局事务下触发降级 -> 刚性拦截并抛出 5104，阻断假提交以触发全链路原子回滚
-     */
-    @PostMapping("/with-active-tx")
-    public Result<Long> fallbackWithActiveTx() {
-        Long orderId = orderService.createOrderWithDownstream("U1001", "C2001", 1, () -> {
-            throw new RuntimeException("下游外部账户扣费微服务超时，触发 Sentinel 熔断降级！");
+    try {
+        orderService.createOrderWithDownstream(userId, commodityCode, count, () -> {
+            throw new RuntimeException("Sentinel FlowException: 下游外部服务限流熔断");
         });
-        return Result.success(orderId);
+        return Result.success("执行完成（非预期，应被 5104 拦截）");
+    } finally {
+        if (manuallyBound && RootContext.inGlobalTransaction()) {
+            RootContext.unbind();
+        }
+    }
+}
+
+/**
+ * 演示在无分布式事务的普通调用下，下游触发熔断降级时平滑放行返回保底数据
+ */
+@PostMapping("/without-tx")
+public Result<String> withoutTransaction(
+        @RequestParam(value = "userId", defaultValue = "user_fallback_002") String userId,
+        @RequestParam(value = "commodityCode", defaultValue = "product_fallback_002") String commodityCode,
+        @RequestParam(value = "count", defaultValue = "2") Integer count) {
+    log.info("模拟在无全局事务下发起带熔断降级的下游调用: 用户 [{}], 商品 [{}]", userId, commodityCode);
+
+    if (RootContext.inGlobalTransaction()) {
+        RootContext.unbind();
     }
 
-    /**
-     * 场景二：无全局事务普通调用触发降级 -> 平滑降级放行，返回业务兜底结果
-     */
-    @PostMapping("/without-tx")
-    public Result<String> fallbackWithoutTx() {
-        String result = orderService.executeNonTransactionalDownstream(() -> {
-            throw new RuntimeException("普通非事务下游微服务不可达！");
-        });
-        return Result.success(result);
-    }
+    Long orderId = orderService.createOrderWithDownstream(userId, commodityCode, count, () -> {
+        throw new RuntimeException("Sentinel FlowException: 下游外部服务限流降级");
+    });
+
+    return Result.success("当前无活跃全局分布式事务，下游调用平滑降级执行成功，订单暂存 ID: " + orderId);
 }
 ```
 
@@ -881,13 +1028,33 @@ public Long createOrderWithDownstream(String userId, String commodityCode, int o
   - 若存在活跃全局事务，强制抛出受管业务异常 `BusinessException(SEATA_DEGRADE_BLOCKED, 5104)` 并完整传递原始根因；
   - 触发 Spring `@Transactional` 或 Seata 切面感知异常，驱动 TC 实施全链路两阶段原子回滚；
   - 若当前为无事务普通调用，则静默放行，保留原生 Sentinel 降级体验；
-- **设计决策固化**：详见 [ADR-0001: 活跃全局事务下熔断降级强制回滚防卫决策](./docs/adr/0001-seata-fallback-defense-fail-fast.md)。
+- **设计决策固化**：详见 [ADR-0009: 分布式事务增强、TCC 防悬挂屏障与跨进程协同架构设计](../docs/adr/0009-seata-distributed-transaction-and-tcc-fence-architecture.md)。
 
 ---
 
-## 7. 完整 YAML 配置属性清单 (全量速查附录)
+## 7. 生产环境避坑与高可用调优指南
 
-### 7.1 全量生产配置模板 (`application.yml`)
+### 7.1 动态数据源切换与本地事务顺序红线
+- **避坑要点**：一旦 `@Transactional` 切面提前获取并绑定主库数据库连接，方法内部或下游再标注 `@DS("slave")` 也无法真实切换物理连接（Spring 单连接事务静默忽略数据源键变更）。若误在无全局事务保障下写偏目标库，将导致隐蔽的数据错库落盘。
+- **生产调优建议**：始终在最外层（事务开启前）确定数据源，并强制保持默认 `ateng.cloud.seata.dynamic-datasource.guard-enabled=true` 与 `fail-on-false-switch=true`；当在本地事务内违规切源时立即抛出 `5105 (SEATA_FALSE_DATASOURCE_SWITCH)` Fail-Fast 阻断，结合 `@GlobalTransactional` + `SeataDynamicDataSourceProcessor` 在全局事务维度安全路由与代理各库分支。
+
+### 7.2 热点库存行锁冲突与 `@GlobalLock` 取舍
+- **避坑要点**：AT 模式会在一阶段生成 `undo_log` 并向 TC 申请行级全局锁；高并发只读校验或轻量排他读场景若滥用 `@GlobalTransactional`，会成倍放大 `undo_log` 写入与 TC 锁竞争延迟。
+- **生产调优建议**：纯防脏读校验改用声明式 `@GlobalLock`，并发抢占更新改用 `SeataGlobalLockTemplate#executeWithRetry` 配合 `lock.retry-interval: 50ms` 与 `lock.retry-times: 30`（总上限约 `1.5s` 后快速失败释放连接池）；同时根据链路深度合理设置 `tx.default-timeout`（默认 `30s`），避免长事务拖垮数据库连接池。
+
+### 7.3 `tcc_fence_log` 分级清理与自动建表守则
+- **避坑要点**：若在生产环境开启 `tcc.auto-init-table: true`，低权限数据库账号会触发 DDL 报错或启动阻塞；若完全关闭清理任务，`tcc_fence_log` 日积月累将拖慢主键冲突检查甚至撑爆磁盘；反之若无差别短周期物理删除 `SUSPENDED(4)` 记录，又可能放过超迟到的悬挂 `Try` 请求。
+- **生产调优建议**：生产环境坚守 `auto-init-table: false` 并通过 DBA 提前执行建表 DDL（保留 `gmt_modified` 与 `status` 联合索引）；启用 `clean-enabled: true`，保留默认值 `log-ttl: 3d`、`suspended-retention-multiplier: 3`（悬挂记录留存 `9d`）、`clean-batch-size: 500` 防长事务锁表；并联动 `SeataTenantProperties` 放行 `tcc_fence_log` 与 `undo_log`，防止多租户插件重写破坏主外键/唯一键语义。
+
+### 7.4 活跃事务内熔断降级与受管并发防泄漏
+- **避坑要点**：① 在 `@GlobalTransactional` 链路中对下游 Feign/Dubbo 调用配置 Sentinel Fallback 并“吞掉异常返回默认值”，会使 Seata 误判分支成功并错误提交全局事务；② 在事务内直接 `new Thread()` 或裸用 JDK `Executors`，会导致工作线程丢失 `XID` 与 `MDC xid`。
+- **生产调优建议**：① 降级回调中统一调用 `SeataFallbackDefense.failOnActiveTransaction(serviceName, cause)`，在活跃事务下抛出 `5104` 强制全局回滚；② 异步并行统一使用 `ateng-boot-core` 的 `AsyncUtil` 或受管 `ThreadPoolTaskExecutor`，依托 `SeataAsyncContextSnapshotProvider` 自动完成主/子线程 XID & MDC 穿透与 `finally` 确定性清理。
+
+---
+
+## 8. 完整 YAML 配置属性清单 (全量速查附录)
+
+### 8.1 全量生产配置模板 (`application.yml`)
 
 ```yaml
 server:
@@ -964,7 +1131,7 @@ seata:
 
 ---
 
-### 7.2 生产数据库初始化表结构 (DDL)
+### 8.2 生产数据库初始化表结构 (DDL)
 
 ```sql
 -- 业务订单表
@@ -1020,39 +1187,41 @@ CREATE TABLE IF NOT EXISTS `undo_log` (
 
 ---
 
-## 8. 物理排版与代码全真验证
+## 9. Sample-First 全真回归验证索引
 
-本模块所有 Java 示例代码、YAML 配置片段与数据库 DDL，**100% 逆向提取自跑通的场景样例工程 [sample-cloud-seata](../ateng-cloud-samples/sample-cloud-seata) 真实源码与实测用例**，并受以下 11 大端到端全真集成测试套件 100% 离线自洽守护：
+本模块所有 Java 示例代码、YAML 配置片段与数据库 DDL，**100% 逆向提取自跑通的场景样例工程 [sample-cloud-seata](../ateng-cloud-samples/sample-cloud-seata) 真实源码与实测用例**，并受以下 `13` 大端到端全真集成测试套件 100% 离线自洽守护：
 
-### 8.1 核心集成测试套件全景矩阵
+### 9.1 核心集成测试套件全景矩阵
 
 | 场景测试套件类 | 关键验证用例 | 覆盖技术防线与核心强断言 |
 | :--- | :--- | :--- |
-| **[SampleSeataPurchaseOrderControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataPurchaseOrderControllerTest.java)** | `shouldSubmitPurchaseOrderSuccessfully`<br>`shouldRollbackPurchaseOrderOnBusinessException`<br>`shouldQueryStockAndBalanceSuccessfully` | 采购提单 Controller 端点 MockMvc 验证；AT 事务正向提交与反向回滚；余额不足 Fail-Fast |
-| **[SampleSeataTccFenceControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceControllerTest.java)** | `shouldPrepareTccDebitSuccessfully`<br>`shouldCommitTccDebitSuccessfully`<br>`shouldRollbackTccDebitSuccessfully`<br>`shouldHandleEmptyRollbackViaController`<br>`shouldPreventBusinessHangingViaController`<br>`shouldHandleDuplicateCommitIdempotently` | TCC Controller 6 个防卫端点 MockMvc 验证；空回滚插入 SUSPENDED；业务悬挂抛出 5110；重复提交幂等放行 5112 |
-| **[SampleSeataLockAndFallbackControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataLockAndFallbackControllerTest.java)** | `shouldExecuteDeclarativeGlobalLockCheck`<br>`shouldExecuteProgrammaticStockUpdate`<br>`shouldBlockAndRollbackWhenFallbackWithActiveTx`<br>`shouldAllowPeacefulFallbackWithoutActiveTx` | 全局锁 Controller 与降级防卫 Controller MockMvc 验证；活跃全局事务下降级强制 5104 阻断回滚；无事务平滑降级 |
+| **[SampleSeataPurchaseOrderControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataPurchaseOrderControllerTest.java)** | `testSubmitPurchaseOrder_Success`<br>`testSubmitPurchaseOrder_Rollback`<br>`testSubmitPurchaseOrder_InsufficientBalance_Rollback`<br>`testGetStockAndBalance`<br>`testSubmitPurchaseOrder_ValidationFailure` | 采购提单 Controller 端点 MockMvc 验证；AT 事务正向提交与反向回滚；余额不足与 JSR-303 参数校验 Fail-Fast |
+| **[SampleSeataTccFenceControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceControllerTest.java)** | `testPrepareAndCommit`<br>`testPrepareAndRollback`<br>`testEmptyRollback`<br>`testHangingDefense`<br>`testDuplicateCommit`<br>`testValidationFailure`<br>`testCleanExpiredFenceLogsViaController` | TCC Controller 7 大端点 MockMvc 验证；空回滚插入 SUSPENDED；业务悬挂抛出 `5110`；重复提交幂等放行 `5112`；分级清理端点手动触发全链路闭合 |
+| **[SampleSeataLockAndFallbackControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataLockAndFallbackControllerTest.java)** | `testDeclarativeGlobalLockCheck`<br>`testProgrammaticGlobalLockUpdate`<br>`testFallbackWithActiveTransaction_AbortsFalseCommit`<br>`testFallbackWithoutTransaction_SmoothDegradation` | 全局锁 Controller（含 `executeWithRetry` 扣减及库存不足拦截）与降级防卫 Controller MockMvc 验证；活跃事务下 `5104` 强制阻断与无事务平滑降级 |
+| **[SampleSeataGovernanceControllerTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataGovernanceControllerTest.java)** | `testAsyncXidPropagationViaController`<br>`testAllowDatasourceSwitchInGlobalTransaction`<br>`testBlockFalseDatasourceSwitchInLocalTransaction` | 受管异步线程池 `AsyncUtil` XID/MDC 黄金穿透 MockMvc 验证；全局事务下动态数据源切源放行与本地单连接假切源 `5105` 拦截 |
 | **[SampleSeataDistributedTransactionIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDistributedTransactionIntegrationTest.java)** | `shouldCommitDistributedTransactionSuccessfully`<br>`shouldRollbackDistributedTransactionOnBusinessException`<br>`shouldRollbackDistributedTransactionOnStockInsufficient` | AT 模式底层服务组件测试；订单、库存、账户三节点正向原子提交与异常原子回滚 |
-| **[SampleSeataGlobalLockIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataGlobalLockIntegrationTest.java)** | `shouldExecuteDeclarativeGlobalLock`<br>`shouldExecuteProgrammaticGlobalLock`<br>`shouldExecuteConcurrentlyWithoutLeak` | `@GlobalLock` 声明式与编程式排他防脏读实测；高并发竞争下无 `undo_log` 开销的高性能排他校验 |
+| **[SampleSeataGlobalLockIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataGlobalLockIntegrationTest.java)** | `shouldExecuteDeclarativeGlobalLock`<br>`shouldExecuteProgrammaticGlobalLock`<br>`shouldExecuteConcurrentlyWithoutLeak` | `@GlobalLock` 声明式与编程式排他防脏读实测；高并发竞争下无 `undo_log` 开销的高性能排他校验与线程上下文零泄漏 |
 | **[SampleSeataTccFenceIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceIntegrationTest.java)** | `shouldExecuteNormalTccCommit`<br>`shouldExecuteNormalTccRollback`<br>`shouldHandleEmptyRollback`<br>`shouldPreventBusinessHanging`<br>`shouldEnsureIdempotentExecution` | TCC 两阶段流转底座自验；空回滚防卫（插入 SUSPENDED）；业务悬挂拦截（抛出 `TccFenceHangingException`）；重复提交/回滚幂等放行 |
 | **[SampleSeataFeignMdcIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataFeignMdcIntegrationTest.java)** | `shouldInjectTxXidHeaderOnFeignRequest`<br>`shouldPropagateXidAndMdcInServerPipeline`<br>`shouldHandleNonTransactionalRequestNormally` | Feign 客户端透明注入 `TX_XID` 请求头；Web 入站自动提取绑定 XID 并同步 MDC `xid`；出口对称释放防污染 |
 | **[SampleSeataDubboRpcIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDubboRpcIntegrationTest.java)** | `shouldPropagateXidOnConsumerSide`<br>`shouldBindAndRestoreOnProviderSide`<br>`shouldTriggerAdaptiveIdempotencyWhenAlreadyBound`<br>`shouldBypassInjvmProtocol` | Dubbo 消费端注入 Attachment；服务端绑定 XID 与 MDC；自适应幂等防卫（已绑定相同 XID 时静默放行并不二次解绑）；`injvm` 协议短路放行 |
 | **[SampleSeataTccFenceCleanIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTccFenceCleanIntegrationTest.java)** | `shouldExecuteHierarchicalLogClean`<br>`shouldRespectBatchSizeLimit` | 分级生命周期批量清理：终态超期准时清理、悬挂长效留存超期清理、活跃状态永不清理；单批次数量严格限制 |
 | **[SampleSeataTenantIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataTenantIntegrationTest.java)** | `shouldIgnoreSeataInternalAndCustomTables`<br>`shouldRewriteSqlSelectAccurately` | MyBatis-Plus 多租户放行判定：系统表与动态自定义表免疫租户过滤；真实 SQL 重写校验（业务表拼接租户条件，系统表保持原样） |
 | **[SampleSeataSentinelFallbackIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataSentinelFallbackIntegrationTest.java)** | `shouldRollbackTransactionWhenDownstreamFallbackTriggeredInActiveTx`<br>`shouldAllowFallbackPeacefullyWhenNoActiveTx`<br>`shouldCommitNormallyWhenDownstreamSucceedsInActiveTx` | 对抗性用例：活跃全局事务下，下游触发熔断降级强制抛出 `5104` 阻断并原子回滚本地数据；普通无事务调用降级平滑放行并安全提交 |
+| **[SampleSeataDualModeConfigIntegrationTest](../ateng-cloud-samples/sample-cloud-seata/src/test/java/io/github/atengk/cloud/sample/seata/SampleSeataDualModeConfigIntegrationTest.java)** | `shouldBindCalibratedSeataPropertiesAndJdbcRepository`<br>`shouldLoadOfflineStubOnlyWhenLocalProfileInactive` | 真实集群与离线桩双模环境校验：参数前缀正确绑定，非 `local` Profile 下加载离线事务桩并按配置装配 `JdbcTccFenceRepository` |
 
 ---
 
-### 8.2 离线冒烟门禁与构建准出命令
+### 9.2 离线冒烟门禁与构建准出命令
 
 本地日常与提交准出验证命令（100% 离线自洽沙箱，多线程并行加速）：
 
 ```bash
-# 阶梯一：ateng-cloud-seata 模块单元测试 (127 个单测 100% PASS)
+# 阶梯一：ateng-cloud-seata 模块单元测试 (145 个单测 100% PASS)
 mvn test -pl ateng-cloud-seata -am -T 1C -nsu -B
 
-# 阶梯二：sample-cloud-seata 场景工程端到端全真集成测试 (40 个集成测试 100% PASS)
+# 阶梯二：sample-cloud-seata 场景工程端到端全真集成测试 (46 个集成测试 100% PASS)
 mvn test -pl ateng-cloud-samples/sample-cloud-seata -am -T 1C -nsu -B
 
-# 阶梯三：模块与场景工程联动准出验证 (167 个自动化测试 100% 全绿)
-mvn test -pl ateng-cloud-seata,ateng-cloud-samples/sample-cloud-seata -am -T 1C -nsu -B
+# 阶梯三：核心模块、场景工程与全家桶冒烟测试三模块联动准出验证 (145 + 46 + 2 = 193 个核心 Seata/冒烟用例 100% PASS)
+mvn test -pl ateng-cloud-seata,ateng-cloud-samples/sample-cloud-seata,ateng-cloud-samples/sample-cloud-smoke-test -am -T 1C -nsu -B
 ```

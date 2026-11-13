@@ -17,7 +17,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -46,6 +50,9 @@ class SampleSeataTccFenceControllerTest {
 
     @Autowired
     private TccFenceBarrier tccFenceBarrier;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private static final String USER_ID = "tcc_ctrl_user_001";
     private static final String XID = "127.0.0.1:8091:202611038888";
@@ -185,5 +192,51 @@ class SampleSeataTccFenceControllerTest {
                         .content(objectMapper.writeValueAsString(invalidDto)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not(200)));
+    }
+
+    @Test
+    @DisplayName("测试通过 Controller 触发过期 TCC 防卫日志分级清理：终态按 logTtl、SUSPENDED 按 3x 窗口保留、TRIED 永不删除")
+    void testCleanExpiredFenceLogsViaController() throws Exception {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update("DELETE FROM tcc_fence_log WHERE xid LIKE 'ctrl_clean_%'");
+        try {
+            insertFenceRecord("ctrl_clean_term_exp", 4001L, TccFenceStatus.COMMITTED, now.minusDays(4));
+            insertFenceRecord("ctrl_clean_term_fresh", 4002L, TccFenceStatus.ROLLBACKED, now.minusDays(1));
+            insertFenceRecord("ctrl_clean_susp_protected", 4003L, TccFenceStatus.SUSPENDED, now.minusDays(5));
+            insertFenceRecord("ctrl_clean_susp_exp", 4004L, TccFenceStatus.SUSPENDED, now.minusDays(10));
+            insertFenceRecord("ctrl_clean_tried", 4005L, TccFenceStatus.TRIED, now.minusDays(30));
+
+            mockMvc.perform(post("/sample/cloud/seata/tcc/clean"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.terminalDeleted").value(1))
+                    .andExpect(jsonPath("$.data.suspendedDeleted").value(1))
+                    .andExpect(jsonPath("$.data.totalDeleted").value(2));
+
+            assertThat(countByXid("ctrl_clean_term_exp")).isZero();
+            assertThat(countByXid("ctrl_clean_susp_exp")).isZero();
+            assertThat(countByXid("ctrl_clean_term_fresh")).isEqualTo(1);
+            assertThat(countByXid("ctrl_clean_susp_protected")).isEqualTo(1);
+            assertThat(countByXid("ctrl_clean_tried")).isEqualTo(1);
+        } finally {
+            jdbcTemplate.update("DELETE FROM tcc_fence_log WHERE xid LIKE 'ctrl_clean_%'");
+        }
+    }
+
+    private void insertFenceRecord(String xid, long branchId, TccFenceStatus status, LocalDateTime modifiedTime) {
+        jdbcTemplate.update(
+                "INSERT INTO tcc_fence_log (xid, branch_id, action_name, status, gmt_create, gmt_modified) VALUES (?, ?, ?, ?, ?, ?)",
+                xid, branchId, "AccountDebitTcc", status.getCode(),
+                Timestamp.valueOf(modifiedTime.minusHours(1)), Timestamp.valueOf(modifiedTime)
+        );
+    }
+
+    private int countByXid(String xid) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM tcc_fence_log WHERE xid = ?",
+                Integer.class,
+                xid
+        );
+        return count != null ? count : 0;
     }
 }

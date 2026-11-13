@@ -1,6 +1,6 @@
 # Seata Context
 
-分布式事务协调与数据一致性限界上下文，负责统一纳管微服务分布式事务边界、全局事务（Global Transaction）生命周期驱动、AT / TCC 双核模式协同、TCC 防悬挂与幂等业务防卫屏障（TCC Fence）、跨进程 XID 对称透传、异步线程池快照穿透、多租户内部表排除与 TC 断连刚性熔断防卫。
+分布式事务协调与数据一致性限界上下文，负责统一纳管微服务分布式事务边界、全局事务（Global Transaction）生命周期驱动、AT / TCC 双核模式协同、TCC 防悬挂与幂等业务防卫屏障（TCC Fence）、跨进程 XID 对称透传、异步线程池快照穿透、多租户内部表排除、声明式动态数据源假切源安全守卫与 TC 断连刚性熔断防卫。
 
 ## Language
 
@@ -67,3 +67,7 @@ _Avoid_: 提单流程, 采购流程, 订单事务, 跨库提单
 **Two-Phase Action**:
 TCC 分布式事务中显式定义一阶段业务准备（Try）、二阶段确认提交（Confirm）与二阶段补偿回滚（Cancel）的标准生命周期执行契约。
 _Avoid_: TCC动作, 两阶段接口, 二阶段方法, TCC实现类
+
+**False Datasource Switch Guard**:
+针对 Spring 单物理连接本地事务（`DataSourceTransactionManager`）下声明式 `@DS` 切源被静默忽略而导致串库资损的风险，在数据源切源压栈前以最高优先级切面前置拦截校验证据：处于活跃 Seata 全局事务、Baomidou `@DSTransactional`、同源切换或 `Propagation.REQUIRES_NEW` 独立事务时合法放行，否则刚性抛出 `5105 (SEATA_FALSE_DATASOURCE_SWITCH)` 业务异常阻断（或按配置降级 `WARN` 日志）。
+_Avoid_: 切源拦截器, 数据源切换过滤器, `@DS` 强制校验器, 单连接防串库切面

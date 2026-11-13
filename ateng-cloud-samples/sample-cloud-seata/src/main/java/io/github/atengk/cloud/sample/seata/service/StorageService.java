@@ -80,7 +80,7 @@ public class StorageService {
     }
 
     /**
-     * 编程式 SeataGlobalLockTemplate 校验并扣减商品库存
+     * 编程式 SeataGlobalLockTemplate 校验并扣减商品库存（启用锁冲突退避重试）
      *
      * @param commodityCode 商品编码
      * @param count         扣减数量
@@ -88,8 +88,8 @@ public class StorageService {
      * @throws Throwable 执行异常
      */
     public boolean updateStockProgrammatic(String commodityCode, int count) throws Throwable {
-        return globalLockTemplate.execute(() -> {
-            log.info("编程式 GlobalLock 模板校验并扣减商品库存: [{}] 扣减 [{}]", commodityCode, count);
+        return globalLockTemplate.executeWithRetry(() -> {
+            log.info("编程式 GlobalLock 模板带退避重试校验并扣减商品库存: [{}] 扣减 [{}]", commodityCode, count);
             int current = getStock(commodityCode);
             BusinessAssert.isTrue(current >= count, "库存不足: %s", commodityCode);
             jdbcTemplate.update("UPDATE storage_tbl SET count = count - ? WHERE commodity_code = ?", count, commodityCode);

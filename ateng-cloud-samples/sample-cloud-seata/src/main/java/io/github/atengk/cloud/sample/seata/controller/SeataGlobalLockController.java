@@ -56,7 +56,7 @@ public class SeataGlobalLockController {
     @PostMapping("/programmatic-update")
     public Result<Boolean> programmaticUpdate(@RequestParam("commodityCode") String commodityCode,
                                              @RequestParam(value = "count", defaultValue = "1") Integer count) throws Throwable {
-        log.info("执行编程式 SeataGlobalLockTemplate 扣减库存: 商品 [{}], 数量 [{}]", commodityCode, count);
+        log.info("执行编程式 SeataGlobalLockTemplate#executeWithRetry 退避重试扣减库存: 商品 [{}], 数量 [{}]", commodityCode, count);
         boolean success = storageService.updateStockProgrammatic(commodityCode, count);
         return Result.success(success);
     }

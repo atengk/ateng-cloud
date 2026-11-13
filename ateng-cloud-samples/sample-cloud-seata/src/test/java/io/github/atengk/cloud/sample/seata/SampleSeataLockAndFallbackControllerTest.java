@@ -82,7 +82,7 @@ class SampleSeataLockAndFallbackControllerTest {
     }
 
     @Test
-    @DisplayName("测试编程式 SeataGlobalLockTemplate 执行库存安全扣减")
+    @DisplayName("测试编程式 SeataGlobalLockTemplate#executeWithRetry 执行库存安全扣减与库存不足 Fail-Fast 断言")
     void testProgrammaticGlobalLockUpdate() throws Exception {
         mockMvc.perform(post("/sample/cloud/seata/lock/programmatic-update")
                         .param("commodityCode", COMMODITY_CODE)
@@ -92,6 +92,15 @@ class SampleSeataLockAndFallbackControllerTest {
                 .andExpect(jsonPath("$.data").value(true));
 
         // 强断言数据库扣减 10 件，剩余 40
+        assertThat(storageService.getStock(COMMODITY_CODE)).isEqualTo(40);
+
+        // 库存不足时 BusinessAssert 业务异常透传且库存维持 40
+        mockMvc.perform(post("/sample/cloud/seata/lock/programmatic-update")
+                        .param("commodityCode", COMMODITY_CODE)
+                        .param("count", "999"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not(200)));
+
         assertThat(storageService.getStock(COMMODITY_CODE)).isEqualTo(40);
     }
 

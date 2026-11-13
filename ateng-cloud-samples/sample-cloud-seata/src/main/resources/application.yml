@@ -22,6 +22,8 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
+    dynamic:
+      enabled: false
 
   sql:
     init:
@@ -56,4 +58,5 @@ ateng:
         fence-enabled: true
       dynamic-datasource:
         enabled: false
-        guard-enabled: false
+        guard-enabled: true
+        fail-on-false-switch: true

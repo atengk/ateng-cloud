@@ -5,6 +5,8 @@ import io.github.atengk.cloud.sample.seata.model.dto.TccDebitDTO;
 import io.github.atengk.cloud.sample.seata.model.vo.TccActionVO;
 import io.github.atengk.cloud.sample.seata.service.AccountService;
 import io.github.atengk.cloud.seata.tcc.TccFenceBarrier;
+import io.github.atengk.cloud.seata.tcc.TccFenceCleanResult;
+import io.github.atengk.cloud.seata.tcc.TccFenceLogCleanScheduler;
 import io.github.atengk.cloud.seata.tcc.TccFenceRecord;
 import jakarta.validation.Valid;
 import org.apache.seata.core.context.RootContext;
@@ -38,10 +40,14 @@ public class SeataTccFenceController {
 
     private final AccountService accountService;
     private final TccFenceBarrier tccFenceBarrier;
+    private final TccFenceLogCleanScheduler cleanScheduler;
 
-    public SeataTccFenceController(AccountService accountService, TccFenceBarrier tccFenceBarrier) {
+    public SeataTccFenceController(AccountService accountService,
+                                   TccFenceBarrier tccFenceBarrier,
+                                   TccFenceLogCleanScheduler cleanScheduler) {
         this.accountService = accountService;
         this.tccFenceBarrier = tccFenceBarrier;
+        this.cleanScheduler = cleanScheduler;
     }
 
     /**
@@ -218,6 +224,17 @@ public class SeataTccFenceController {
                 accountService.getBalance(dto.getUserId()),
                 (firstCommit && secondCommit) ? "重复提交幂等放行成功，状态保持 COMMITTED 且资金不重复扣减" : "Confirm 异常"
         ));
+    }
+
+    /**
+     * 触发过期 TCC 防卫日志分级生命周期清理（终态与 SUSPENDED 差异化保留策略）
+     *
+     * @return 本次分级清理删除统计结果
+     */
+    @PostMapping("/clean")
+    public Result<TccFenceCleanResult> cleanExpiredFenceLogs() {
+        log.info("触发 TCC 防卫日志分级生命周期清理");
+        return Result.success(cleanScheduler.clean());
     }
 
     private String resolveXid(TccDebitDTO dto) {

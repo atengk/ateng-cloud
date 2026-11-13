@@ -16,7 +16,7 @@
 ## Relationships
 
 - **BOM → All Microservices & Cloud Starters**: 作为唯一权威物料清单，统管微服务全域版本基线，消除传递依赖冲突
-- **All → Standard Business Microservices**: 为标准 Servlet 微服务提供一站式起步全家桶，聚合 Nacos、Feign、Dubbo、Sentinel、Traffic 与 Seata 骨干能力，网关保持可选隔离
+- **All → Standard Business Microservices**: 为标准 Servlet 微服务提供一站式起步全家桶，聚合 Nacos、Feign、Dubbo、Sentinel 与 Traffic 骨干能力；`Seata` 保持独立按需引入、网关保持可选隔离
 - **Gateway → Internal Microservices**: 统一收口公网南北向流量，执行外部标头清洗与 Sa-Token 鉴权，向下游安全注入四维上下文与 Same-Token
 - **Sentinel → All Servlet Microservices**: 为 WebMVC 接口提供流量过载防护与路径防爆，为 Feign 客户端提供受管熔断降级
 - **Nacos → All Microservices**: 提供基础服务实例寻址表与全域动态配置源（包含 Gateway 动态路由定义与 Sentinel 动态规则）
