@@ -1,18 +1,14 @@
 package io.github.atengk.cloud.sample.traffic.controller;
 
-import io.github.atengk.boot.core.context.TenantContextHolder;
-import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sample.traffic.model.OrderFulfillmentVO;
+import io.github.atengk.cloud.sample.traffic.support.TrafficDownstreamClientSupport;
 import io.github.atengk.cloud.traffic.annotation.TrafficTag;
 import io.github.atengk.cloud.traffic.context.TrafficContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -31,9 +27,6 @@ public class TrafficCanaryPolicyController {
 
     private static final Logger log = LoggerFactory.getLogger(TrafficCanaryPolicyController.class);
 
-    private static final ParameterizedTypeReference<Result<OrderFulfillmentVO>> VO_TYPE_REF =
-            new ParameterizedTypeReference<>() {};
-
     @Autowired
     @Qualifier("loadBalancedRestTemplate")
     private RestTemplate restTemplate;
@@ -48,17 +41,7 @@ public class TrafficCanaryPolicyController {
     @TrafficTag("v2")
     public Result<OrderFulfillmentVO> declarativeTagDispatch(
             @RequestParam(value = "orderNo", required = false) String orderNo) {
-        String currentTag = TrafficContextHolder.getTag();
-        log.info("[PolicyController] 声明式入口执行 [@TrafficTag('v2'), currentTag='{}']", currentTag);
-
-        String effectiveOrderNo = (orderNo != null && !orderNo.isBlank()) ? orderNo : "ORD-20261103-DECL";
-        OrderFulfillmentVO vo = invokeDownstream(
-                "http://order-service/sample/cloud/traffic/topology/order-service/process?orderNo=" + effectiveOrderNo,
-                currentTag,
-                effectiveOrderNo
-        );
-        vo.prependVisitedNode("DeclarativeEntry[tag=" + (currentTag != null ? currentTag : "none") + "]");
-        return Result.success(vo);
+        return dispatchPolicyOrder(orderNo, "ORD-20261103-DECL", "DeclarativeEntry");
     }
 
     /**
@@ -70,17 +53,7 @@ public class TrafficCanaryPolicyController {
     @GetMapping("/whitelist-check")
     public Result<OrderFulfillmentVO> whitelistCheck(
             @RequestParam(value = "orderNo", required = false) String orderNo) {
-        String currentTag = TrafficContextHolder.getTag();
-        log.info("[PolicyController] 白名单校验入口执行 [currentTag='{}']", currentTag);
-
-        String effectiveOrderNo = (orderNo != null && !orderNo.isBlank()) ? orderNo : "ORD-20261103-WHITELIST";
-        OrderFulfillmentVO vo = invokeDownstream(
-                "http://order-service/sample/cloud/traffic/topology/order-service/process?orderNo=" + effectiveOrderNo,
-                currentTag,
-                effectiveOrderNo
-        );
-        vo.prependVisitedNode("WhitelistEntry[tag=" + (currentTag != null ? currentTag : "none") + "]");
-        return Result.success(vo);
+        return dispatchPolicyOrder(orderNo, "ORD-20261103-WHITELIST", "WhitelistEntry");
     }
 
     /**
@@ -92,17 +65,7 @@ public class TrafficCanaryPolicyController {
     @GetMapping("/strict-lane")
     public Result<OrderFulfillmentVO> strictLaneDispatch(
             @RequestParam(value = "orderNo", required = false) String orderNo) {
-        String currentTag = TrafficContextHolder.getTag();
-        log.info("[PolicyController] 严格隔离入口执行 [currentTag='{}']", currentTag);
-
-        String effectiveOrderNo = (orderNo != null && !orderNo.isBlank()) ? orderNo : "ORD-20261103-STRICT";
-        OrderFulfillmentVO vo = invokeDownstream(
-                "http://order-service/sample/cloud/traffic/topology/order-service/process?orderNo=" + effectiveOrderNo,
-                currentTag,
-                effectiveOrderNo
-        );
-        vo.prependVisitedNode("StrictLaneEntry[tag=" + (currentTag != null ? currentTag : "none") + "]");
-        return Result.success(vo);
+        return dispatchPolicyOrder(orderNo, "ORD-20261103-STRICT", "StrictLaneEntry");
     }
 
     /**
@@ -114,35 +77,66 @@ public class TrafficCanaryPolicyController {
     @GetMapping("/resilient-fallback")
     public Result<OrderFulfillmentVO> resilientFallbackDispatch(
             @RequestParam(value = "orderNo", required = false) String orderNo) {
-        String currentTag = TrafficContextHolder.getTag();
-        log.info("[PolicyController] 弹性降级入口执行 [currentTag='{}']", currentTag);
+        return dispatchPolicyOrder(orderNo, "ORD-20261103-FALLBACK", "FallbackEntry");
+    }
 
-        String effectiveOrderNo = (orderNo != null && !orderNo.isBlank()) ? orderNo : "ORD-20261103-FALLBACK";
-        OrderFulfillmentVO vo = invokeDownstream(
-                "http://order-service/sample/cloud/traffic/topology/order-service/process?orderNo=" + effectiveOrderNo,
-                currentTag,
-                effectiveOrderNo
-        );
-        vo.prependVisitedNode("FallbackEntry[tag=" + (currentTag != null ? currentTag : "none") + "]");
+    /**
+     * 按下游目标服务名细粒度激活严格泳道隔离演练 (strict-lane-services)
+     *
+     * @param targetService 演练目标服务名 (order-service / inventory-service / logistics-service)
+     * @param orderNo       订单编号 (可选)
+     * @return 订单履约全链路轨迹
+     */
+    @GetMapping("/strict-lane-service")
+    public Result<OrderFulfillmentVO> strictLaneByServiceDispatch(
+            @RequestParam(value = "targetService", defaultValue = "order-service") String targetService,
+            @RequestParam(value = "orderNo", required = false) String orderNo) {
+        String normalizedService = TrafficDownstreamClientSupport.validateTopologyService(targetService);
+        String effectiveOrderNo = TrafficDownstreamClientSupport.normalizeOrderNo(orderNo, "ORD-20261113-STRICT-SVC");
+        String currentTag = TrafficContextHolder.getTag();
+        log.info("[PolicyController] 服务级严格隔离入口执行 [targetService='{}', currentTag='{}']",
+                normalizedService, currentTag);
+
+        OrderFulfillmentVO vo = TrafficDownstreamClientSupport.invokeTopologyService(
+                restTemplate, normalizedService, currentTag, effectiveOrderNo);
+        vo.prependVisitedNode("StrictServiceEntry[service=" + normalizedService
+                + ", tag=" + (currentTag != null ? currentTag : "none") + "]");
         return Result.success(vo);
     }
 
     /**
-     * 统一调用下游微服务并解包 Result<OrderFulfillmentVO>
+     * 按流量染色标签细粒度激活严格泳道隔离演练 (strict-lane-tags)
+     *
+     * @param orderNo 订单编号 (可选)
+     * @return 订单履约全链路轨迹
      */
-    private OrderFulfillmentVO invokeDownstream(String url, String currentTag, String orderNo) {
-        ResponseEntity<Result<OrderFulfillmentVO>> response = restTemplate.exchange(url, HttpMethod.GET, null, VO_TYPE_REF);
-        Result<OrderFulfillmentVO> body = response.getBody();
-        if (body != null && body.getData() != null) {
-            return body.getData();
-        }
-        OrderFulfillmentVO fallbackVO = new OrderFulfillmentVO(
-                currentTag,
-                UserContextHolder.getUserId(),
-                TenantContextHolder.getTenantId(),
-                orderNo
-        );
-        fallbackVO.setDeliveryStatus("DOWNSTREAM_EMPTY");
-        return fallbackVO;
+    @GetMapping("/strict-lane-tag")
+    public Result<OrderFulfillmentVO> strictLaneByTagDispatch(
+            @RequestParam(value = "orderNo", required = false) String orderNo) {
+        return dispatchPolicyOrder(orderNo, "ORD-20261113-STRICT-TAG", "StrictTagEntry");
+    }
+
+    /**
+     * 三级规则消解演练入口 (Nacos 应用专属规则 -> Nacos 全局公共规则 -> 本地静态规则)
+     *
+     * @param orderNo 订单编号 (可选)
+     * @return 订单履约全链路轨迹
+     */
+    @GetMapping("/hierarchical-rules")
+    public Result<OrderFulfillmentVO> hierarchicalRulesDispatch(
+            @RequestParam(value = "orderNo", required = false) String orderNo) {
+        return dispatchPolicyOrder(orderNo, "ORD-20261113-HIER", "HierarchicalRuleEntry");
+    }
+
+    private Result<OrderFulfillmentVO> dispatchPolicyOrder(String orderNo, String defaultOrderNo, String entryNodePrefix) {
+        String effectiveOrderNo = TrafficDownstreamClientSupport.normalizeOrderNo(orderNo, defaultOrderNo);
+        String currentTag = TrafficContextHolder.getTag();
+        log.info("[PolicyController] {} 执行 [orderNo='{}', currentTag='{}']",
+                entryNodePrefix, effectiveOrderNo, currentTag);
+
+        OrderFulfillmentVO vo = TrafficDownstreamClientSupport.invokeTopologyService(
+                restTemplate, "order-service", currentTag, effectiveOrderNo);
+        vo.prependVisitedNode(entryNodePrefix + "[tag=" + (currentTag != null ? currentTag : "none") + "]");
+        return Result.success(vo);
     }
 }

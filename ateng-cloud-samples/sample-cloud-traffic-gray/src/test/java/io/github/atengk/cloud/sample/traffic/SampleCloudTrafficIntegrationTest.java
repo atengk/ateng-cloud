@@ -15,6 +15,7 @@ import io.github.atengk.cloud.traffic.rule.model.TrafficCondition;
 import io.github.atengk.cloud.traffic.rule.model.TrafficFieldSource;
 import io.github.atengk.cloud.traffic.rule.model.TrafficMatchOperator;
 import io.github.atengk.cloud.traffic.rule.model.TrafficRule;
+import io.github.atengk.cloud.traffic.rule.model.TrafficRuleMergeStrategy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -113,8 +114,11 @@ class SampleCloudTrafficIntegrationTest {
         TrafficContextHolder.clear();
         UserContextHolder.clear();
         trafficProperties.setStrictLane(false);
+        trafficProperties.setStrictLaneServices(Collections.emptySet());
+        trafficProperties.setStrictLaneTags(Collections.emptySet());
         trafficProperties.setFallbackToDefault(true);
         trafficProperties.setLaneContinuity(true);
+        trafficProperties.getNacos().setMergeStrategy(TrafficRuleMergeStrategy.OVERWRITE);
         trafficProperties.setAllowedTags(Collections.emptySet());
         trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
 
@@ -148,9 +152,17 @@ class SampleCloudTrafficIntegrationTest {
         TrafficContextHolder.clear();
         UserContextHolder.clear();
         trafficProperties.setStrictLane(false);
+        trafficProperties.setStrictLaneServices(Collections.emptySet());
+        trafficProperties.setStrictLaneTags(Collections.emptySet());
         trafficProperties.setFallbackToDefault(true);
+        trafficProperties.getNacos().setMergeStrategy(TrafficRuleMergeStrategy.OVERWRITE);
         trafficProperties.setAllowedTags(Collections.emptySet());
         trafficProperties.setWhitelistAction(TrafficWhitelistAction.STRIP);
+        if (nacosRuleListener != null) {
+            nacosRuleListener.receiveAppConfig("[]");
+            nacosRuleListener.receiveGlobalConfig("[]");
+        }
+        discoveryClient.clear();
     }
 
     @Test
@@ -746,6 +758,281 @@ class SampleCloudTrafficIntegrationTest {
         assertThat(TrafficContextHolder.getTag()).isNull();
     }
 
+    @Test
+    @DisplayName("电商履约切片: Spring 6 RestClient 东西向灰度调度透传与 OrderFulfillmentVO 轨迹")
+    void testOrderDispatchRestClientPropagationAndTrajectory() {
+        HttpHeaders grayHeaders = new HttpHeaders();
+        grayHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+
+        ResponseEntity<Result<OrderFulfillmentVO>> grayResp = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/restclient-dispatch?orderNo=ORD-RC-2001",
+                HttpMethod.GET,
+                new HttpEntity<>(grayHeaders),
+                ORDER_VO_TYPE_REF
+        );
+        OrderFulfillmentVO grayVo = extractOrderFulfillment(grayResp);
+        assertThat(grayVo.getTrafficTag()).isEqualTo("v2");
+        assertThat(grayVo.getOrderNo()).isEqualTo("ORD-RC-2001");
+        assertThat(grayVo.getVisitedNodes()).containsExactly(
+                "RestClientGateway[tag=v2]",
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "InventoryService[inst=inst-inv-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+
+        // 未染色请求验证基线路由
+        ResponseEntity<Result<OrderFulfillmentVO>> baseResp = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/restclient-dispatch?orderNo=ORD-RC-2002",
+                HttpMethod.GET,
+                null,
+                ORDER_VO_TYPE_REF
+        );
+        OrderFulfillmentVO baseVo = extractOrderFulfillment(baseResp);
+        assertThat(baseVo.getTrafficTag()).isNull();
+        assertThat(baseVo.getVisitedNodes()).containsExactly(
+                "RestClientGateway[tag=none]",
+                "OrderService[inst=inst-order-base, tag=default]",
+                "InventoryService[inst=inst-inv-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-base, tag=default]"
+        );
+    }
+
+    @Test
+    @DisplayName("电商履约切片: NOT_EXACT 与 NOT_IN 反向排除谓词精准分流与黑名单回退基线")
+    void testOrderDispatchNotExactAndNotInExclusionPredicate() {
+        if (nacosRuleListener == null) {
+            return;
+        }
+
+        TrafficRule exclusionRule = TrafficRule.builder()
+                .id("rule-exclusion-demo")
+                .name("非内部运维且非黑名单租户进入 v2 泳道")
+                .priority(10)
+                .targetTag("v2")
+                .conditions(List.of(
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.PATH)
+                                .operator(TrafficMatchOperator.EXACT)
+                                .expectedValue("/sample/cloud/traffic/order/exclusion-predicate")
+                                .build(),
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Biz-Channel")
+                                .operator(TrafficMatchOperator.NOT_EXACT)
+                                .expectedValue("internal-ops")
+                                .build(),
+                        TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Tenant-Code")
+                                .operator(TrafficMatchOperator.NOT_IN)
+                                .expectedValue("tenant-black-1,tenant-black-2")
+                                .build()
+                ))
+                .build();
+        nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(exclusionRule)));
+
+        // 1. 正常业务渠道且非排除租户 -> 命中 v2 泳道
+        HttpHeaders passHeaders = new HttpHeaders();
+        passHeaders.set("X-Biz-Channel", "mobile-app");
+        passHeaders.set("X-Tenant-Code", "tenant-vip-88");
+        OrderFulfillmentVO passVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/exclusion-predicate?orderNo=ORD-EXCL-PASS",
+                HttpMethod.GET,
+                new HttpEntity<>(passHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(passVo.getTrafficTag()).isEqualTo("v2");
+        assertThat(passVo.getVisitedNodes()).contains(
+                "ExclusionEntry[tag=v2]",
+                "OrderService[inst=inst-order-gray, tag=v2]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+
+        // 2. 命中 NOT_EXACT 排除值 internal-ops -> 回退基线
+        HttpHeaders excludedChannelHeaders = new HttpHeaders();
+        excludedChannelHeaders.set("X-Biz-Channel", "internal-ops");
+        excludedChannelHeaders.set("X-Tenant-Code", "tenant-vip-88");
+        OrderFulfillmentVO excludedChannelVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/exclusion-predicate?orderNo=ORD-EXCL-CH",
+                HttpMethod.GET,
+                new HttpEntity<>(excludedChannelHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(excludedChannelVo.getTrafficTag()).isNull();
+        assertThat(excludedChannelVo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-base, tag=default]"
+        );
+
+        // 3. 命中 NOT_IN 排除集合 tenant-black-2 -> 回退基线
+        HttpHeaders excludedTenantHeaders = new HttpHeaders();
+        excludedTenantHeaders.set("X-Biz-Channel", "mobile-app");
+        excludedTenantHeaders.set("X-Tenant-Code", "tenant-black-2");
+        OrderFulfillmentVO excludedTenantVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/order/exclusion-predicate?orderNo=ORD-EXCL-TN",
+                HttpMethod.GET,
+                new HttpEntity<>(excludedTenantHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(excludedTenantVo.getTrafficTag()).isNull();
+        assertThat(excludedTenantVo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-base, tag=default]"
+        );
+    }
+
+    @Test
+    @DisplayName("策略切片: 按服务名(strict-lane-services)与按标签(strict-lane-tags)细粒度严格泳道隔离")
+    void testPolicyGranularStrictLaneByServiceAndTag() {
+        // 1. 按服务名严格隔离：仅保护 order-service，未在列表中的 logistics-service 允许平滑降级基线
+        trafficProperties.setStrictLane(false);
+        trafficProperties.setStrictLaneServices(Set.of("order-service"));
+
+        HttpHeaders missingV3Headers = new HttpHeaders();
+        missingV3Headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v3-not-exist");
+
+        ResponseEntity<String> blockedServiceResp = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/strict-lane-service?targetService=order-service",
+                HttpMethod.GET,
+                new HttpEntity<>(missingV3Headers),
+                String.class
+        );
+        assertThat(blockedServiceResp.getStatusCode().value()).isIn(200, 503);
+        assertThat(blockedServiceResp.getBody()).contains("4210");
+
+        OrderFulfillmentVO unprotectedServiceVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/strict-lane-service?targetService=logistics-service",
+                HttpMethod.GET,
+                new HttpEntity<>(missingV3Headers),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(unprotectedServiceVo.getVisitedNodes()).contains(
+                "StrictServiceEntry[service=logistics-service, tag=v3-not-exist]",
+                "LogisticsService[inst=inst-logistics-base, tag=default]"
+        );
+
+        // 2. 按标签严格隔离：仅对 vip-v3 强阻断，普通 v2 缺实例仍平滑降级至基线
+        trafficProperties.setStrictLaneServices(Collections.emptySet());
+        trafficProperties.setStrictLaneTags(Set.of("vip-v3"));
+
+        HttpHeaders strictTagHeaders = new HttpHeaders();
+        strictTagHeaders.set(TrafficConstants.HEADER_TRAFFIC_TAG, "vip-v3");
+        ResponseEntity<String> blockedTagResp = restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/strict-lane-tag",
+                HttpMethod.GET,
+                new HttpEntity<>(strictTagHeaders),
+                String.class
+        );
+        assertThat(blockedTagResp.getStatusCode().value()).isIn(200, 503);
+        assertThat(blockedTagResp.getBody()).contains("4210");
+
+        discoveryClient.removeInstance("order-service", "inst-order-gray");
+        HttpHeaders normalV2Headers = new HttpHeaders();
+        normalV2Headers.set(TrafficConstants.HEADER_TRAFFIC_TAG, "v2");
+        OrderFulfillmentVO fallbackV2Vo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/strict-lane-tag",
+                HttpMethod.GET,
+                new HttpEntity<>(normalV2Headers),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(fallbackV2Vo.getVisitedNodes()).contains(
+                "OrderService[inst=inst-order-base, tag=default]",
+                "LogisticsService[inst=inst-logistics-gray, tag=v2]"
+        );
+    }
+
+    @Test
+    @DisplayName("策略切片: 三级规则消解 (App -> Global -> Local YAML) OVERWRITE 与 MERGE 闭环验证")
+    void testPolicyHierarchicalRuleResolutionAndMerge() {
+        if (nacosRuleListener == null) {
+            return;
+        }
+
+        // 1. Nacos 均为空 -> 回退命中 application.yml 中配置的本地静态规则 X-Local-Canary=enabled
+        HttpHeaders localHeaders = new HttpHeaders();
+        localHeaders.set("X-Local-Canary", "enabled");
+        OrderFulfillmentVO localVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/hierarchical-rules?orderNo=ORD-HIER-LOCAL",
+                HttpMethod.GET,
+                new HttpEntity<>(localHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(localVo.getTrafficTag()).isEqualTo("v2");
+        assertThat(localVo.getVisitedNodes()).contains("HierarchicalRuleEntry[tag=v2]");
+
+        // 2. OVERWRITE 模式: Global 覆盖 Local；随后 App 覆盖 Global
+        TrafficRule globalRule = TrafficRule.builder()
+                .id("rule-global-hier")
+                .priority(50)
+                .targetTag("v2")
+                .conditions(List.of(TrafficCondition.builder()
+                        .fieldSource(TrafficFieldSource.HEADER)
+                        .fieldName("X-Hier-Tier")
+                        .operator(TrafficMatchOperator.EXACT)
+                        .expectedValue("global")
+                        .build()))
+                .build();
+        nacosRuleListener.receiveGlobalConfig(JsonUtil.toJsonString(List.of(globalRule)));
+
+        OrderFulfillmentVO overwrittenLocalVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/hierarchical-rules?orderNo=ORD-HIER-OV1",
+                HttpMethod.GET,
+                new HttpEntity<>(localHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(overwrittenLocalVo.getTrafficTag()).isNull();
+
+        HttpHeaders globalHeaders = new HttpHeaders();
+        globalHeaders.set("X-Hier-Tier", "global");
+        OrderFulfillmentVO globalHitVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/hierarchical-rules?orderNo=ORD-HIER-OV2",
+                HttpMethod.GET,
+                new HttpEntity<>(globalHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(globalHitVo.getTrafficTag()).isEqualTo("v2");
+
+        // 3. MERGE 模式: 同时保留 App + Global + Local，三层规则共存按 priority 生效
+        trafficProperties.getNacos().setMergeStrategy(TrafficRuleMergeStrategy.MERGE);
+        nacosRuleListener.receiveAppConfig(JsonUtil.toJsonString(List.of(
+                TrafficRule.builder()
+                        .id("rule-app-hier")
+                        .priority(10)
+                        .targetTag("v2")
+                        .conditions(List.of(TrafficCondition.builder()
+                                .fieldSource(TrafficFieldSource.HEADER)
+                                .fieldName("X-Hier-Tier")
+                                .operator(TrafficMatchOperator.EXACT)
+                                .expectedValue("app")
+                                .build()))
+                        .build()
+        )));
+
+        OrderFulfillmentVO mergedLocalVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/hierarchical-rules?orderNo=ORD-HIER-MG1",
+                HttpMethod.GET,
+                new HttpEntity<>(localHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(mergedLocalVo.getTrafficTag()).isEqualTo("v2");
+
+        OrderFulfillmentVO mergedGlobalVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/hierarchical-rules?orderNo=ORD-HIER-MG2",
+                HttpMethod.GET,
+                new HttpEntity<>(globalHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(mergedGlobalVo.getTrafficTag()).isEqualTo("v2");
+
+        HttpHeaders appHeaders = new HttpHeaders();
+        appHeaders.set("X-Hier-Tier", "app");
+        OrderFulfillmentVO mergedAppVo = extractOrderFulfillment(restTemplate.exchange(
+                "http://localhost:" + port + "/sample/cloud/traffic/policy/hierarchical-rules?orderNo=ORD-HIER-MG3",
+                HttpMethod.GET,
+                new HttpEntity<>(appHeaders),
+                ORDER_VO_TYPE_REF
+        ));
+        assertThat(mergedAppVo.getTrafficTag()).isEqualTo("v2");
+    }
+
     /**
      * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫，仅非 local Profile 激活)
      */
@@ -785,6 +1072,10 @@ class SampleCloudTrafficIntegrationTest {
             if (list != null) {
                 list.removeIf(inst -> inst.getInstanceId().equals(instanceId));
             }
+        }
+
+        public void clear() {
+            instancesMap.clear();
         }
 
         @Override

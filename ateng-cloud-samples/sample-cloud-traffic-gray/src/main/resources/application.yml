@@ -37,6 +37,17 @@ ateng:
       fallback-to-default: true
       strict-lane: false
       lane-continuity: true
+      rules:
+        - id: "rule-local-canary-fallback"
+          name: "本地静态保底灰度规则"
+          priority: 100
+          target-tag: "v2"
+          condition-relation: AND
+          conditions:
+            - field-source: HEADER
+              field-name: "X-Local-Canary"
+              operator: EXACT
+              expected-value: "enabled"
       nacos:
         enabled: true
         group: DEFAULT_GROUP
