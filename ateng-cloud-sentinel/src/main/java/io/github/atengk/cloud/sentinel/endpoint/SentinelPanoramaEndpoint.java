@@ -92,7 +92,7 @@ public class SentinelPanoramaEndpoint {
         SentinelNacosRuleSubscriber subscriber = subscriberProvider != null ? subscriberProvider.getIfAvailable() : null;
         if (subscriber == null) {
             return new SentinelPanoramaReport.NacosRulesReport(
-                    false, null, null, null, null, null, null, null, null, false, 0, Collections.emptyList()
+                    false, null, null, null, null, null, null, null, null, false, 0, Collections.emptyList(), 0L, null
             );
         }
 
@@ -116,12 +116,22 @@ public class SentinelPanoramaEndpoint {
         int dsCount = subscriber.getDataSources().size();
 
         List<String> dataSources = new ArrayList<>();
-        if (prefix != null && nacosProps != null) {
-            dataSources.add(prefix + nacosProps.getFlow().getDataIdSuffix());
-            dataSources.add(prefix + nacosProps.getDegrade().getDataIdSuffix());
-            dataSources.add(prefix + nacosProps.getParamFlow().getDataIdSuffix());
-            dataSources.add(prefix + nacosProps.getSystem().getDataIdSuffix());
-            dataSources.add(prefix + nacosProps.getAuthority().getDataIdSuffix());
+        if (enabled && prefix != null && nacosProps != null) {
+            if (nacosProps.getFlow().isEnabled()) {
+                dataSources.add(prefix + nacosProps.getFlow().getDataIdSuffix());
+            }
+            if (nacosProps.getDegrade().isEnabled()) {
+                dataSources.add(prefix + nacosProps.getDegrade().getDataIdSuffix());
+            }
+            if (nacosProps.getParamFlow().isEnabled()) {
+                dataSources.add(prefix + nacosProps.getParamFlow().getDataIdSuffix());
+            }
+            if (nacosProps.getSystem().isEnabled()) {
+                dataSources.add(prefix + nacosProps.getSystem().getDataIdSuffix());
+            }
+            if (nacosProps.getAuthority().isEnabled()) {
+                dataSources.add(prefix + nacosProps.getAuthority().getDataIdSuffix());
+            }
         }
 
         return new SentinelPanoramaReport.NacosRulesReport(
@@ -136,7 +146,9 @@ public class SentinelPanoramaEndpoint {
                 secretKey,
                 subscribed,
                 dsCount,
-                dataSources
+                dataSources,
+                subscriber.getFailSafeCount(),
+                subscriber.getLastFailSafeError()
         );
     }
 

@@ -15,9 +15,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.datasource.NacosDataSourceFactory;
 import io.github.atengk.cloud.sentinel.datasource.SentinelNacosRuleSubscriber;
+import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -68,14 +70,20 @@ class SentinelNacosRuleDynamicRefreshTest {
     @Autowired
     private SentinelNacosRuleSubscriber subscriber;
 
+    @Autowired
+    private SentinelBlockCounter blockCounter;
+
     @AfterEach
     void tearDown() {
-        // 上下文零污染铁律：重置所有 RuleManager 规则
+        // 上下文零污染铁律：重置所有 RuleManager 规则、阻断计数器、MDC 与 Fail-Safe 统计
         FlowRuleManager.loadRules(Collections.emptyList());
         DegradeRuleManager.loadRules(Collections.emptyList());
         ParamFlowRuleManager.loadRules(Collections.emptyList());
         SystemRuleManager.loadRules(Collections.emptyList());
         AuthorityRuleManager.loadRules(Collections.emptyList());
+        blockCounter.reset();
+        MDC.clear();
+        subscriber.resetFailSafeStats();
     }
 
     @Test
@@ -264,6 +272,33 @@ class SentinelNacosRuleDynamicRefreshTest {
         // 4. 请求仍然受限流保护，坚决杜绝因规则被清空导致流量打穿
         mockMvc.perform(get("/sample/cloud/sentinel/seckill/vip-channel"))
                 .andExpect(status().isTooManyRequests());
+
+        // 5. 推送语义非法规则 (空 resource 与负数 count)，验证同样被 Fail-Safe 拦截且统计递增并在全景端点暴露
+        String negativeCountJson = """
+                [
+                    {
+                        "resource": "/sample/cloud/sentinel/seckill/vip-channel",
+                        "grade": 1,
+                        "count": -5.0,
+                        "limitApp": "default"
+                    }
+                ]
+                """;
+        mockNacosFactory.push("sample-cloud-sentinel-flow.json", negativeCountJson);
+        mockNacosFactory.push("sample-cloud-sentinel-flow.json", "[{\"resource\":\"  \",\"grade\":1,\"count\":1.0}]");
+
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        assertThat(FlowRuleManager.getRules().get(0).getCount()).isEqualTo(0.0);
+        assertThat(subscriber.getFailSafeCount()).isEqualTo(3L);
+        assertThat(subscriber.getLastFailSafeError()).contains("FlowRule").contains("resource must not be blank");
+
+        MvcResult panoramaResult = mockMvc.perform(get("/actuator/sentinel-panorama"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode nacosNode = objectMapper.readTree(panoramaResult.getResponse().getContentAsString()).get("nacosRules");
+        assertThat(nacosNode.get("failSafeCount").asLong()).isEqualTo(3L);
+        assertThat(nacosNode.get("lastFailSafeError").asText()).contains("FlowRule");
+        assertThat(nacosNode.get("dataSources").size()).isEqualTo(5);
     }
 
     /**

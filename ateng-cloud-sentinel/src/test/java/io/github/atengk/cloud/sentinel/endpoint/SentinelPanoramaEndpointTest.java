@@ -137,13 +137,58 @@ class SentinelPanoramaEndpointTest {
         assertThat(nacos.secretKey()).isEqualTo("******");
         assertThat(nacos.subscribed()).isTrue();
         assertThat(nacos.dataSourceCount()).isEqualTo(5);
-        assertThat(nacos.dataSources()).contains(
+        assertThat(nacos.dataSources()).containsExactly(
                 "order-service-flow.json",
                 "order-service-degrade.json",
                 "order-service-param-flow.json",
                 "order-service-system.json",
                 "order-service-authority.json"
         );
+        assertThat(nacos.failSafeCount()).isZero();
+        assertThat(nacos.lastFailSafeError()).isNull();
+
+        // 兼容旧版 12 参数构造器
+        SentinelPanoramaReport.NacosRulesReport legacyNacos = new SentinelPanoramaReport.NacosRulesReport(
+                true, "legacy", "SENTINEL_GROUP", "127.0.0.1:8848", "public",
+                null, null, null, null, true, 1, List.of("legacy-flow.json"));
+        assertThat(legacyNacos.failSafeCount()).isZero();
+        assertThat(legacyNacos.lastFailSafeError()).isNull();
+    }
+
+    @Test
+    @DisplayName("测试 Nacos 部分规则子项关闭时 dataSources 精准过滤与 Fail-Safe 状态映射")
+    void shouldFilterDisabledDataSourcesAndExposeFailSafeMetricsInNacosReport() {
+        AtengSentinelNacosRuleProperties nacosProps = new AtengSentinelNacosRuleProperties();
+        nacosProps.setEnabled(true);
+        nacosProps.setDataIdPrefix("partial-service");
+        nacosProps.getDegrade().setEnabled(false);
+        nacosProps.getSystem().setEnabled(false);
+        nacosProps.getAuthority().setEnabled(false);
+
+        SentinelNacosRuleSubscriber subscriber = mock(SentinelNacosRuleSubscriber.class);
+        when(subscriber.getProperties()).thenReturn(nacosProps);
+        when(subscriber.getResolvedDataIdPrefix()).thenReturn("partial-service");
+        when(subscriber.getEffectiveServerAddr()).thenReturn("127.0.0.1:8848");
+        when(subscriber.getEffectiveNamespace()).thenReturn("public");
+        when(subscriber.getEnvironment()).thenReturn(environment);
+        when(subscriber.getDataSources()).thenReturn(List.of(mock(), mock()));
+        when(subscriber.getFailSafeCount()).thenReturn(3L);
+        when(subscriber.getLastFailSafeError()).thenReturn("FlowRule: count must be >= 0");
+
+        @SuppressWarnings("unchecked")
+        ObjectProvider<SentinelNacosRuleSubscriber> subscriberProvider = mock(ObjectProvider.class);
+        when(subscriberProvider.getIfAvailable()).thenReturn(subscriber);
+
+        SentinelPanoramaEndpoint endpoint = new SentinelPanoramaEndpoint(null, subscriberProvider, null, environment);
+        SentinelPanoramaReport.NacosRulesReport nacos = endpoint.report().nacosRules();
+
+        assertThat(nacos.dataSourceCount()).isEqualTo(2);
+        assertThat(nacos.dataSources()).containsExactly(
+                "partial-service-flow.json",
+                "partial-service-param-flow.json"
+        );
+        assertThat(nacos.failSafeCount()).isEqualTo(3L);
+        assertThat(nacos.lastFailSafeError()).isEqualTo("FlowRule: count must be >= 0");
     }
 
     @Test

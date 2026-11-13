@@ -318,6 +318,108 @@ class SentinelNacosRuleSubscriberTest {
     }
 
     @Test
+    @DisplayName("测试核心字段语义校验防线与订阅器 failSafeCount/lastFailSafeError 原子追踪")
+    void shouldRejectSemanticallyInvalidRulesAndRecordFailSafeMetrics() {
+        AtengSentinelNacosRuleProperties properties = new AtengSentinelNacosRuleProperties();
+        properties.setEnabled(true);
+        properties.setDataIdPrefix("sem-service");
+
+        Map<String, MockReadableDataSource<?>> dataSourceMap = new ConcurrentHashMap<>();
+        NacosDataSourceFactory factory = new NacosDataSourceFactory() {
+            @Override
+            public <T> ReadableDataSource<String, T> createDataSource(
+                    Properties props, String groupId, String dataId, Converter<String, T> converter) {
+                MockReadableDataSource<T> ds = new MockReadableDataSource<>(converter);
+                dataSourceMap.put(dataId, ds);
+                return ds;
+            }
+        };
+
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory(Map.of("objectMapper", new ObjectMapper()));
+        SentinelNacosRuleSubscriber subscriber = new SentinelNacosRuleSubscriber(
+                properties, factory, beanFactory.getBeanProvider(ObjectMapper.class), "sem-service");
+        subscriber.afterPropertiesSet();
+
+        @SuppressWarnings("unchecked")
+        MockReadableDataSource<List<FlowRule>> flowDs =
+                (MockReadableDataSource<List<FlowRule>>) dataSourceMap.get("sem-service-flow.json");
+        @SuppressWarnings("unchecked")
+        MockReadableDataSource<List<DegradeRule>> degradeDs =
+                (MockReadableDataSource<List<DegradeRule>>) dataSourceMap.get("sem-service-degrade.json");
+        @SuppressWarnings("unchecked")
+        MockReadableDataSource<List<ParamFlowRule>> paramDs =
+                (MockReadableDataSource<List<ParamFlowRule>>) dataSourceMap.get("sem-service-param-flow.json");
+        @SuppressWarnings("unchecked")
+        MockReadableDataSource<List<AuthorityRule>> authDs =
+                (MockReadableDataSource<List<AuthorityRule>>) dataSourceMap.get("sem-service-authority.json");
+        @SuppressWarnings("unchecked")
+        MockReadableDataSource<List<SystemRule>> sysDs =
+                (MockReadableDataSource<List<SystemRule>>) dataSourceMap.get("sem-service-system.json");
+
+        // 1. 先写入各规则有效基准 (Last Known Good Rules)
+        flowDs.pushValue("[{\"resource\":\"/api/pay\",\"grade\":1,\"count\":50.0}]");
+        degradeDs.pushValue("[{\"resource\":\"/api/pay\",\"grade\":0,\"count\":200.0,\"timeWindow\":10}]");
+        paramDs.pushValue("[{\"resource\":\"itemHot\",\"grade\":1,\"paramIdx\":0,\"count\":5.0}]");
+        authDs.pushValue("[{\"resource\":\"/admin\",\"limitApp\":\"bff\",\"strategy\":0}]");
+        assertThat(subscriber.getFailSafeCount()).isZero();
+        assertThat(subscriber.getLastFailSafeError()).isNull();
+
+        // 2. null 元素拦截
+        assertThatThrownBy(() -> flowDs.pushValue("[null]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("null");
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        assertThat(subscriber.getFailSafeCount()).isEqualTo(1L);
+
+        assertThatThrownBy(() -> sysDs.pushValue("[null]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("null");
+        assertThat(subscriber.getFailSafeCount()).isEqualTo(2L);
+
+        // 3. FlowRule resource 空白与 count < 0 拦截
+        assertThatThrownBy(() -> flowDs.pushValue("[{\"resource\":\"  \",\"grade\":1,\"count\":10}]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("resource");
+        assertThatThrownBy(() -> flowDs.pushValue("[{\"resource\":\"/api/pay\",\"grade\":1,\"count\":-1}]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("count");
+        assertThat(FlowRuleManager.getRules()).hasSize(1);
+        assertThat(FlowRuleManager.getRules().get(0).getCount()).isEqualTo(50.0);
+
+        // 4. DegradeRule 与 ParamFlowRule 负数 count / 空 resource 拦截
+        assertThatThrownBy(() -> degradeDs.pushValue("[{\"resource\":\"/api/pay\",\"grade\":0,\"count\":-5,\"timeWindow\":10}]"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(DegradeRuleManager.getRules().get(0).getCount()).isEqualTo(200.0);
+
+        assertThatThrownBy(() -> paramDs.pushValue("[{\"resource\":\"\",\"grade\":1,\"paramIdx\":0,\"count\":5}]"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(ParamFlowRuleManager.getRules()).hasSize(1);
+
+        // 5. AuthorityRule 空 resource 拦截，以及语法损坏报文同步累计
+        assertThatThrownBy(() -> authDs.pushValue("[{\"limitApp\":\"bff\",\"strategy\":0}]"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(AuthorityRuleManager.getRules()).hasSize(1);
+
+        assertThatThrownBy(() -> flowDs.pushValue("{broken-json"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(subscriber.getFailSafeCount()).isEqualTo(8L);
+        assertThat(subscriber.getLastFailSafeError()).contains("FlowRule");
+
+        // 6. 非有限浮点数 (NaN / Infinity) 拦截与 resetFailSafeStats 统计重置校验
+        assertThatThrownBy(() -> flowDs.pushValue("[{\"resource\":\"/api/pay\",\"grade\":1,\"count\":\"NaN\"}]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("count");
+        assertThatThrownBy(() -> degradeDs.pushValue("[{\"resource\":\"/api/pay\",\"grade\":0,\"count\":\"Infinity\",\"timeWindow\":10}]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("count");
+        assertThat(subscriber.getFailSafeCount()).isEqualTo(10L);
+
+        subscriber.resetFailSafeStats();
+        assertThat(subscriber.getFailSafeCount()).isZero();
+        assertThat(subscriber.getLastFailSafeError()).isNull();
+    }
+
+    @Test
     @DisplayName("测试环境上下文四级连接继承与前缀解析")
     void testEnvironmentInheritance() {
         AtengSentinelNacosRuleProperties properties = new AtengSentinelNacosRuleProperties();

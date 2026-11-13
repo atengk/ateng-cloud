@@ -48,12 +48,32 @@ public record SentinelPanoramaReport(
             String secretKey,
             boolean subscribed,
             int dataSourceCount,
-            List<String> dataSources
+            List<String> dataSources,
+            long failSafeCount,
+            String lastFailSafeError
     ) implements Serializable {
         public NacosRulesReport {
-            if (dataSources == null) {
-                dataSources = Collections.emptyList();
-            }
+            dataSources = dataSources == null ? Collections.emptyList() : List.copyOf(dataSources);
+        }
+
+        /**
+         * 兼容存量 12 参数构造器
+         */
+        public NacosRulesReport(
+                boolean enabled,
+                String prefix,
+                String groupId,
+                String serverAddr,
+                String namespace,
+                String username,
+                String password,
+                String accessKey,
+                String secretKey,
+                boolean subscribed,
+                int dataSourceCount,
+                List<String> dataSources) {
+            this(enabled, prefix, groupId, serverAddr, namespace, username, password, accessKey, secretKey,
+                    subscribed, dataSourceCount, dataSources, 0L, null);
         }
     }
 

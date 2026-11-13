@@ -68,11 +68,17 @@ class SentinelPanoramaEndpointEndToEndTest {
 
         JsonNode root = objectMapper.readTree(mvcResult.getResponse().getContentAsString());
 
-        // 1. 基础概览
+        // 1. 基础概览与 Nacos 规则订阅快照
         assertThat(root.get("status").asText()).isEqualTo("UP");
         assertThat(root.get("appName").asText()).isEqualTo("sample-cloud-sentinel");
         assertThat(root.get("sentinelVersion").asText()).isNotEmpty();
         assertThat(root.get("timestamp").asLong()).isGreaterThan(0);
+
+        JsonNode nacosRules = root.get("nacosRules");
+        assertThat(nacosRules).isNotNull();
+        assertThat(nacosRules.get("dataSources").size()).isEqualTo(nacosRules.get("dataSourceCount").asInt());
+        assertThat(nacosRules.get("failSafeCount").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(nacosRules.has("lastFailSafeError")).isTrue();
 
         // 2. Web MVC 防卫配置快照
         JsonNode webMvc = root.get("webMvcConfig");
