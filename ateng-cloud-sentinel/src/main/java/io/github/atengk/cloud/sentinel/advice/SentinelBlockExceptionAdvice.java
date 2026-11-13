@@ -286,16 +286,8 @@ public class SentinelBlockExceptionAdvice implements HandlerExceptionResolver, O
     }
 
     private String resolveResourceName(BlockException ex, HttpServletRequest request) {
-        if (ex != null) {
-            try {
-                if (ex.getRule() != null && ex.getRule().getResource() != null) {
-                    return ex.getRule().getResource();
-                }
-            } catch (Throwable ignored) {
-                // 忽略 Sentinel 内部 rule.as(...) 空指针
-            }
-        }
-        return request != null ? request.getRequestURI() : "unknown";
+        String defaultResource = request != null ? request.getRequestURI() : "unknown";
+        return SentinelServletUtil.resolveBlockResourceName(ex, defaultResource);
     }
 
     private BlockException extractBlockException(Throwable throwable) {

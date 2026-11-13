@@ -160,6 +160,8 @@ class AtengUrlCleanerTest {
         properties.getUrlClean().setHexReplacement("hexId");
         AtengUrlCleaner customHexCleaner = new AtengUrlCleaner(properties);
         assertThat(customHexCleaner.clean("/api/docs/" + objectId24)).isEqualTo("/api/docs/{hexId}");
+        // 24 位全数字段优先按 Hex ID 收敛，不被 NUMERIC_ID_PATTERN 提前截胡
+        assertThat(customHexCleaner.clean("/api/docs/123456789012345678901234")).isEqualTo("/api/docs/{hexId}");
     }
 
     @Test

@@ -114,12 +114,12 @@ public class AtengSentinelProperties {
     }
 
     /**
-     * 阻断异常响应处理配置
+     * 阻断响应处理公共配置基类
      */
-    public static class BlockHandlerProperties {
+    public abstract static class AbstractBlockResponseProperties {
 
         /**
-         * 是否启用统一阻断异常处理器
+         * 是否启用处理器
          */
         private boolean enabled = true;
 
@@ -172,6 +172,12 @@ public class AtengSentinelProperties {
         public void setRetryAfterSeconds(int retryAfterSeconds) {
             this.retryAfter = retryAfterSeconds > 0 ? Duration.ofSeconds(retryAfterSeconds) : Duration.ZERO;
         }
+    }
+
+    /**
+     * 阻断异常响应处理配置
+     */
+    public static class BlockHandlerProperties extends AbstractBlockResponseProperties {
     }
 
     /**
@@ -419,61 +425,7 @@ public class AtengSentinelProperties {
     /**
      * @SentinelResource 切面异常兜底配置
      */
-    public static class BlockAdviceProperties {
-
-        /**
-         * 是否启用 @SentinelResource 切面未捕获异常统一兜底转译
-         */
-        private boolean enabled = true;
-
-        /**
-         * 切面兜底拦截时是否物理对齐 HTTP 状态码 (默认 true)
-         */
-        private boolean httpStatusAlign = true;
-
-        /**
-         * 阻断响应附带的 Retry-After 退避时长 (小于等于 0 时不输出该响应头，默认 {@link Duration#ZERO})
-         */
-        private Duration retryAfter = Duration.ZERO;
-
-        public boolean isEnabled() {
-            return enabled;
-        }
-
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
-        }
-
-        public boolean isHttpStatusAlign() {
-            return httpStatusAlign;
-        }
-
-        public void setHttpStatusAlign(boolean httpStatusAlign) {
-            this.httpStatusAlign = httpStatusAlign;
-        }
-
-        public Duration getRetryAfter() {
-            return retryAfter;
-        }
-
-        public void setRetryAfter(Duration retryAfter) {
-            this.retryAfter = (retryAfter != null && !retryAfter.isNegative()) ? retryAfter : Duration.ZERO;
-        }
-
-        /**
-         * 获取退避秒数 (兼容数值秒数配置与 {@link Duration} 的整数秒转换)
-         */
-        public int getRetryAfterSeconds() {
-            long seconds = retryAfter.toSeconds();
-            return seconds > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) seconds;
-        }
-
-        /**
-         * 设置退避秒数 (兼容 {@code retry-after-seconds} 配置绑定，小于等于 0 时归一为 {@link Duration#ZERO})
-         */
-        public void setRetryAfterSeconds(int retryAfterSeconds) {
-            this.retryAfter = retryAfterSeconds > 0 ? Duration.ofSeconds(retryAfterSeconds) : Duration.ZERO;
-        }
+    public static class BlockAdviceProperties extends AbstractBlockResponseProperties {
     }
 
     /**

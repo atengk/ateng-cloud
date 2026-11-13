@@ -192,8 +192,12 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
         if (counter == null) {
             return false;
         }
-        String resource = targetType.getSimpleName() + "#" + method.getName();
-        BlockException blockEx = resolveBlockForCounter(resource, cause);
+        String defaultResource = targetType.getSimpleName() + "#" + method.getName();
+        BlockException rawBlockEx = SentinelServletUtil.extractBlockException(cause);
+        String resource = SentinelServletUtil.resolveBlockResourceName(rawBlockEx, defaultResource);
+        BlockException blockEx = rawBlockEx != null
+                ? rawBlockEx
+                : resolveFallbackBlockForCounter(defaultResource, cause);
         HttpServletRequest currentRequest = resolveCurrentRequest();
         String clientIp = currentRequest != null ? SentinelServletUtil.resolveClientIp(currentRequest) : "feign-client";
         String traceId = SentinelServletUtil.resolveTraceId();
@@ -201,11 +205,7 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
         return true;
     }
 
-    private static BlockException resolveBlockForCounter(String resource, Throwable cause) {
-        BlockException blockEx = SentinelServletUtil.extractBlockException(cause);
-        if (blockEx != null) {
-            return blockEx;
-        }
+    private static BlockException resolveFallbackBlockForCounter(String resource, Throwable cause) {
         if (cause instanceof BusinessException businessEx) {
             SentinelResultCode resultCode = SentinelServletUtil.resolveSentinelResultCode(businessEx);
             if (resultCode != null) {
@@ -218,13 +218,13 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
                 SentinelResultCode.DEGRADE, resource, message);
     }
 
-    private static HttpServletRequest resolveCurrentRequest() {
+    private HttpServletRequest resolveCurrentRequest() {
         try {
             if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
                 return attributes.getRequest();
             }
-        } catch (Throwable ignored) {
-            // 非 Web 请求上下文或类路径无 Servlet 请求上下文时安全忽略
+        } catch (IllegalStateException | LinkageError ex) {
+            log.debug("No ServletRequestAttributes available while tracking Feign fallback: {}", ex.getMessage());
         }
         return null;
     }

@@ -1,11 +1,6 @@
 package io.github.atengk.cloud.sentinel.endpoint;
 
 import com.alibaba.csp.sentinel.slots.block.BlockException;
-import com.alibaba.csp.sentinel.slots.block.authority.AuthorityException;
-import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
-import com.alibaba.csp.sentinel.slots.block.flow.FlowException;
-import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowException;
-import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import org.slf4j.MDC;
 
@@ -73,18 +68,13 @@ public class SentinelBlockCounter {
         totalBlocked.incrementAndGet();
 
         String ruleType = SentinelServletUtil.determineRuleType(ex);
-        if (ex instanceof FlowException) {
-            flowCount.incrementAndGet();
-        } else if (ex instanceof DegradeException) {
-            degradeCount.incrementAndGet();
-        } else if (ex instanceof ParamFlowException) {
-            paramFlowCount.incrementAndGet();
-        } else if (ex instanceof SystemBlockException) {
-            systemCount.incrementAndGet();
-        } else if (ex instanceof AuthorityException) {
-            authorityCount.incrementAndGet();
-        } else {
-            otherCount.incrementAndGet();
+        switch (ruleType) {
+            case "FLOW" -> flowCount.incrementAndGet();
+            case "DEGRADE" -> degradeCount.incrementAndGet();
+            case "PARAM_FLOW" -> paramFlowCount.incrementAndGet();
+            case "SYSTEM" -> systemCount.incrementAndGet();
+            case "AUTHORITY" -> authorityCount.incrementAndGet();
+            default -> otherCount.incrementAndGet();
         }
 
         String safeResource = (resource != null && !resource.trim().isEmpty()) ? resource.trim() : "unknown";

@@ -3,6 +3,7 @@ package io.github.atengk.cloud.sentinel.fallback;
 import com.alibaba.csp.sentinel.slots.block.authority.AuthorityException;
 import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowException;
+import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowException;
 import com.alibaba.csp.sentinel.slots.system.SystemBlockException;
 import io.github.atengk.boot.core.exception.BusinessException;
@@ -183,9 +184,17 @@ class AtengFallbackFactoryTest {
         InvocationTargetException wrapped = new InvocationTargetException(
                 new UndeclaredThrowableException(new FlowException("wrapped-flow")));
         assertMappedCode(factory, wrapped, SentinelResultCode.FLOW_LIMIT);
+        assertThat(counter.getLastBlockEvent()).isNotNull();
+        assertThat(counter.getLastBlockEvent().resource()).isEqualTo("UserService#getUserName");
 
-        assertThat(counter.getTotalBlocked()).isEqualTo(6);
-        assertThat(counter.getFlowCount()).isEqualTo(2);
+        // 规则携带有效 resource 时优先记录 rule.getResource()
+        FlowRule rule = new FlowRule("GET:http://user-service/users/name");
+        FlowException ruleFlow = new FlowException("rule-flow", rule);
+        assertMappedCode(factory, ruleFlow, SentinelResultCode.FLOW_LIMIT);
+        assertThat(counter.getLastBlockEvent().resource()).isEqualTo("GET:http://user-service/users/name");
+
+        assertThat(counter.getTotalBlocked()).isEqualTo(7);
+        assertThat(counter.getFlowCount()).isEqualTo(3);
         assertThat(counter.getDegradeCount()).isEqualTo(1);
         assertThat(counter.getParamFlowCount()).isEqualTo(1);
         assertThat(counter.getSystemCount()).isEqualTo(1);

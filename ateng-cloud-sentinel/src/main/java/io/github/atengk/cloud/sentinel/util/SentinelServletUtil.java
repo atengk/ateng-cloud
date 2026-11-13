@@ -1,6 +1,7 @@
 package io.github.atengk.cloud.sentinel.util;
 
 import com.alibaba.csp.sentinel.adapter.spring.webmvc_v6x.callback.RequestOriginParser;
+import com.alibaba.csp.sentinel.slots.block.AbstractRule;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.alibaba.csp.sentinel.slots.block.authority.AuthorityException;
 import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
@@ -14,6 +15,7 @@ import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -37,6 +39,8 @@ import java.util.function.Predicate;
  * @since 2026-10-29
  */
 public final class SentinelServletUtil {
+
+    private static final Logger log = LoggerFactory.getLogger(SentinelServletUtil.class);
 
     public static final String HEADER_BLOCK_RULE = "X-Sentinel-Block-Rule";
     public static final String HEADER_RETRY_AFTER = "Retry-After";
@@ -77,7 +81,8 @@ public final class SentinelServletUtil {
         try {
             String origin = originParser.parseOrigin(request);
             return StringUtils.hasText(origin) ? origin.trim() : null;
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to resolve Sentinel request origin via RequestOriginParser: {}", ex.getMessage(), ex);
             return null;
         }
     }
@@ -88,6 +93,27 @@ public final class SentinelServletUtil {
     public static String resolveTraceId() {
         String traceId = MDC.get("traceId");
         return StringUtils.hasText(traceId) ? traceId.trim() : null;
+    }
+
+    /**
+     * 安全提取 {@link BlockException} 关联的规则资源名称（规避 Sentinel {@code getRule()} 在 rule 为 null 时抛出 NPE）
+     *
+     * @param ex              Sentinel 阻断异常
+     * @param defaultResource 规则或资源名为空时的缺省资源名
+     * @return 非空资源名称或缺省值
+     */
+    public static String resolveBlockResourceName(BlockException ex, String defaultResource) {
+        if (ex != null) {
+            try {
+                AbstractRule rule = ex.getRule();
+                if (rule != null && StringUtils.hasText(rule.getResource())) {
+                    return rule.getResource().trim();
+                }
+            } catch (NullPointerException npe) {
+                log.debug("BlockException rule is null when resolving resource name, fallback to '{}'", defaultResource);
+            }
+        }
+        return defaultResource;
     }
 
     /**

@@ -1,14 +1,18 @@
 package io.github.atengk.cloud.sample.sentinel;
 
+import com.alibaba.csp.sentinel.slots.block.RuleConstant;
+import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
+import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.cloud.sample.sentinel.client.PaymentFallbackFactory;
 import io.github.atengk.cloud.sample.sentinel.client.RemotePaymentClient;
 import io.github.atengk.cloud.sample.sentinel.model.payment.PaymentPayDTO;
 import io.github.atengk.cloud.sample.sentinel.model.payment.PaymentResultVO;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
 import io.github.atengk.cloud.sentinel.endpoint.SentinelBlockCounter;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +25,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,6 +47,9 @@ class SentinelFeignFallbackTest {
     private RemotePaymentClient remotePaymentClient;
 
     @Autowired
+    private PaymentFallbackFactory paymentFallbackFactory;
+
+    @Autowired
     private SentinelBlockCounter blockCounter;
 
     @Autowired
@@ -51,11 +60,13 @@ class SentinelFeignFallbackTest {
 
     @BeforeEach
     void setUp() {
+        FlowRuleManager.loadRules(Collections.emptyList());
         blockCounter.reset();
     }
 
     @AfterEach
     void tearDown() {
+        FlowRuleManager.loadRules(Collections.emptyList());
         blockCounter.reset();
     }
 
@@ -102,5 +113,43 @@ class SentinelFeignFallbackTest {
         assertThat(blockCounter.getTotalBlocked()).isEqualTo(1);
         assertThat(blockCounter.getLastBlockEvent()).isNotNull();
         assertThat(blockCounter.getLastBlockEvent().resource()).isEqualTo("RemotePaymentClient#payOrder");
+    }
+
+    @Test
+    @DisplayName("端到端客户端流控：Feign 出站触发 FlowException 时返回 HTTP 429 与 4201，且优先记录规则资源名")
+    void testFeignClientFlowBlockAlignsHttp429AndRecordsRuleResource() throws Exception {
+        String feignResource = "POST:http://localhost:8080/sample/cloud/sentinel/provider/payment/pay";
+        FlowRule flowRule = new FlowRule(feignResource);
+        flowRule.setGrade(RuleConstant.FLOW_GRADE_QPS);
+        flowRule.setCount(0);
+        flowRule.setLimitApp("default");
+        FlowRuleManager.loadRules(List.of(flowRule));
+
+        PaymentPayDTO payDTO = new PaymentPayDTO("ORD-TEST-1003", new BigDecimal("66.00"), "ALIPAY");
+        MvcResult mvcResult = mockMvc.perform(post("/sample/cloud/sentinel/payment/pay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payDTO)))
+                .andExpect(status().isTooManyRequests())
+                .andReturn();
+
+        assertThat(mvcResult.getResponse().getHeader("X-Sentinel-Block-Rule")).isEqualTo("FLOW");
+        JsonNode json = objectMapper.readTree(mvcResult.getResponse().getContentAsString());
+        assertThat(json.get("code").asInt()).isEqualTo(SentinelResultCode.FLOW_LIMIT.getCode());
+        assertThat(blockCounter.getTotalBlocked()).isEqualTo(1);
+        assertThat(blockCounter.getFlowCount()).isEqualTo(1);
+        assertThat(blockCounter.getLastBlockEvent()).isNotNull();
+        assertThat(blockCounter.getLastBlockEvent().resource()).isEqualTo(feignResource);
+    }
+
+    @Test
+    @DisplayName("下游普通业务异常原样透传：PaymentFallbackFactory 不覆写普通 BusinessException 且不触发阻断计数")
+    void testFeignOrdinaryBusinessExceptionPassthroughWithoutCounting() {
+        BusinessException downstreamBiz = new BusinessException(10001, "账户余额不足");
+        RemotePaymentClient fallbackProxy = paymentFallbackFactory.create(downstreamBiz);
+        PaymentPayDTO payDTO = new PaymentPayDTO("ORD-TEST-1004", new BigDecimal("50.00"), "WECHAT");
+
+        assertThatThrownBy(() -> fallbackProxy.payOrder(payDTO, false, false))
+                .isSameAs(downstreamBiz);
+        assertThat(blockCounter.getTotalBlocked()).isZero();
     }
 }

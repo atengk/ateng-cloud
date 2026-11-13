@@ -25,7 +25,7 @@ import java.util.regex.PatternSyntaxException;
  *     <li><b>尾部斜杠归一化</b>：对长度大于 1 的非根路径截除尾部斜杠，避免 {@code /orders/1001} 与 {@code /orders/1001/} 分裂为双节点；</li>
  *     <li><b>白名单排除模式优先</b>：匹配排除白名单（默认包含 /actuator/**、Swagger/OpenAPI 等探针）时直接返回空字符串跳过资源创建；</li>
  *     <li><b>Spring MVC 模板防串扰提取</b>：仅当当前请求路径匹配且模板非泛化通配符（{@code /**}、{@code /*}）时提取路由模式，并对模板二次校验白名单；</li>
- *     <li><b>有序正则安全保底</b>：依次执行预编译自定义正则（支持捕获组 {@code $1} 等并做构造期 Fail-Fast 校验）、36 位 UUID、纯数字 ID 及 24/32 位纯十六进制哈希段替换；</li>
+ *     <li><b>有序正则安全保底</b>：依次执行预编译自定义正则（支持捕获组 {@code $1} 等并做构造期 Fail-Fast 校验）、36 位 UUID、24/32 位纯十六进制哈希段及纯数字 ID 替换；</li>
  *     <li><b>根除内存无界泄漏</b>：杜绝因动态主键导致 Sentinel 内部 DefaultNode/ClusterNode 监控树发生 OOM 爆炸。</li>
  * </ul>
  * </p>
@@ -90,8 +90,8 @@ public class AtengUrlCleaner implements UrlCleaner {
         }
 
         cleaned = UUID_PATTERN.matcher(cleaned).replaceAll(uuidReplacementQuoted);
-        cleaned = NUMERIC_ID_PATTERN.matcher(cleaned).replaceAll(numberReplacementQuoted);
         cleaned = HEX_ID_PATTERN.matcher(cleaned).replaceAll(hexReplacementQuoted);
+        cleaned = NUMERIC_ID_PATTERN.matcher(cleaned).replaceAll(numberReplacementQuoted);
 
         return cleaned;
     }

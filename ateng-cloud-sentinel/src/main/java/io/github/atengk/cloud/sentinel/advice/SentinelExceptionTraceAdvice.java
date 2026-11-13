@@ -6,6 +6,8 @@ import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties;
 import io.github.atengk.cloud.sentinel.util.SentinelServletUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -52,6 +54,8 @@ public class SentinelExceptionTraceAdvice implements HandlerExceptionResolver, O
      * 用于在当前 {@link HttpServletRequest} 中标记异常已被追踪过的请求属性键（保障单次请求幂等）
      */
     public static final String TRACE_RECORDED_ATTRIBUTE = SentinelExceptionTraceAdvice.class.getName() + ".TRACE_RECORDED";
+
+    private static final Logger log = LoggerFactory.getLogger(SentinelExceptionTraceAdvice.class);
 
     private static final Class<?> JAKARTA_VALIDATION_EXCEPTION_CLASS = resolveOptionalClass(
             "jakarta.validation.ValidationException");
@@ -177,7 +181,8 @@ public class SentinelExceptionTraceAdvice implements HandlerExceptionResolver, O
     private static Class<?> resolveOptionalClass(String className) {
         try {
             return ClassUtils.forName(className, SentinelExceptionTraceAdvice.class.getClassLoader());
-        } catch (Throwable ignored) {
+        } catch (ClassNotFoundException | LinkageError ex) {
+            log.debug("Optional exception class '{}' not present on classpath, exemption disabled: {}", className, ex.getMessage());
             return null;
         }
     }

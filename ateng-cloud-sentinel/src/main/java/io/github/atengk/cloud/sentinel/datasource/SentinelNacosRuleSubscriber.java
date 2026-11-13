@@ -282,20 +282,11 @@ public class SentinelNacosRuleSubscriber implements InitializingBean, Disposable
                 return rules;
             } catch (IllegalArgumentException e) {
                 notifyFailSafe(e.getMessage());
-                log.warn("Rule Fail-Safe Invariant triggered: Sentinel {} semantic/format validation failed (cause: {}), aborting update to preserve Last Known Good Rules. Payload: [{}]",
-                        ruleTypeName, e.getMessage(), sanitizeForLog(source));
                 throw e;
             } catch (Exception e) {
                 notifyFailSafe("JSON syntax error: " + e.getMessage());
-                log.warn("Rule Fail-Safe Invariant triggered: failed to parse Sentinel {} from JSON syntax error (cause: {}), aborting update to preserve Last Known Good Rules. Malformed payload: [{}]",
-                        ruleTypeName, e.getMessage(), sanitizeForLog(source));
                 throw new IllegalArgumentException("Failed to parse Sentinel " + ruleTypeName + " from JSON payload", e);
             }
-        }
-
-        private String sanitizeForLog(String raw) {
-            String singleLine = raw.replace('\r', ' ').replace('\n', ' ').trim();
-            return singleLine.length() > 512 ? singleLine.substring(0, 512) + "..." : singleLine;
         }
 
         private void validateSemanticRules(List<T> rules) {

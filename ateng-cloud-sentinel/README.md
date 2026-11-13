@@ -244,7 +244,7 @@ public class SentinelSecurityAuthorityController {
 
 #### 3) 核心机制与防线解析
 
-原生 Sentinel 对每个不同 URL 创建独立 `ClusterNode` 资源树节点，高频 RESTful 变参请求极易撑爆 JVM 堆内存。`AtengUrlCleaner` 对规范化路径（去除 Query 参数）按**“Ant 白名单旁路 $\rightarrow$ 预编译 `custom-patterns`（按配置顺序对完整路径执行 `Matcher.replaceAll`） $\rightarrow$ 36 位带连字符 UUID（`{uuid}`） $\rightarrow$ 纯数字段（`{id}`） $\rightarrow$ 24 位或 32 位十六进制串（如 MongoDB ObjectId / MD5，替换为 `hex-replacement`）”**逐级收敛 URI（例如 `/orders/987654321` $\rightarrow$ `/orders/{id}`，`/orders/ORD-2026-001` $\rightarrow$ `/orders/{orderNo}`），彻底消除高基数 OOM 风险。为防止空占位或通配正则误伤根路径，内部严格校验自定义模式非空且替换结果保留前导斜杠 `/`。
+原生 Sentinel 对每个不同 URL 创建独立 `ClusterNode` 资源树节点，高频 RESTful 变参请求极易撑爆 JVM 堆内存。`AtengUrlCleaner` 对路径依次执行**“尾部斜杠归一化 $\rightarrow$ Ant 白名单旁路 $\rightarrow$ 当前请求上下文 Spring MVC 路由模板提取（防跨路径串扰、过滤 `/*` 与 `/**` 并二次校验白名单） $\rightarrow$ 预编译 `custom-patterns`（按配置顺序执行 `Matcher.replaceAll`） $\rightarrow$ 36 位带连字符 UUID（`uuid-replacement`） $\rightarrow$ 24/32 位纯十六进制串（`hex-replacement`） $\rightarrow$ 纯数字段（`number-replacement`）”**逐级收敛 URI（例如 `/orders/987654321/` $\rightarrow$ `/orders/{id}`，`/orders/ORD-2026-001` $\rightarrow$ `/orders/{orderNo}`），彻底消除高基数 OOM 风险。构造期对 `custom-patterns` 执行预编译与 Fail-Fast 校验（拦截非法正则语法、悬空转义 `\` 及越界或未定义的捕获组引用 `$1` / `${name}`），并对替换占位符做字面量转义保护，防止正则元字符破坏清洗结果。
 
 ---
 
