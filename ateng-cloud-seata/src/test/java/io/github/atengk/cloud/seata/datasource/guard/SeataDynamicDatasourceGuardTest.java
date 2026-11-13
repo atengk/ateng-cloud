@@ -186,6 +186,29 @@ class SeataDynamicDatasourceGuardTest {
                 .doesNotThrowAnyException();
     }
 
+    @Test
+    @DisplayName("当实现类方法未标注但接口方法声明 Propagation.REQUIRES_NEW 时仍应安全放行")
+    void shouldAllowSwitchWhenInterfaceDeclaresRequiresNew() throws NoSuchMethodException {
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        DynamicDataSourceContextHolder.push("master");
+
+        var implMethod = InterfaceRequiresNewServiceImpl.class.getMethod("requiresNewAction");
+        assertThatCode(() -> guard.validateSwitch("slave_ds", implMethod, InterfaceRequiresNewServiceImpl.class))
+                .doesNotThrowAnyException();
+    }
+
+    interface RequiresNewContract {
+        @Transactional(propagation = Propagation.REQUIRES_NEW)
+        void requiresNewAction();
+    }
+
+    static class InterfaceRequiresNewServiceImpl implements RequiresNewContract {
+        @Override
+        public void requiresNewAction() {
+        }
+    }
+
     static class MockRequiresNewService {
         @Transactional(propagation = Propagation.REQUIRES_NEW)
         public void requiresNewMethod() {

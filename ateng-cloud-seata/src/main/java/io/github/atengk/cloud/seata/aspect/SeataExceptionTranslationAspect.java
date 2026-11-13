@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.util.ClassUtils;
+import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -71,15 +73,26 @@ public class SeataExceptionTranslationAspect implements Ordered {
     }
 
     private boolean isGlobalTransactionalInvocation(ProceedingJoinPoint joinPoint) {
-        if (joinPoint.getSignature() instanceof MethodSignature methodSignature) {
-            Method method = methodSignature.getMethod();
-            Class<?> targetClass = joinPoint.getTarget() != null
-                    ? joinPoint.getTarget().getClass()
-                    : method.getDeclaringClass();
-            Method specificMethod = AopUtils.getMostSpecificMethod(method, targetClass);
-            return AnnotatedElementUtils.hasAnnotation(specificMethod, GlobalTransactional.class)
-                    || AnnotatedElementUtils.hasAnnotation(method, GlobalTransactional.class)
-                    || AnnotatedElementUtils.hasAnnotation(targetClass, GlobalTransactional.class);
+        if (!(joinPoint.getSignature() instanceof MethodSignature methodSignature)) {
+            return false;
+        }
+        Method method = methodSignature.getMethod();
+        Class<?> targetClass = joinPoint.getTarget() != null
+                ? joinPoint.getTarget().getClass()
+                : method.getDeclaringClass();
+        Method specificMethod = AopUtils.getMostSpecificMethod(method, targetClass);
+        if (AnnotatedElementUtils.hasAnnotation(specificMethod, GlobalTransactional.class)
+                || AnnotatedElementUtils.hasAnnotation(method, GlobalTransactional.class)
+                || AnnotatedElementUtils.hasAnnotation(targetClass, GlobalTransactional.class)
+                || AnnotatedElementUtils.hasAnnotation(method.getDeclaringClass(), GlobalTransactional.class)) {
+            return true;
+        }
+        for (Class<?> iface : ClassUtils.getAllInterfacesForClassAsSet(targetClass)) {
+            Method ifaceMethod = ReflectionUtils.findMethod(iface, specificMethod.getName(), specificMethod.getParameterTypes());
+            if ((ifaceMethod != null && AnnotatedElementUtils.hasAnnotation(ifaceMethod, GlobalTransactional.class))
+                    || AnnotatedElementUtils.hasAnnotation(iface, GlobalTransactional.class)) {
+                return true;
+            }
         }
         return false;
     }

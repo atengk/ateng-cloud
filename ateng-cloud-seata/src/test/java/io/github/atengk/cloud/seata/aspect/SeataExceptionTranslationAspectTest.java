@@ -265,4 +265,46 @@ class SeataExceptionTranslationAspectTest {
             return "lock-ok";
         }
     }
+
+    @Test
+    @DisplayName("测试 CGLIB 代理下仅在接口声明 @GlobalTransactional 时仍能触发慢事务 WARN 告警")
+    void testInterfaceLevelGlobalTransactionalWarnLogging() throws Exception {
+        SeataProperties properties = new SeataProperties();
+        properties.getTx().setDefaultTimeout(Duration.ofMillis(20));
+
+        InterfaceTxServiceImpl target = new InterfaceTxServiceImpl();
+        AspectJProxyFactory factory = new AspectJProxyFactory(target);
+        factory.setProxyTargetClass(true);
+        factory.addAspect(new SeataExceptionTranslationAspect(properties));
+        InterfaceTxServiceImpl proxy = factory.getProxy();
+
+        Logger aspectLogger = (Logger) LoggerFactory.getLogger(SeataExceptionTranslationAspect.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        aspectLogger.addAppender(appender);
+        try {
+            assertThat(proxy.executeInterfaceTx()).isEqualTo("iface-tx-ok");
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == Level.WARN)
+                    .singleElement()
+                    .satisfies(event -> assertThat(event.getFormattedMessage()).contains("executeInterfaceTx"));
+        } finally {
+            aspectLogger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    interface InterfaceTxContract {
+        @GlobalTransactional
+        String executeInterfaceTx() throws InterruptedException;
+    }
+
+    static class InterfaceTxServiceImpl implements InterfaceTxContract {
+        @Override
+        @GlobalLock
+        public String executeInterfaceTx() throws InterruptedException {
+            Thread.sleep(45);
+            return "iface-tx-ok";
+        }
+    }
 }

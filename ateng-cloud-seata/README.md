@@ -205,7 +205,8 @@ seata:
 ```java
 package io.github.atengk.cloud.sample.seata.service;
 
-import io.github.atengk.boot.core.util.BusinessAssert;
+import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.cloud.seata.code.SeataResultCode;
 import org.apache.seata.core.context.RootContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -240,8 +241,8 @@ public class OrderService {
     @Transactional(rollbackFor = Exception.class)
     public Long createOrder(String userId, String commodityCode, int orderCount, boolean forceRollback) {
         int orderMoney = orderCount * DEFAULT_UNIT_PRICE;
-        log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}], 强制回滚 [{}]",
-                RootContext.getXID(), userId, commodityCode, orderCount, forceRollback);
+        log.info("开启下单事务 (XID: [{}]): 用户 [{}], 商品 [{}], 数量 [{}], 金额 [{}], 模拟回滚 [{}]",
+                RootContext.getXID(), userId, commodityCode, orderCount, orderMoney, forceRollback);
 
         // 1. 扣减库存 (AT 模式分支一)
         storageService.deduct(commodityCode, orderCount);
@@ -249,11 +250,16 @@ public class OrderService {
         // 2. 扣减账户余额 (AT 模式分支二)
         accountService.debit(userId, orderMoney);
 
-        // 3. 模拟异常触发两阶段自动回滚
-        BusinessAssert.isFalse(forceRollback, "模拟业务异常，触发 Seata 分布式事务全链路原子回滚！");
+        // 3. 创建订单记录
+        Long orderId = insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
+        log.info("订单创建成功，订单 ID: [{}]", orderId);
 
-        // 4. 创建订单记录
-        return insertOrderRecord(userId, commodityCode, orderCount, orderMoney);
+        // 4. 显式模拟异常触发全局两阶段原子回滚
+        if (forceRollback) {
+            throw new BusinessException(SeataResultCode.SEATA_TRANSACTION_FAILED, "模拟业务异常触发全局两阶段原子回滚: 用户 " + userId);
+        }
+
+        return orderId;
     }
 }
 ```
@@ -336,7 +342,7 @@ ateng:
       dynamic-datasource:
         enabled: true              # 开启 Baomidou dynamic-datasource 原生代理协同
         mode: AT                   # 事务代理模式：AT 或 XA
-        auto-proxy: true           # 自动对连接池进行 SeataDataSourceProxy 包装
+        auto-proxy: true           # 自动对连接池进行 DataSourceProxy 包装
         guard-enabled: true        # 开启声明式 @DS 假切源安全守卫与切面
         fail-on-false-switch: true # 单连接假切源抛出 5105 阻断（false 则降级 WARN 放行）
 ```
@@ -368,32 +374,60 @@ public class SeataDatasourceGuardService {
     }
 
     /**
-     * 活跃 Seata 全局事务下合法放行 @DS("slave") 跨库切源
+     * 在开启 Seata 全局分布式事务（绑定 XID）的上下文中执行 @DS("slave") 跨库合法切换
      */
     @Transactional(rollbackFor = Exception.class)
     public DatasourceGuardVO executeSwitchInGlobalTx(String xid) {
-        RootContext.bind(xid);
+        String effectiveXid = StringUtils.hasText(xid)
+                ? xid
+                : "127.0.0.1:8091:ds-guard-global-" + System.currentTimeMillis();
+        boolean manuallyBound = false;
+        if (!RootContext.inGlobalTransaction()) {
+            RootContext.bind(effectiveXid);
+            manuallyBound = true;
+        }
         DynamicDataSourceContextHolder.push("master");
         try {
             String targetDs = slaveDatasourceService.executeOnSlave();
-            return new DatasourceGuardVO("master", targetDs, RootContext.getXID(), true, "活跃全局事务放行");
+            return new DatasourceGuardVO(
+                    "master",
+                    targetDs,
+                    RootContext.getXID(),
+                    true,
+                    "活跃全局分布式事务 XID 已激活，SeataDynamicDatasourceGuardAspect 合法放行 @DS(\"slave\") 跨库切源"
+            );
         } finally {
             DynamicDataSourceContextHolder.clear();
-            RootContext.unbind();
+            if (manuallyBound && RootContext.inGlobalTransaction()) {
+                RootContext.unbind();
+            }
         }
     }
 
     /**
-     * 普通 Spring 单物理连接本地事务下触发 @DS("slave") -> 自动拦截并抛出 5105
+     * 在普通 Spring 单物理连接事务（无全局 XID）中触发 @DS("slave") 非法跨库假切源
      */
     @Transactional(rollbackFor = Exception.class)
     public DatasourceGuardVO executeFalseSwitchInLocalTx() {
+        String previousXid = RootContext.getXID();
+        if (StringUtils.hasText(previousXid)) {
+            RootContext.unbind();
+        }
         DynamicDataSourceContextHolder.push("master");
         try {
             String targetDs = slaveDatasourceService.executeOnSlave();
-            return new DatasourceGuardVO("master", targetDs, null, true, "未触发阻断");
+            return new DatasourceGuardVO(
+                    "master",
+                    targetDs,
+                    null,
+                    true,
+                    "未触发假切源阻断（请确认 guard-enabled 与 fail-on-false-switch 配置）"
+            );
         } finally {
             DynamicDataSourceContextHolder.clear();
+            if (StringUtils.hasText(previousXid)) {
+                RootContext.bind(previousXid);
+            }
         }
     }
 }
@@ -1036,7 +1070,7 @@ public Long createOrderWithDownstream(String userId, String commodityCode, int o
 
 ### 7.1 动态数据源切换与本地事务顺序红线
 - **避坑要点**：一旦 `@Transactional` 切面提前获取并绑定主库数据库连接，方法内部或下游再标注 `@DS("slave")` 也无法真实切换物理连接（Spring 单连接事务静默忽略数据源键变更）。若误在无全局事务保障下写偏目标库，将导致隐蔽的数据错库落盘。
-- **生产调优建议**：始终在最外层（事务开启前）确定数据源，并强制保持默认 `ateng.cloud.seata.dynamic-datasource.guard-enabled=true` 与 `fail-on-false-switch=true`；当在本地事务内违规切源时立即抛出 `5105 (SEATA_FALSE_DATASOURCE_SWITCH)` Fail-Fast 阻断，结合 `@GlobalTransactional` + `SeataDynamicDataSourceProcessor` 在全局事务维度安全路由与代理各库分支。
+- **生产调优建议**：始终在最外层（事务开启前）确定数据源，并强制保持默认 `ateng.cloud.seata.dynamic-datasource.guard-enabled=true` 与 `fail-on-false-switch=true`；当在本地事务内违规切源时立即抛出 `5105 (SEATA_FALSE_DATASOURCE_SWITCH)` Fail-Fast 阻断，结合 `@GlobalTransactional` + `SeataDynamicDataSourcePropertiesCustomizer` / `SeataDynamicDataSourceCoordinator` 在全局事务维度安全路由与代理各库分支。
 
 ### 7.2 热点库存行锁冲突与 `@GlobalLock` 取舍
 - **避坑要点**：AT 模式会在一阶段生成 `undo_log` 并向 TC 申请行级全局锁；高并发只读校验或轻量排他读场景若滥用 `@GlobalTransactional`，会成倍放大 `undo_log` 写入与 TC 锁竞争延迟。
@@ -1044,7 +1078,7 @@ public Long createOrderWithDownstream(String userId, String commodityCode, int o
 
 ### 7.3 `tcc_fence_log` 分级清理与自动建表守则
 - **避坑要点**：若在生产环境开启 `tcc.auto-init-table: true`，低权限数据库账号会触发 DDL 报错或启动阻塞；若完全关闭清理任务，`tcc_fence_log` 日积月累将拖慢主键冲突检查甚至撑爆磁盘；反之若无差别短周期物理删除 `SUSPENDED(4)` 记录，又可能放过超迟到的悬挂 `Try` 请求。
-- **生产调优建议**：生产环境坚守 `auto-init-table: false` 并通过 DBA 提前执行建表 DDL（保留 `gmt_modified` 与 `status` 联合索引）；启用 `clean-enabled: true`，保留默认值 `log-ttl: 3d`、`suspended-retention-multiplier: 3`（悬挂记录留存 `9d`）、`clean-batch-size: 500` 防长事务锁表；并联动 `SeataTenantProperties` 放行 `tcc_fence_log` 与 `undo_log`，防止多租户插件重写破坏主外键/唯一键语义。
+- **生产调优建议**：生产环境坚守 `auto-init-table: false` 并通过 DBA 提前执行建表 DDL（保留 `gmt_modified` 与 `status` 联合索引）；启用 `clean-enabled: true`，保留默认值 `log-ttl: 3d`、`suspended-retention-multiplier: 3`（悬挂记录留存 `9d`）、`clean-batch-size: 500` 防长事务锁表；并联动 `SeataTenantLineHandlerPostProcessor` 与 `ateng.cloud.seata.tcc.table-name` 自动忽略 `tcc_fence_log` 与 `undo_log`，防止多租户插件重写破坏主外键/唯一键语义。
 
 ### 7.4 活跃事务内熔断降级与受管并发防泄漏
 - **避坑要点**：① 在 `@GlobalTransactional` 链路中对下游 Feign/Dubbo 调用配置 Sentinel Fallback 并“吞掉异常返回默认值”，会使 Seata 误判分支成功并错误提交全局事务；② 在事务内直接 `new Thread()` 或裸用 JDK `Executors`，会导致工作线程丢失 `XID` 与 `MDC xid`。
@@ -1111,7 +1145,7 @@ ateng:
         enabled: true
         # 事务代理模式：AT 或 XA (默认 AT)
         mode: AT
-        # 是否自动对 DynamicRoutingDataSource 中各物理连接池进行 SeataDataSourceProxy 包装 (默认 true)
+        # 是否自动对 DynamicRoutingDataSource 中各物理连接池进行 DataSourceProxy 包装 (默认 true)
         auto-proxy: true
         # 是否开启切源安全守卫 (默认 true)
         guard-enabled: true
@@ -1216,12 +1250,12 @@ CREATE TABLE IF NOT EXISTS `undo_log` (
 本地日常与提交准出验证命令（100% 离线自洽沙箱，多线程并行加速）：
 
 ```bash
-# 阶梯一：ateng-cloud-seata 模块单元测试 (145 个单测 100% PASS)
+# 阶梯一（日常自验）：ateng-cloud-seata 模块单元测试 (147 个单测 100% PASS)
 mvn test -pl ateng-cloud-seata -am -T 1C -nsu -B
 
-# 阶梯二：sample-cloud-seata 场景工程端到端全真集成测试 (46 个集成测试 100% PASS)
+# 场景工程专项验证：sample-cloud-seata 端到端集成测试 (46 个集成测试 100% PASS)
 mvn test -pl ateng-cloud-samples/sample-cloud-seata -am -T 1C -nsu -B
 
-# 阶梯三：核心模块、场景工程与全家桶冒烟测试三模块联动准出验证 (145 + 46 + 2 = 193 个核心 Seata/冒烟用例 100% PASS)
+# 阶梯二（提交前准出）：核心模块、场景工程与全家桶冒烟测试三模块联动准出验证 (147 + 46 + 2 = 195 个核心 Seata/冒烟用例 100% PASS)
 mvn test -pl ateng-cloud-seata,ateng-cloud-samples/sample-cloud-seata,ateng-cloud-samples/sample-cloud-smoke-test -am -T 1C -nsu -B
 ```

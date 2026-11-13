@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.util.ClassUtils;
+import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.lang.reflect.Method;
@@ -222,11 +224,27 @@ public class SeataDynamicDatasourceGuard {
             if (methodTx != null) {
                 return methodTx.propagation() == Propagation.REQUIRES_NEW;
             }
+            Class<?> effectiveClass = targetClass != null ? targetClass : method.getDeclaringClass();
+            for (Class<?> iface : ClassUtils.getAllInterfacesForClassAsSet(effectiveClass)) {
+                Method ifaceMethod = ReflectionUtils.findMethod(iface, method.getName(), method.getParameterTypes());
+                if (ifaceMethod != null) {
+                    Transactional ifaceTx = AnnotatedElementUtils.findMergedAnnotation(ifaceMethod, Transactional.class);
+                    if (ifaceTx != null) {
+                        return ifaceTx.propagation() == Propagation.REQUIRES_NEW;
+                    }
+                }
+            }
         }
         if (targetClass != null) {
             Transactional classTx = AnnotatedElementUtils.findMergedAnnotation(targetClass, Transactional.class);
             if (classTx != null) {
                 return classTx.propagation() == Propagation.REQUIRES_NEW;
+            }
+            for (Class<?> iface : ClassUtils.getAllInterfacesForClassAsSet(targetClass)) {
+                Transactional ifaceClassTx = AnnotatedElementUtils.findMergedAnnotation(iface, Transactional.class);
+                if (ifaceClassTx != null) {
+                    return ifaceClassTx.propagation() == Propagation.REQUIRES_NEW;
+                }
             }
         }
         return false;

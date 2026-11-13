@@ -118,9 +118,7 @@ public class SeataGlobalLockTemplate {
             } catch (Error error) {
                 throw error;
             } catch (Throwable ex) {
-                RuntimeException translated = (ex instanceof RuntimeException re)
-                        ? re
-                        : SeataExceptionTranslator.translate(ex);
+                RuntimeException translated = SeataExceptionTranslator.translate(ex);
                 if (!isLockConflict(translated) || attempt >= maxRetryTimes) {
                     throw translated;
                 }
