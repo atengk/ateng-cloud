@@ -1,7 +1,9 @@
 package io.github.atengk.cloud.sample.gateway;
 
+import cn.dev33.satoken.SaManager;
 import cn.dev33.satoken.reactor.context.SaReactorSyncHolder;
 import cn.dev33.satoken.same.SaSameUtil;
+import cn.dev33.satoken.stp.StpLogic;
 import cn.dev33.satoken.stp.StpUtil;
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import org.junit.jupiter.api.AfterEach;
@@ -51,9 +53,18 @@ public class SampleGatewayAuthIntegrationTest {
         try {
             StpUtil.logout("20001");
             StpUtil.logout("10001");
+            logoutIfRegistered("admin", "000000_1001");
+            logoutIfRegistered("member", "tenant-app_2002");
         } catch (Exception ignored) {
         }
         SaReactorSyncHolder.clearContext();
+    }
+
+    private void logoutIfRegistered(String loginType, String loginId) {
+        StpLogic logic = SaManager.stpLogicMap != null ? SaManager.stpLogicMap.get(loginType) : null;
+        if (logic != null) {
+            logic.logout(loginId);
+        }
     }
 
     @Test
@@ -159,11 +170,14 @@ public class SampleGatewayAuthIntegrationTest {
         assertNotNull(receivedSameToken, "下游必须接收到由网关签发的 Same-Token 内部受信凭据");
         assertDoesNotThrow(() -> SaSameUtil.checkToken(receivedSameToken), "Same-Token 必须通过数字签名有效性验证");
 
-        // 强断言 4: 强类型 rawHeaders 中校验权威标头
+        // 强断言 4: 强类型 rawHeaders 中校验权威标头（含 SA-SAME-TOKEN）
         Map<String, String> rawHeaders = (Map<String, String>) echoData.get("rawHeaders");
         assertNotNull(rawHeaders);
         assertEquals("20001", rawHeaders.get("x-user-id"));
         assertEquals("tenant-test-999", rawHeaders.get("x-tenant-id"));
+        String saSameToken = rawHeaders.get("sa-same-token");
+        assertNotNull(saSameToken, "下游必须接收到网关签发的 SA-SAME-TOKEN 请求头");
+        assertDoesNotThrow(() -> SaSameUtil.checkToken(saSameToken), "SA-SAME-TOKEN 必须通过 SaSameUtil 签名验证");
     }
 
     @Test
@@ -206,5 +220,123 @@ public class SampleGatewayAuthIntegrationTest {
                 .header(tokenName, tokenValue)
                 .exchange()
                 .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    @DisplayName("测试多账号体系 (admin/member) 与 LoginUser 协议解包、RunAs 模拟态及跨体系 401 隔离")
+    @SuppressWarnings("unchecked")
+    void testMultiAccountLoginTypeAndLoginUserProtocolIntegration() {
+        // 1. 管理端登录 (admin 体系 -> satoken-admin，Account Session 存 login_user JSON，复合 loginId = 000000_1001)
+        EntityExchangeResult<Map> adminLogin = webTestClient.get()
+                .uri("/api/admin/login?userId=1001&tenantId=000000")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class)
+                .returnResult();
+
+        Map<String, Object> adminData = (Map<String, Object>) adminLogin.getResponseBody().get("data");
+        assertNotNull(adminData);
+        String adminTokenName = (String) adminData.get("tokenName");
+        String adminTokenValue = (String) adminData.get("tokenValue");
+        assertEquals("satoken-admin", adminTokenName);
+
+        // 2. 携带 satoken-admin 访问 /api/admin/dashboard，强断言 X-User-Id=1001 (而非 000000_1001) 且 X-Tenant-Id=000000
+        EntityExchangeResult<Map> adminDashboard = webTestClient.get()
+                .uri("/api/admin/dashboard")
+                .header(adminTokenName, adminTokenValue)
+                .header(GatewayConstants.X_TENANT_ID, "forged-tenant-999")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class)
+                .returnResult();
+        Map<String, Object> dashData = (Map<String, Object>) adminDashboard.getResponseBody().get("data");
+        assertEquals("1001", dashData.get("userId"));
+        assertEquals("000000", dashData.get("tenantId"));
+        assertDoesNotThrow(() -> SaSameUtil.checkToken((String) dashData.get("sameToken")));
+
+        // 3. C 端会员登录 (member 体系 -> satoken-member，TokenSession 兜底存 login_user JSON)
+        EntityExchangeResult<Map> memberLogin = webTestClient.get()
+                .uri("/api/app/login?userId=2002&tenantId=tenant-app")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class)
+                .returnResult();
+        Map<String, Object> memberData = (Map<String, Object>) memberLogin.getResponseBody().get("data");
+        assertNotNull(memberData);
+        String memberTokenName = (String) memberData.get("tokenName");
+        String memberTokenValue = (String) memberData.get("tokenValue");
+        assertEquals("satoken-member", memberTokenName);
+
+        // 4. 携带 satoken-member 访问 /api/app/profile 成功并提取出 2002 / tenant-app
+        webTestClient.get()
+                .uri("/api/app/profile")
+                .header(memberTokenName, memberTokenValue)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(200)
+                .jsonPath("$.data.userId").isEqualTo("2002")
+                .jsonPath("$.data.tenantId").isEqualTo("tenant-app");
+
+        // 5. 跨账号体系严格隔离：携带 satoken-member 访问 /api/admin/dashboard 或携带 satoken-admin 访问 /api/app/profile 均 401
+        webTestClient.get()
+                .uri("/api/admin/dashboard")
+                .header(memberTokenName, memberTokenValue)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401);
+
+        webTestClient.get()
+                .uri("/api/app/profile")
+                .header(adminTokenName, adminTokenValue)
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(401);
+
+        // 6. 管理端白名单 /api/admin/public/notice：匿名放行无 userId，携带 satoken-admin 同步注入 1001/000000
+        webTestClient.get()
+                .uri("/api/admin/public/notice")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.userId").isEmpty()
+                .jsonPath("$.data.sameToken").isNotEmpty();
+
+        webTestClient.get()
+                .uri("/api/admin/public/notice")
+                .header(adminTokenName, adminTokenValue)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.userId").isEqualTo("1001")
+                .jsonPath("$.data.tenantId").isEqualTo("000000");
+
+        // 7. 管理端 RunAs 会话模拟态 (switch_target_user_id=ops-777) 覆盖 X-User-Id
+        EntityExchangeResult<Map> runAsLogin = webTestClient.get()
+                .uri("/api/admin/login?userId=1001&tenantId=000000&runAsUserId=ops-777")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class)
+                .returnResult();
+        Map<String, Object> runAsData = (Map<String, Object>) runAsLogin.getResponseBody().get("data");
+        webTestClient.get()
+                .uri("/api/admin/dashboard")
+                .header((String) runAsData.get("tokenName"), (String) runAsData.get("tokenValue"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.userId").isEqualTo("ops-777")
+                .jsonPath("$.data.tenantId").isEqualTo("000000");
+
+        // 8. 验证全景诊断端点同步统计多账号映射计数与默认账号体系
+        webTestClient.get()
+                .uri("/actuator/atengGateway")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.edgeSecurity.defaultLoginType").isEqualTo("login")
+                .jsonPath("$.edgeSecurity.loginTypeMappingCount").isEqualTo(2);
     }
 }

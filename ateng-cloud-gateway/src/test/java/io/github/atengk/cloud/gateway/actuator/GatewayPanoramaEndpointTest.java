@@ -73,6 +73,11 @@ public class GatewayPanoramaEndpointTest {
         props.getTraffic().setZone("zone-bj-1");
         props.getSecurity().setIpBlacklist(Arrays.asList("192.168.1.100", "10.0.0.0/8"));
         props.getSecurity().setIpWhitelist(Collections.singletonList("127.0.0.1"));
+        props.getSecurity().setDefaultLoginType("member");
+        props.getSecurity().setLoginTypeMappings(java.util.Map.of(
+                "admin", Collections.singletonList("/admin/**"),
+                "member", Collections.singletonList("/app/**")
+        ));
         props.getSign().setEnabled(true);
         props.getSign().setBodyEnabled(true);
         props.getSign().setIncludePaths(Collections.singletonList("/api/open/**"));
@@ -144,6 +149,8 @@ public class GatewayPanoramaEndpointTest {
         assertTrue(sec.pathValidationEnabled());
         assertEquals(2, sec.ipBlacklistCount(), "IP 黑名单应准确计数为 2 条");
         assertEquals(1, sec.ipWhitelistCount(), "IP 白名单应准确计数为 1 条");
+        assertEquals("member", sec.defaultLoginType());
+        assertEquals(2, sec.loginTypeMappingCount());
 
         // 4. 开放接口签名检验
         GatewayPanoramaReport.SignGuardReport sign = report.signGuard();

@@ -34,6 +34,11 @@ mvn spring-boot:run -pl ateng-cloud-samples/sample-cloud-gateway -Dspring-boot.r
 | **受保护用户信息** | `GatewayAuthController#userInfo` | `GET /api/auth/user-info` | `curl -H "satoken: YOUR_TOKEN" "http://localhost:9000/api/auth/user-info"` |
 | **Same-Token 与上下文回显** | `GatewayAuthController#inspectContext` | `GET /api/auth/inspect-context` | `curl -H "satoken: YOUR_TOKEN" "http://localhost:9000/api/auth/inspect-context"` |
 | **登录会话注销** | `GatewayAuthController#logout` | `POST /api/auth/logout` | `curl -X POST -H "satoken: YOUR_TOKEN" "http://localhost:9000/api/auth/logout"` |
+| **管理端多账号登录与模拟** | `GatewayMultiAccountAuthController#adminLogin` | `GET /api/admin/login` | `curl "http://localhost:9000/api/admin/login?userId=1001&tenantId=000000&roles=super_admin"` |
+| **管理端受保护看板与切租户** | `GatewayMultiAccountAuthController#adminDashboard` | `GET /api/admin/dashboard` | `curl -H "satoken-admin: YOUR_ADMIN_TOKEN" -H "X-Tenant-Id: tenant-200" "http://localhost:9000/api/admin/dashboard"` |
+| **管理端白名单上下文同步** | `GatewayMultiAccountAuthController#adminPublicNotice` | `GET /api/admin/public/notice` | `curl -H "satoken-admin: YOUR_ADMIN_TOKEN" "http://localhost:9000/api/admin/public/notice"` |
+| **会员端登录 (TokenSession)** | `GatewayMultiAccountAuthController#memberLogin` | `GET /api/app/login` | `curl "http://localhost:9000/api/app/login?userId=2002&tenantId=tenant-app"` |
+| **会员端受保护接口校验** | `GatewayMultiAccountAuthController#memberProfile` | `GET /api/app/profile` | `curl -H "satoken-member: YOUR_MEMBER_TOKEN" "http://localhost:9000/api/app/profile"` |
 | **动态路由定义查询** | `GatewayRouteTrafficController#definitions` | `GET /api/route/definitions` | `curl "http://localhost:9000/api/route/definitions"` |
 | **动态路由热更刷新** | `GatewayRouteTrafficController#refresh` | `POST /api/route/refresh` | `curl -X POST "http://localhost:9000/api/route/refresh"` |
 | **全链路流量染色调度** | `GatewayRouteTrafficController#orderDispatch` | `GET /api/order/dispatch` | `curl -H "X-Traffic-Tag: canary-v2" "http://localhost:9000/api/order/dispatch?orderId=ORD-1001"` |

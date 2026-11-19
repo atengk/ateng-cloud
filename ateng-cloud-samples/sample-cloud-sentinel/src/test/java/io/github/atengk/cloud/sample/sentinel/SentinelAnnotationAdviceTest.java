@@ -50,6 +50,10 @@ class SentinelAnnotationAdviceTest {
     @Test
     @DisplayName("无 blockHandler 的 @SentinelResource 触发限流：SentinelBlockExceptionAdvice 兜底返回 HTTP 429 与 FLOW_LIMIT(4201)")
     void testAnnotationResourceFlowLimitBlocked() throws Exception {
+        // 预热 DispatcherServlet 与 Sentinel 切面（使用独立资源，避免污染 seckill-vip-channel 的 1s QPS 窗口）
+        mockMvc.perform(get("/sample/cloud/sentinel/seckill/product/1001"))
+                .andExpect(status().isOk());
+
         String resourceName = "seckill-vip-channel";
         FlowRule rule = new FlowRule(resourceName);
         rule.setGrade(RuleConstant.FLOW_GRADE_QPS);

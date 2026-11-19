@@ -60,7 +60,8 @@ class SentinelWebFlowDegradeTest {
         DegradeRuleManager.loadRules(Collections.emptyList());
         blockCounter.reset();
         MDC.clear();
-        sentinelProperties.getBlockHandler().setRetryAfter(Duration.ZERO);
+        sentinelProperties.getBlockHandler().setCodeMode(AtengSentinelProperties.BlockCodeMode.SENTINEL_CODE);
+        sentinelProperties.getBlockHandler().resetRetryAfter();
     }
 
     @Test
@@ -209,5 +210,28 @@ class SentinelWebFlowDegradeTest {
         JsonNode passJson = objectMapper.readTree(passResult.getResponse().getContentAsString());
         assertThat(passJson.get("code").asInt()).isEqualTo(200);
         assertThat(passJson.get("data").asText()).isEqualTo("circuit-breaker-pass");
+    }
+
+    @Test
+    @DisplayName("端到端口径对齐：开启 codeMode=HTTP_STATUS 后返回标准 429 与 Retry-After: 1")
+    void testHttpStatusCodeModeAlignmentEndToEnd() throws Exception {
+        sentinelProperties.getBlockHandler().setCodeMode(AtengSentinelProperties.BlockCodeMode.HTTP_STATUS);
+        FlowRule rule = new FlowRule();
+        rule.setResource("/sample/cloud/sentinel/seckill/order");
+        rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
+        rule.setCount(0);
+        rule.setLimitApp("default");
+        FlowRuleManager.loadRules(List.of(rule));
+
+        SecKillOrderDTO orderDTO = new SecKillOrderDTO(1001L, 2001L, 2);
+        MvcResult mvcResult = mockMvc.perform(post("/sample/cloud/sentinel/seckill/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(orderDTO)))
+                .andExpect(status().isTooManyRequests())
+                .andReturn();
+
+        assertThat(mvcResult.getResponse().getHeader("Retry-After")).isEqualTo("1");
+        JsonNode json = objectMapper.readTree(mvcResult.getResponse().getContentAsString());
+        assertThat(json.get("code").asInt()).isEqualTo(429);
     }
 }

@@ -24,6 +24,7 @@ import java.util.Map;
 public class AtengSentinelEnvironmentPostProcessor implements EnvironmentPostProcessor, Ordered {
 
     public static final String PROPERTY_SOURCE_NAME = "atengSentinelDefaultProperties";
+    public static final String ATENG_SENTINEL_ENABLED = "ateng.cloud.sentinel.enabled";
     public static final String FEIGN_SENTINEL_ENABLED = "feign.sentinel.enabled";
     public static final String FEIGN_CLIENT_CLASS = "org.springframework.cloud.openfeign.FeignClient";
     public static final String ACTUATOR_ENDPOINT_CLASS = "org.springframework.boot.actuate.endpoint.annotation.Endpoint";
@@ -35,12 +36,13 @@ public class AtengSentinelEnvironmentPostProcessor implements EnvironmentPostPro
                 ? application.getClassLoader()
                 : ClassUtils.getDefaultClassLoader();
 
+        boolean sentinelEnabled = environment.getProperty(ATENG_SENTINEL_ENABLED, Boolean.class, Boolean.TRUE);
         Map<String, Object> defaultProperties = new HashMap<>(4);
 
-        if (ClassUtils.isPresent(FEIGN_CLIENT_CLASS, classLoader)) {
+        if (sentinelEnabled && ClassUtils.isPresent(FEIGN_CLIENT_CLASS, classLoader)) {
             defaultProperties.put(FEIGN_SENTINEL_ENABLED, "true");
         }
-        if (ClassUtils.isPresent(ACTUATOR_ENDPOINT_CLASS, classLoader)) {
+        if (sentinelEnabled && ClassUtils.isPresent(ACTUATOR_ENDPOINT_CLASS, classLoader)) {
             defaultProperties.put(PATH_MAPPING_SENTINEL_PANORAMA, "sentinel-panorama");
         }
 

@@ -24,8 +24,8 @@
 | `GatewayIpFilter` | `GlobalFilter` | `ORDER_IP_FILTER` (`HIGHEST_PRECEDENCE + 5` = `-2147483643`) | 依托 `IpFilterProvider` 执行 IPv4/IPv6 与 CIDR 掩码黑白名单匹配，未授权直接 403 熔断 | `security.ip-filter-enabled=true`（默认开启） |
 | `OpenApiGuardFilter` | 响应式 `WebFilter` | `ORDER_OPENAPI_GUARD` (`HIGHEST_PRECEDENCE + 6` = `-2147483642`) | 守卫 `/docs`、`/v3/api-docs/**` 与 Swagger 资源，提供 `DISABLED`/`BASIC`/`SA_TOKEN`/`PUBLIC` 四模管控 | `openapi.enabled=true`（默认开启） |
 | `GatewaySignGuardFilter` | `GlobalFilter` | `ORDER_SIGN_GUARD` (`-101`) | 校验开放平台 `X-App-Id`/`X-Timestamp`/`X-Nonce`/`X-Signature`（含可选 SHA-256 Body 摘要）与有界防重放 | `sign.enabled=true`（默认关闭） |
-| `SaTokenGatewayFilter` | `GlobalFilter` | `ORDER_SA_TOKEN` (`-100`) | 反应式集中登录校验与白名单放行；按 `same-token-enabled` 动态签发 `Same-Token` 内部凭据与 `X-User-Id` | `security.sa-token-enabled=true`（默认开启） |
-| `GatewayTenantFilter` | `GlobalFilter` | `ORDER_TENANT` (`-90`) | 鉴权优先读取会话 `tenantId`；未登录开放路由受 `tenant.allow-header` 控制防越权串租户 | `tenant.enabled=true`（默认开启） |
+| `SaTokenGatewayFilter` | `GlobalFilter` | `ORDER_SA_TOKEN` (`-100`) | 反应式集中登录校验（支持多账号 `login-type-mappings` 路由、`<tokenName>-<loginType>` 懒加载、`login_user` JSON 与 `{tenantId}_{userId}` 解包、超管身份解析）与白名单同步；按 `same-token-enabled` 动态签发 `Same-Token`/`SAME_TOKEN`/`SA-SAME-TOKEN` 与 `X-User-Id` | `security.sa-token-enabled=true`（默认开启） |
+| `GatewayTenantFilter` | `GlobalFilter` | `ORDER_TENANT` (`-90`) | 鉴权优先锁定会话 `tenantId`；支持平台超管在 `allow-super-admin-switch=true` 下经格式与 `GatewayTenantSwitchValidator` 校验后受控切租户；匿名流量受 `tenant.allow-header` 控制 | `tenant.enabled=true`（默认开启） |
 | `GatewayTrafficTagFilter` | `GlobalFilter` | `ORDER_TRAFFIC_TAG` (`-80`) | 依托 `TrafficTagResolver` 决议全链路灰度标签 `X-Traffic-Tag`；未解析出标签时剥离外部伪造值 | `traffic.enabled=true`（默认开启） |
 | `GatewayRateLimitResponseFilter` | `GlobalFilter` | `ORDER_RATE_LIMIT_RESPONSE` (`-20`) | 拦截 HTTP 429，在 `writeWith`/`writeAndFlushWith` 中确定性释放原始 `DataBuffer` 后改写 `Result` JSON 与 `Retry-After` | `rate-limiter.enabled=true`（默认开启） |
 | `GatewayAccessLogFilter` | `GlobalFilter` | `ORDER_ACCESS_LOG` (`LOWEST_PRECEDENCE` = `2147483647`) | 基于 Reactor `doFinally` 无阻塞输出单行 `[ACCESS]` 日志与慢请求 WARN，支持 Query 脱敏与 256 字符截断 | `access-log.enabled=true`（默认关闭） |
@@ -51,6 +51,7 @@
 | `SignSecretProvider` | `getSecret(appId)` | `String` | 根据开放应用 `appId` 获取签名私钥 | `InMemorySignSecretProvider`（支持运行时 `registerSecret`） |
 | `GatewayNonceValidator` | `validateAndStore(nonce, ttl)` | `boolean` | 校验并存入 Nonce 防重放（重放或超限返回 `false`） | `InMemoryGatewayNonceValidator(int maxCapacity)` |
 | `TrafficTagResolver` | `resolveTag(exchange)` | `String` | 从请求上下文动态决议全链路灰度染色标签 | `DefaultTrafficTagResolver`（Header `X-Traffic-Tag` 优先，Query 兜底） |
+| `GatewayTenantSwitchValidator` | `validate(exchange, targetTenantId, sessionTenantId, userId)` | `Mono<Boolean>` | 平台超级管理员通过 `X-Tenant-Id` 切换目标租户时的响应式扩展校验 SPI | 可选 Bean，未注册时仅执行非空与安全字符集格式防卫 |
 | `IpKeyResolver` | `resolve(exchange)` | `Mono<String>` | 按真实客户端 IP 解析分布式限流键（`@Primary`） | 兜底 `"127.0.0.1"` |
 | `UserKeyResolver` | `resolve(exchange)` | `Mono<String>` | 按登录态 `X-User-Id` / 会话 ID 解析限流键 | 未登录平滑降级为 `"anonymous:" + clientIp` |
 | `ApiKeyResolver` | `resolve(exchange)` | `Mono<String>` | 按 `"请求路径:客户端IP"` 复合维度解析限流键 | 防止单用户高频刷爆热点 API |
@@ -62,6 +63,7 @@
 | `GatewayRouteRefreshListener` | `refreshRoutesFromEnvironment(changedKeys)` | `boolean` | 增量热绑 `spring.cloud.gateway.routes` 并广播 `RefreshRoutesEvent` | 无需刷新返回 `true`，非法配置回退旧快照返回 `false` |
 | `NacosRouteDefinitionRepository` | `getRouteDefinitions()` / `save(route)` / `delete(routeId)` | `Flux<RouteDefinition>` / `Mono<Void>` | 流式读取当前生效路由定义，支持内存原子覆盖与异常回退快照 | 离线 Nacos 未启用时安全返回空 `Flux` |
 | `GatewayPanoramaEndpoint` | `report()` | `GatewayPanoramaReport` | 读取微秒级内存无锁快照，输出网关四维全景健康与安全脱敏诊断 | 全无网络阻塞，规则列表仅返回计数 |
+| `SaTokenGatewayFilter` | `getOrCreateStpLogic(loginType)` | `StpLogic` | 获取或 `ReentrantLock` 无 Pinning 懒加载注册多账号 `StpLogic` | 默认返回 `StpUtil.stpLogic`，非默认使用 `<tokenName>-<loginType>` |
 
 ---
 
@@ -88,6 +90,9 @@
 | `ateng.cloud.gateway.security.sa-token-enabled` | `boolean` | `true` | 是否启用基于 Sa-Token 的网关层反应式集中身份鉴权 |
 | `ateng.cloud.gateway.security.same-token-enabled` | `boolean` | `true` | 是否向通过网关的下游请求动态签署注入 `Same-Token` 内部同源凭据 |
 | `ateng.cloud.gateway.security.exclude-paths` | `List<String>` | `[]` | 网关集中鉴权白名单路径列表（支持 AntPath；框架默认同时合并放行静态/健康端点与 `/docs/**`） |
+| `ateng.cloud.gateway.security.default-login-type` | `String` | `login` | 未命中多账号路由映射时回退使用的默认 Sa-Token 账号体系标识 |
+| `ateng.cloud.gateway.security.login-type-mappings` | `Map<String, List<String>>` | `{}` | 多账号体系路由映射（Key 为 `loginType`，Value 为 AntPath 模式列表，最具体模式优先仲裁） |
+| `ateng.cloud.gateway.security.composite-login-id-enabled` | `boolean` | `true` | 缺少 `login_user` 会话载荷时是否受控按首个 `_` 解包 `{tenantId}_{userId}` 复合主键 |
 | `ateng.cloud.gateway.security-headers.enabled` | `boolean` | `true` | 是否启用 OWASP 等保三级合规安全响应头注入与 CORS 标头去重 |
 | `ateng.cloud.gateway.security-headers.content-type-options` | `String` | `nosniff` | 防 MIME 类型嗅探 `X-Content-Type-Options` 标头值 |
 | `ateng.cloud.gateway.security-headers.frame-options` | `String` | `SAMEORIGIN` | 防点击劫持 `X-Frame-Options` 标头值 |
@@ -105,6 +110,10 @@
 | `ateng.cloud.gateway.tenant.enabled` | `boolean` | `true` | 是否启用多租户入站解析与防越权跨越隔离过滤器 |
 | `ateng.cloud.gateway.tenant.allow-header` | `boolean` | `false` | 未登录开放/白名单请求是否允许读取入站 `X-Tenant-Id`（默认严格禁止，已登录态始终以令牌内 `tenantId` 为准） |
 | `ateng.cloud.gateway.tenant.header-name` | `String` | `X-Tenant-Id` | 向下游微服务传递多租户标识的 HTTP 标头名称 |
+| `ateng.cloud.gateway.tenant.allow-super-admin-switch` | `boolean` | `false` | 是否允许平台超级管理员通过请求头受控临时切换目标租户上下文（默认严格关闭） |
+| `ateng.cloud.gateway.tenant.platform-tenant-ids` | `List<String>` | `[]` | 允许执行跨租户切换的平台租户白名单（默认空集合不额外限制；非空时须同时命中平台租户与超管身份） |
+| `ateng.cloud.gateway.tenant.super-admin-roles` | `List<String>` | `["admin", "super_admin"]` | 判定为超级管理员的通用角色编码列表（建议生产按需收紧覆盖） |
+| `ateng.cloud.gateway.tenant.super-admin-permissions` | `List<String>` | `["*", "*:*:*"]` | 判定为超级管理员的通配权限编码列表 |
 | `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否启用开放接口 HMAC-SHA256 数字签名与防重放守卫 |
 | `ateng.cloud.gateway.sign.body-enabled` | `boolean` | `false` | 是否对 POST/PUT/PATCH 请求体计算 SHA-256 摘要（`&bodyHash=`）参与加签验证 |
 | `ateng.cloud.gateway.sign.max-body-size` | `DataSize` | `2MB` | 允许缓存并计算 SHA-256 摘要加签的最大请求体容量 |
@@ -220,14 +229,28 @@ ateng:
         enabled: true
         sa-token-enabled: true
         same-token-enabled: true # 鉴权及白名单路由出站自动签发 Same-Token
+        default-login-type: login # 未命中 login-type-mappings 时的默认账号体系
+        composite-login-id-enabled: true # 缺少 login_user 时受控解包 {tenantId}_{userId} 复合主键
+        login-type-mappings:
+          admin:
+            - "/api/admin/**"
+          member:
+            - "/api/app/**"
         exclude-paths:
           - "/api/auth/login"
           - "/api/auth/inspect-context"
           - "/api/auth/logout"
+          - "/api/admin/login"
+          - "/api/admin/public/**"
+          - "/api/app/login"
       tenant:
         enabled: true
         allow-header: false # 默认严格禁止未登录请求透传外部 X-Tenant-Id
         header-name: X-Tenant-Id
+        allow-super-admin-switch: false # 默认关闭；开启后仅平台超级管理员经校验可切换目标租户
+        platform-tenant-ids: [] # 非空时须同时命中超管角色与平台租户白名单（如 ["0"]）
+        super-admin-roles: ["admin", "super_admin"]
+        super-admin-permissions: ["*", "*:*:*"]
 
 sa-token:
   token-name: satoken
@@ -237,7 +260,47 @@ sa-token:
     project-key: ${SA_SAME_TOKEN_KEY:YOUR_SAME_TOKEN_PROJECT_KEY}
 ```
 
-**② 真实 Sample 场景 Java 代码（摘自 `sample-cloud-gateway` `GatewayAuthController`）**：
+**② 真实 Sample 场景 Java 代码（摘自 `sample-cloud-gateway` `GatewayAuthController` 与 `GatewayMultiAccountAuthController`）**：
+
+```java
+@RestController
+@RequestMapping("/sample/cloud/gateway/auth")
+public class GatewayMultiAccountAuthController {
+
+    @GetMapping("/admin/login")
+    public Mono<Result<AuthTokenVO>> adminLogin(
+            @RequestParam(defaultValue = "1001") String userId,
+            @RequestParam(defaultValue = "000000") String tenantId,
+            @RequestParam(required = false) String runAsUserId,
+            @RequestParam(required = false) String roles,
+            ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> SaReactorSyncHolder.setContext(exchange, () -> {
+            StpLogic adminLogic = SaTokenGatewayFilter.getOrCreateStpLogic("admin");
+            adminLogic.login(tenantId + "_" + userId);
+
+            Map<String, Object> loginUserPayload = new LinkedHashMap<>();
+            loginUserPayload.put("userId", userId);
+            loginUserPayload.put("tenantId", tenantId);
+            loginUserPayload.put("userType", "admin");
+            if (StringUtils.hasText(roles)) {
+                loginUserPayload.put("roles", Arrays.stream(roles.split(",")).map(String::trim).toList());
+            }
+
+            SaSession session = adminLogic.getSession();
+            session.set("login_user", JsonUtil.toJsonString(loginUserPayload));
+            if (StringUtils.hasText(runAsUserId)) {
+                session.set("switch_target_user_id", runAsUserId.trim());
+            }
+
+            SaTokenInfo tokenInfo = adminLogic.getTokenInfo();
+            return Result.success(new AuthTokenVO(
+                    tokenInfo.getTokenName(), tokenInfo.getTokenValue(),
+                    userId, tenantId, tokenInfo.getTokenTimeout()
+            ));
+        }));
+    }
+}
+```
 
 ```java
 @RestController
@@ -308,9 +371,10 @@ public class GatewayAuthController {
 
 **③ 核心机制与微服务边界防御说明**：
 
-- **零信任内网闭环**：`SaTokenGatewayFilter`（Order `-100`）在响应式上下文下完成 `StpUtil.checkLogin()` 验证（白名单与合法登录流量均受管），校验通过后出站重注 `X-User-Id` 并调用 `SaSameUtil.getToken()` 动态签发 `Same-Token`；下游微服务强制开启 `sa-token.same-token.check=true`，未携带有效 `Same-Token` 的内网直连流量立即 Fail-Closed 401 阻断。
-- **SaReactorSyncHolder 响应桥接**：WebFlux 控制器内同步调用 `StpUtil` 时，必须使用 `SaReactorSyncHolder.setContext(exchange, ...)` 包裹并在单步回调结束时自动清理，防止跨请求 ThreadLocal 脏读。
-- **多租户防越权不变量**：`GatewayTenantFilter`（Order `-90`）强制以已认证令牌会话绑定的 `tenantId` 覆盖一切外部入站租户头；对未登录的白名单/开放路由，仅当显式开启 `ateng.cloud.gateway.tenant.allow-header=true` 时才允许读取 `X-Tenant-Id`，否则彻底屏蔽。
+- **零信任内网闭环与多账号隔离**：`SaTokenGatewayFilter`（Order `-100`）先基于 `login-type-mappings`（采用 `AntPathMatcher.getPatternComparator` 最具体模式优先仲裁，未命中回退 `default-login-type`）确定目标账号体系并解析 `StpLogic`（优先复用 `SaManager` 已注册实例，未注册时使用 `ReentrantLock` 无 Pinning 懒加载注册 `<tokenName>-<loginType>`），跨账号凭据严格 401 零回退；校验通过后出站重注纯净 `X-User-Id` 并调用 `SaSameUtil.getToken()` 同步签发 `Same-Token`、`SAME_TOKEN` 与 `SA-SAME-TOKEN`（兼容 `ateng-boot-satoken` 原生 `@CheckSameToken`）；下游微服务强制开启 `sa-token.same-token.check=true`，未携带有效同源凭据的内网直连流量立即 Fail-Closed 401 阻断。
+- **`LoginUser` 协议兼容与复合主键解包**：全兼容读取 Account Session 与 TokenSession 中的 `login_user` JSON 载荷（经 `ateng-boot-core` `JsonUtil` 解析）、`switch_target_user_id` 模拟态、`"tenantId"` 直接键值与 JWT `extra`；当缺少 `login_user` 且 `composite-login-id-enabled=true` 时受控按首个 `_` 解包 `{tenantId}_{userId}`，避免复合串原样透传下游；命中白名单路径亦同步解析目标 `loginType` 并按需提取已登录身份。
+- **SaReactorSyncHolder 响应桥接**：WebFlux 控制器内同步调用 `StpUtil` / `StpLogic` 时，必须使用 `SaReactorSyncHolder.setContext(exchange, ...)` 包裹并在单步回调结束时自动清理，防止跨请求 ThreadLocal 脏读。
+- **多租户防越权与超管受控切换不变量**：`GatewayTenantFilter`（Order `-90`）默认强制以已认证令牌会话绑定的 `tenantId` 覆盖一切外部入站租户头；仅当显式开启 `allow-super-admin-switch=true` 时，`GatewayHeaderSanitizeFilter` 先行暂存并物理剥离入站 `X-Tenant-Id`，鉴权确认平台租户白名单（`platform-tenant-ids`）与超管角色/权限后，由 `GatewayTenantFilter` 校验安全字符集格式与可选响应式 `GatewayTenantSwitchValidator` SPI 放行切换（普通用户与匿名流量仍 100% 锁死，若下游微服务亦挂载了 `ateng-boot-satoken` 拦截器，须同步开启 `sa-token.tenant.allow-super-admin-switch=true` 防止二次覆写）。
 
 ---
 
@@ -855,7 +919,7 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri
     "mainConfigRoute": { "snapshotHealthy": true, "lastRefreshSuccess": true }
   },
   "grayLoadBalancer": { "enabled": true, "fallbackToDefault": true, "cacheTtl": "3s" },
-  "edgeSecurity": { "enabled": true, "ipBlacklistCount": 2, "ipWhitelistCount": 0 },
+  "edgeSecurity": { "enabled": true, "ipBlacklistCount": 2, "ipWhitelistCount": 0, "defaultLoginType": "login", "loginTypeMappingCount": 2 },
   "signGuard": { "enabled": true, "bodyEnabled": true, "timestampThreshold": "PT5M" }
 }
 ```
@@ -942,6 +1006,13 @@ ateng:
         trace-enabled: true
         sa-token-enabled: true
         same-token-enabled: true
+        default-login-type: login
+        composite-login-id-enabled: true
+        login-type-mappings:
+          admin:
+            - "/api/admin/**"
+          member:
+            - "/api/app/**"
         exclude-paths:
           - "/api/auth/login"
           - "/api/open/**"
@@ -966,6 +1037,10 @@ ateng:
         enabled: true
         allow-header: false
         header-name: X-Tenant-Id
+        allow-super-admin-switch: false
+        platform-tenant-ids: []
+        super-admin-roles: ["admin", "super_admin"]
+        super-admin-permissions: ["*", "*:*:*"]
       sign:
         enabled: true
         body-enabled: true

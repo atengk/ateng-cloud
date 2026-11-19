@@ -79,4 +79,21 @@ class AtengSentinelEnvironmentPostProcessorTest {
     void testOrder() {
         assertThat(processor.getOrder()).isEqualTo(Ordered.LOWEST_PRECEDENCE);
     }
+
+    @Test
+    @DisplayName("显式配置 ateng.cloud.sentinel.enabled=false 时，不注入 feign.sentinel.enabled=true")
+    void testRespectAtengSentinelDisabled() {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(
+                new MapPropertySource("userProperties", Map.of(AtengSentinelEnvironmentPostProcessor.ATENG_SENTINEL_ENABLED, "false"))
+        );
+        SpringApplication application = new SpringApplication();
+
+        processor.postProcessEnvironment(environment, application);
+
+        assertThat(environment.containsProperty(AtengSentinelEnvironmentPostProcessor.FEIGN_SENTINEL_ENABLED))
+                .isFalse();
+        assertThat(environment.getPropertySources().contains(AtengSentinelEnvironmentPostProcessor.PROPERTY_SOURCE_NAME))
+                .isFalse();
+    }
 }

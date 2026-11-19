@@ -114,6 +114,20 @@ public class AtengSentinelProperties {
     }
 
     /**
+     * 阻断响应码输出模式
+     */
+    public enum BlockCodeMode {
+        /**
+         * 输出 Sentinel 细分错误码 (4201~4205)，默认兼容存量契约
+         */
+        SENTINEL_CODE,
+        /**
+         * 对齐网关与标准 HTTP 语义状态码 (429 / 503 / 403，且 429 默认附带 Retry-After: 1)
+         */
+        HTTP_STATUS
+    }
+
+    /**
      * 阻断响应处理公共配置基类
      */
     public abstract static class AbstractBlockResponseProperties {
@@ -130,9 +144,20 @@ public class AtengSentinelProperties {
         private boolean httpStatusAlign = true;
 
         /**
+         * 阻断响应 JSON {@code Result.code} 输出口径模式（默认 {@link BlockCodeMode#SENTINEL_CODE} 保持 4201~4205 向后兼容；
+         * 设为 {@link BlockCodeMode#HTTP_STATUS} 时输出 429/503/403，与网关保持一致）
+         */
+        private BlockCodeMode codeMode = BlockCodeMode.SENTINEL_CODE;
+
+        /**
          * 阻断响应附带的 Retry-After 退避时长 (小于等于 0 时不输出该响应头，默认 {@link Duration#ZERO})
          */
         private Duration retryAfter = Duration.ZERO;
+
+        /**
+         * 内部标记是否由调用方显式配置过 retryAfter（用于区分未配置与显式配置 0s 禁用）
+         */
+        private transient boolean retryAfterConfigured = false;
 
         public boolean isEnabled() {
             return enabled;
@@ -150,12 +175,40 @@ public class AtengSentinelProperties {
             this.httpStatusAlign = httpStatusAlign;
         }
 
+        public BlockCodeMode getCodeMode() {
+            return codeMode;
+        }
+
+        public void setCodeMode(BlockCodeMode codeMode) {
+            this.codeMode = codeMode != null ? codeMode : BlockCodeMode.SENTINEL_CODE;
+        }
+
         public Duration getRetryAfter() {
             return retryAfter;
         }
 
         public void setRetryAfter(Duration retryAfter) {
+            this.retryAfterConfigured = true;
             this.retryAfter = (retryAfter != null && !retryAfter.isNegative()) ? retryAfter : Duration.ZERO;
+        }
+
+        /**
+         * 解析最终生效的 Retry-After 退避时长：若用户未显式配置且处于 {@link BlockCodeMode#HTTP_STATUS} 模式的 429 场景，
+         * 自动对齐网关默认返回 {@code 1s}
+         *
+         * @param targetStatus 目标语义 HTTP 状态码
+         * @return 生效的 Retry-After 时长
+         */
+        public Duration resolveEffectiveRetryAfter(org.springframework.http.HttpStatus targetStatus) {
+            if (retryAfter != null && !retryAfter.isNegative() && !retryAfter.isZero()) {
+                return retryAfter;
+            }
+            if (!retryAfterConfigured
+                    && codeMode == BlockCodeMode.HTTP_STATUS
+                    && targetStatus == org.springframework.http.HttpStatus.TOO_MANY_REQUESTS) {
+                return Duration.ofSeconds(1);
+            }
+            return Duration.ZERO;
         }
 
         /**
@@ -170,7 +223,16 @@ public class AtengSentinelProperties {
          * 设置退避秒数 (兼容 {@code retry-after-seconds} 配置绑定，小于等于 0 时归一为 {@link Duration#ZERO})
          */
         public void setRetryAfterSeconds(int retryAfterSeconds) {
+            this.retryAfterConfigured = true;
             this.retryAfter = retryAfterSeconds > 0 ? Duration.ofSeconds(retryAfterSeconds) : Duration.ZERO;
+        }
+
+        /**
+         * 重置 Retry-After 退避配置至默认未显式配置状态
+         */
+        public void resetRetryAfter() {
+            this.retryAfterConfigured = false;
+            this.retryAfter = Duration.ZERO;
         }
     }
 

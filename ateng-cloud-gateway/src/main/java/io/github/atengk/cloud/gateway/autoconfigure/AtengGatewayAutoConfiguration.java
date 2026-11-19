@@ -30,6 +30,7 @@ import io.github.atengk.cloud.gateway.resolver.DefaultTrafficTagResolver;
 import io.github.atengk.cloud.gateway.route.GatewayRouteRefreshListener;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
 import io.github.atengk.cloud.gateway.spi.GatewayNonceValidator;
+import io.github.atengk.cloud.gateway.spi.GatewayTenantSwitchValidator;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
 import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
 import io.github.atengk.cloud.gateway.spi.TrafficTagResolver;
@@ -320,7 +321,7 @@ public class AtengGatewayAutoConfiguration {
                 throw new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.BAD_REQUEST, "非法请求路径：检测到目录穿越或畸形字符", e);
             };
-            return new SaTokenGatewayFilter(properties.getSecurity());
+            return new SaTokenGatewayFilter(properties.getSecurity(), properties.getTenant());
         }
     }
 
@@ -336,8 +337,10 @@ public class AtengGatewayAutoConfiguration {
          */
         @Bean
         @ConditionalOnMissingBean
-        public GatewayTenantFilter gatewayTenantFilter(AtengGatewayProperties properties) {
-            return new GatewayTenantFilter(properties.getTenant());
+        public GatewayTenantFilter gatewayTenantFilter(
+                AtengGatewayProperties properties,
+                ObjectProvider<GatewayTenantSwitchValidator> switchValidatorProvider) {
+            return new GatewayTenantFilter(properties.getTenant(), switchValidatorProvider);
         }
     }
 

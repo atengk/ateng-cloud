@@ -46,8 +46,9 @@
 | :--- | :--- | :--- | :--- |
 | `ateng.cloud.sentinel.enabled` | `boolean` | `true` | 是否全局启用 Sentinel 流量防卫自动装配底座 |
 | `ateng.cloud.sentinel.block-handler.enabled` | `boolean` | `true` | 是否启用统一 WebMVC 阻断异常处理器 `AtengBlockExceptionHandler` |
-| `ateng.cloud.sentinel.block-handler.http-status-align` | `boolean` | `true` | 是否启用 HTTP 物理状态码对齐（Flow/Param/System/Authority=429，Degrade=503；`false` 返回 200） |
-| `ateng.cloud.sentinel.block-handler.retry-after` | `Duration` | `PT0S` (0s) | 触发限流/熔断时附带的 `Retry-After` HTTP 响应头退避秒数（`<= 0` 不输出；兼容别名 `retry-after-seconds`） |
+| `ateng.cloud.sentinel.block-handler.http-status-align` | `boolean` | `true` | 是否启用 HTTP 物理状态码对齐（Flow/Param/System=429，Degrade=503，Authority 在 `SENTINEL_CODE` 下为 429、`HTTP_STATUS` 下为 403；`false` 返回 200） |
+| `ateng.cloud.sentinel.block-handler.code-mode` | `BlockCodeMode` | `SENTINEL_CODE` | 阻断响应 `Result.code` 口径模式：`SENTINEL_CODE`（`4201~4205`）或 `HTTP_STATUS`（与网关对齐为 `429/503/403`，429 默认带 `Retry-After: 1`） |
+| `ateng.cloud.sentinel.block-handler.retry-after` | `Duration` | `PT0S` (0s) | 触发限流/熔断时附带的 `Retry-After` HTTP 响应头退避秒数（未显式配置且处于 `HTTP_STATUS` 模式 429 场景默认 `1s`；显式 `<= 0` 不输出；兼容别名 `retry-after-seconds`） |
 | `ateng.cloud.sentinel.url-clean.enabled` | `boolean` | `true` | 是否启用 RESTful 动态 URL 路径归一化防内存膨胀清洗器 |
 | `ateng.cloud.sentinel.url-clean.number-replacement` | `String` | `"{id}"` | 纯数字路径段替换为的固定占位符 |
 | `ateng.cloud.sentinel.url-clean.uuid-replacement` | `String` | `"{uuid}"` | 36 位标准带连字符 UUID 路径段替换为的固定占位符 |
@@ -62,7 +63,8 @@
 | `ateng.cloud.sentinel.origin-parser.enable-tenant-fallback` | `boolean` | `false` | 是否启用多租户回退：从 `ateng-boot-core` `TenantContextHolder` 提取当前租户 ID（位于请求头之后、客户端 IP 之前） |
 | `ateng.cloud.sentinel.origin-parser.tenant-prefix` | `String` | `"tenant:"` | 启用多租户回退后自动追加的来源前缀（例如租户 `t001` 解析为 `tenant:t001`） |
 | `ateng.cloud.sentinel.block-advice.enabled` | `boolean` | `true` | 是否启用 `@SentinelResource` 切面逃逸与受管降级异常全局兜底处理器 `SentinelBlockExceptionAdvice` |
-| `ateng.cloud.sentinel.block-advice.http-status-align` | `boolean` | `true` | 切面拦截兜底响应是否同样遵循 HTTP 429/503 状态码对齐策略 |
+| `ateng.cloud.sentinel.block-advice.http-status-align` | `boolean` | `true` | 切面拦截兜底响应是否同样遵循 HTTP 429/503/403 状态码对齐策略 |
+| `ateng.cloud.sentinel.block-advice.code-mode` | `BlockCodeMode` | `SENTINEL_CODE` | 切面兜底响应 `Result.code` 口径模式：`SENTINEL_CODE`（`4201~4205`）或 `HTTP_STATUS`（`429/503/403`） |
 | `ateng.cloud.sentinel.block-advice.retry-after` | `Duration` | `PT0S` (0s) | 切面兜底响应附带的 `Retry-After` HTTP 响应头退避秒数（`<= 0` 不输出；兼容别名 `retry-after-seconds`） |
 | `ateng.cloud.sentinel.trace.enabled` | `boolean` | `true` | 是否启用 `SentinelExceptionTraceAdvice` Web 异常自动熔断追踪桥接器 |
 | `ateng.cloud.sentinel.trace.trace-business-exception` | `boolean` | `false` | 是否将常规业务异常 `BusinessException` 计入 Sentinel 熔断故障统计（携带 `SentinelResultCode` 的阻断异常始终豁免） |
@@ -171,6 +173,7 @@ ateng:
       block-handler:
         enabled: true
         http-status-align: true
+        code-mode: SENTINEL_CODE # 默认 4201~4205；设为 HTTP_STATUS 时输出 429/503/403 并对 429 默认附加 Retry-After: 1
         retry-after: 5s
 ```
 
@@ -200,7 +203,7 @@ public class SentinelSecKillFlowController {
 
 #### 3) 核心机制与防线解析
 
-当请求 `/sample/cloud/sentinel/seckill/order` 触发入站流控时，`AtengBlockExceptionHandler` 从安全上下文提取客户端真实 IP、多维调用源（`origin`）与 MDC `traceId`，同步递增 `SentinelBlockCounter`，并输出 HTTP `429 Too Many Requests`、`X-Sentinel-Block-Rule: FLOW`、`Retry-After: 5`（当 `retry-after > 0`）与结构化 JSON 体 `{"code":4201,"msg":"服务流量过载，触发限流保护","data":null}`。若 `http-status-align: false`，则保留 HTTP `200` 以兼容仅识别业务码的旧版前端网关。
+当请求 `/sample/cloud/sentinel/seckill/order` 触发入站流控时，`AtengBlockExceptionHandler` 从安全上下文提取客户端真实 IP、多维调用源（`origin`）与 MDC `traceId`，同步递增 `SentinelBlockCounter`，并输出 HTTP `429 Too Many Requests`、`X-Sentinel-Block-Rule: FLOW`、`Retry-After: 5`（当 `retry-after > 0`）与结构化 JSON 体 `{"code":4201,"msg":"服务流量过载，触发限流保护","data":null}`。若 `http-status-align: false`，则保留 HTTP `200` 以兼容仅识别业务码的旧版前端网关；若需与网关 `GatewayGlobalExceptionHandler` 保持完全一致的错误码口径，可将 `code-mode` 设为 `HTTP_STATUS`（输出 `429`/`503`/`403` 且 `429` 未显式配置 `retry-after` 时默认输出 `Retry-After: 1`）。
 
 ---
 
@@ -339,7 +342,7 @@ feign:
 
 #### 2) 业务代码（全局启动零代码侵入）
 
-只要类路径存在 `org.springframework.cloud.openfeign.FeignClient`，Spring 容器在 `Environment` 阶段即注入低优先级 `MapPropertySource("atengSentinelDefaultProperties")`：同时为 `feign.sentinel.enabled` 设置 `"true"`，并为 `Endpoint` 类存在时的 Actuator 端点自动注册 `management.endpoints.web.path-mapping.sentinelPanorama=sentinel-panorama`。
+只要类路径存在 `org.springframework.cloud.openfeign.FeignClient` 且未配置 `ateng.cloud.sentinel.enabled=false`，Spring 容器在 `Environment` 阶段即注入低优先级 `MapPropertySource("atengSentinelDefaultProperties")`：同时为 `feign.sentinel.enabled` 设置 `"true"`，并为 `Endpoint` 类存在时的 Actuator 端点自动注册 `management.endpoints.web.path-mapping.sentinelPanorama=sentinel-panorama`。当显式声明 `ateng.cloud.sentinel.enabled=false` 时，后处理器严格尊重模块总开关，跳过默认属性注入。
 
 #### 3) 核心机制与防线解析
 
@@ -983,6 +986,7 @@ ateng:
       block-handler:
         enabled: true
         http-status-align: true
+        code-mode: SENTINEL_CODE
         retry-after: 0s
       url-clean:
         enabled: true
@@ -1008,6 +1012,7 @@ ateng:
       block-advice:
         enabled: true
         http-status-align: true
+        code-mode: SENTINEL_CODE
         retry-after: 0s
       trace:
         enabled: true

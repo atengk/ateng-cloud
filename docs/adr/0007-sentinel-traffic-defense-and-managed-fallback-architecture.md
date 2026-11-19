@@ -22,7 +22,7 @@
    - 严格与 WebFlux 响应式网关（`ateng-cloud-gateway`）及 Dubbo RPC 物理隔离，保持深模块正交性。
 2. **独立错误码体系、退避响应头与物理状态码双重对齐 (Block Dual-Alignment Contract)**：
    - 在 `ResultCodeSegment.NETWORK_RPC` (4200~4299) 区段建立强类型 `SentinelResultCode`（细分 `FLOW_LIMIT`、`DEGRADE`、`PARAM_FLOW_LIMIT`、`SYSTEM_BLOCK`、`AUTHORITY_BLOCK`）；
-   - 提供 `AtengBlockExceptionHandler` 与 `SentinelBlockExceptionAdvice`，触发阻断时物理对齐 HTTP 429 / 503 状态码，注入 `X-Sentinel-Block-Rule` 及可选 `Retry-After` 退避响应头，并输出标准 `Result.fail(code, msg)` JSON 报文。
+   - 提供 `AtengBlockExceptionHandler` 与 `SentinelBlockExceptionAdvice`，默认 `BlockCodeMode.SENTINEL_CODE` 输出 `4201~4205`，并支持通过 `code-mode: HTTP_STATUS` 对齐网关 `GatewayGlobalExceptionHandler` 输出标准 `429`/`503`/`403`（`429` 未显式覆写时自动附带 `Retry-After: 1`）。
 3. **RESTful 路径归一化与资源树防爆 (Resource Tree Explosion Defense)**：
    - 提供 `AtengUrlCleaner`，仅在当前请求路径匹配且路由模板非泛化通配符（`/**`）时提取 Spring MVC `HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE`，并对模板二次校验白名单；
    - 统一归一化非根路径尾部斜杠，内置 36 位 UUID、24/32 位 Hex 哈希串与纯数字收敛，并支持配置预编译的有序 `custom-patterns` 正则规则；
@@ -34,8 +34,8 @@
 6. **注解切面逃逸防御与 Web 异常熔断追踪桥接 (Aspect Escape Defense & Exception Trace Bridge)**：
    - `SentinelBlockExceptionAdvice` 全局拦截 `@SentinelResource` 逃逸的 `BlockException`（含 `UndeclaredThrowableException` 与 `InvocationTargetException` 包装）以及携带 `SentinelResultCode` 的 `BusinessException`，统一对齐 HTTP 429/503 且通过防重守卫避免重复计数；
    - 提供 `ExceptionTraceBridge`，在全局 `@RestControllerAdvice` 消化异常前自动将非豁免的系统异常喂入 `Tracer.trace(ex)`（默认豁免 `BlockException`、Spring 4xx 参数校验/协议异常与常规 `BusinessException`，支持自定义 `ignore-exceptions`），根治 Web 接口异常比例/异常数熔断静默失效问题。
-7. **Feign 熔断防呆自动装配 (Foolproof Feign Activation)**：
-   - 通过 `EnvironmentPostProcessor` 探测到 Classpath 存在 OpenFeign 时，默认激活 `feign.sentinel.enabled=true`，支持业务显式声明 false 覆盖。
+7. **Feign 熔断防呆自动装配与总开关尊重 (Foolproof Feign Activation)**：
+   - 通过 `EnvironmentPostProcessor` 探测到 Classpath 存在 OpenFeign 且未设置 `ateng.cloud.sentinel.enabled=false` 时，默认激活 `feign.sentinel.enabled=true`，支持业务通过总开关或显式声明 `feign.sentinel.enabled=false` 覆盖。
 8. **Nacos 5 大规则全家桶开箱即用持久化 (Full-Spectrum Nacos Rule Bridge)**：
    - 完整覆盖 FlowRule、DegradeRule、ParamFlowRule、SystemRule、AuthorityRule 5 大规则，统一规范为 `${dataIdPrefix}-{type}.json` 契约，支持按需启停与动态无感热加载。
 9. **规则防暴毙容错防御 (Rule Fail-Safe Invariant)**：

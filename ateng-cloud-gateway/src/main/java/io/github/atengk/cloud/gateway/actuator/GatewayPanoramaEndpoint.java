@@ -131,9 +131,19 @@ public class GatewayPanoramaEndpoint {
                 trafficProps.getZone()
         );
 
-        // 3. 零信任边缘安全诊断 (规则计数，零 IP 泄密)
+        // 3. 零信任边缘安全诊断 (规则计数，零 IP/路径 泄密)
         AtengGatewaySecurityProperties secProps = props.getSecurity() != null
                 ? props.getSecurity() : new AtengGatewaySecurityProperties();
+        String defaultLoginType = StringUtils.hasText(secProps.getDefaultLoginType())
+                ? secProps.getDefaultLoginType().trim() : "login";
+        int loginTypeMappingCount = 0;
+        if (secProps.getLoginTypeMappings() != null) {
+            for (java.util.List<String> patterns : secProps.getLoginTypeMappings().values()) {
+                if (patterns != null) {
+                    loginTypeMappingCount += patterns.size();
+                }
+            }
+        }
         GatewayPanoramaReport.EdgeSecurityReport secReport = new GatewayPanoramaReport.EdgeSecurityReport(
                 secProps.isEnabled(),
                 secProps.isSaTokenEnabled(),
@@ -143,7 +153,9 @@ public class GatewayPanoramaEndpoint {
                 secProps.isIpFilterEnabled(),
                 secProps.getIpBlacklist() != null ? secProps.getIpBlacklist().size() : 0,
                 secProps.getIpWhitelist() != null ? secProps.getIpWhitelist().size() : 0,
-                secProps.getSanitizeHeaders() != null ? secProps.getSanitizeHeaders().size() : 0
+                secProps.getSanitizeHeaders() != null ? secProps.getSanitizeHeaders().size() : 0,
+                defaultLoginType,
+                loginTypeMappingCount
         );
 
         // 4. 开放接口 API 签名防篡改诊断

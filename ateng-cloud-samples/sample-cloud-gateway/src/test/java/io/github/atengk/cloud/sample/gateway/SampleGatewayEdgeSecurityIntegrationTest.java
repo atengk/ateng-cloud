@@ -121,12 +121,12 @@ public class SampleGatewayEdgeSecurityIntegrationTest {
                 .jsonPath("$.data['x-user-id']").doesNotExist()
                 .jsonPath("$.data['x-tenant-id']").doesNotExist()
                 .jsonPath("$.data['x-ignore-tenant']").doesNotExist()
-                .jsonPath("$.data['sa-same-token']").doesNotExist()
                 .jsonPath("$.data['tx_xid']").doesNotExist()
                 .jsonPath("$.data['x-traffic-lane']").doesNotExist()
                 .jsonPath("$.data['x-traffic-rule']").doesNotExist()
-                // 伪造的 Same-Token 被剥离，网关重新签发合法的内部同源凭据
-                .jsonPath("$.data['same-token']").value(org.hamcrest.Matchers.not("forged-same-token-signature"));
+                // 伪造的 Same-Token 与 SA-SAME-TOKEN 被剥离，网关重新签发合法的内部同源凭据
+                .jsonPath("$.data['same-token']").value(org.hamcrest.Matchers.not("forged-same-token-signature"))
+                .jsonPath("$.data['sa-same-token']").value(org.hamcrest.Matchers.not("forged-sa-same-token"));
     }
 
     @Test

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.sentinel.code.SentinelResultCode;
+import io.github.atengk.cloud.sentinel.properties.AtengSentinelProperties.BlockCodeMode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -156,10 +157,18 @@ public final class SentinelServletUtil {
      * 根据阻断异常类型解析对应的物理 HTTP 状态码
      */
     public static HttpStatus determineHttpStatus(BlockException e) {
-        if (e instanceof DegradeException) {
-            return HttpStatus.SERVICE_UNAVAILABLE;
-        }
-        return HttpStatus.TOO_MANY_REQUESTS;
+        return determineHttpStatus(e, BlockCodeMode.SENTINEL_CODE);
+    }
+
+    /**
+     * 根据阻断异常类型与口径模式解析对应的物理 HTTP 状态码
+     *
+     * @param e        阻断异常
+     * @param codeMode 口径模式（{@code HTTP_STATUS} 模式下授权拦截对齐 HTTP 403）
+     * @return 对应 HTTP 状态码
+     */
+    public static HttpStatus determineHttpStatus(BlockException e, BlockCodeMode codeMode) {
+        return determineHttpStatus(determineResultCode(e), codeMode);
     }
 
     /**
@@ -182,10 +191,30 @@ public final class SentinelServletUtil {
      * 根据 Sentinel 强类型错误码解析对应的物理 HTTP 状态码
      */
     public static HttpStatus determineHttpStatus(SentinelResultCode resultCode) {
+        return determineHttpStatus(resultCode, BlockCodeMode.SENTINEL_CODE);
+    }
+
+    /**
+     * 根据 Sentinel 强类型错误码与口径模式解析对应的物理 HTTP 状态码
+     */
+    public static HttpStatus determineHttpStatus(SentinelResultCode resultCode, BlockCodeMode codeMode) {
         if (resultCode == SentinelResultCode.DEGRADE) {
             return HttpStatus.SERVICE_UNAVAILABLE;
         }
+        if (resultCode == SentinelResultCode.AUTHORITY_BLOCK && codeMode == BlockCodeMode.HTTP_STATUS) {
+            return HttpStatus.FORBIDDEN;
+        }
         return HttpStatus.TOO_MANY_REQUESTS;
+    }
+
+    /**
+     * 根据口径模式解析最终写入 JSON 响应体 {@code Result.code} 的数值编码
+     */
+    public static int resolveBodyResultCode(SentinelResultCode resultCode, HttpStatus targetStatus, BlockCodeMode codeMode) {
+        if (codeMode == BlockCodeMode.HTTP_STATUS && targetStatus != null) {
+            return targetStatus.value();
+        }
+        return resultCode != null ? resultCode.getCode() : HttpStatus.TOO_MANY_REQUESTS.value();
     }
 
     /**

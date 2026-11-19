@@ -4,7 +4,9 @@ import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 网关安全防御与鉴权配置属性
@@ -73,6 +75,23 @@ public class AtengGatewaySecurityProperties {
      * Sa-Token 鉴权忽略放行的 AntPath 路径列表 (如 /auth/**, /actuator/**)
      */
     private List<String> excludePaths = new ArrayList<>();
+
+    /**
+     * 默认 Sa-Token 账号体系标识 (未命中 loginTypeMappings 路由映射时使用，默认 login)
+     */
+    private String defaultLoginType = "login";
+
+    /**
+     * 多账号体系路由映射规则 (Key 为账号体系 loginType，如 admin、member；Value 为匹配的 AntPath 路径模式列表，如 /admin/**)
+     * <p>命中多条规则时按最具体模式优先仲裁，同特异度保留配置声明顺序</p>
+     */
+    private Map<String, List<String>> loginTypeMappings = new LinkedHashMap<>();
+
+    /**
+     * 是否启用复合 loginId ({tenantId}_{userId}) 自动解包兼容
+     * <p>当 Session 中缺少 login_user 载荷时，受控按首个下划线拆解还原租户与用户 ID，默认 true</p>
+     */
+    private boolean compositeLoginIdEnabled = true;
 
     /**
      * 前置可信反向代理跳数 (用于从右往左安全解析真实公网客户端 IP，默认 1)
@@ -167,6 +186,30 @@ public class AtengGatewaySecurityProperties {
 
     public void setExcludePaths(List<String> excludePaths) {
         this.excludePaths = excludePaths;
+    }
+
+    public String getDefaultLoginType() {
+        return defaultLoginType;
+    }
+
+    public void setDefaultLoginType(String defaultLoginType) {
+        this.defaultLoginType = defaultLoginType;
+    }
+
+    public Map<String, List<String>> getLoginTypeMappings() {
+        return loginTypeMappings;
+    }
+
+    public void setLoginTypeMappings(Map<String, List<String>> loginTypeMappings) {
+        this.loginTypeMappings = loginTypeMappings;
+    }
+
+    public boolean isCompositeLoginIdEnabled() {
+        return compositeLoginIdEnabled;
+    }
+
+    public void setCompositeLoginIdEnabled(boolean compositeLoginIdEnabled) {
+        this.compositeLoginIdEnabled = compositeLoginIdEnabled;
     }
 
     public int getTrustedProxyCount() {

@@ -53,11 +53,20 @@ public class GatewayHeaderSanitizeFilter implements GlobalFilter, Ordered {
         }
 
         boolean allowTenantHeader = tenantProperties != null && tenantProperties.isAllowHeader();
+        boolean captureRequestedTenant = tenantProperties != null
+                && tenantProperties.isEnabled()
+                && tenantProperties.isAllowSuperAdminSwitch();
         String tenantHeaderName = (tenantProperties != null && StringUtils.hasText(tenantProperties.getHeaderName()))
-                ? tenantProperties.getHeaderName()
+                ? tenantProperties.getHeaderName().trim()
                 : GatewayConstants.X_TENANT_ID;
 
         HttpHeaders currentHeaders = exchange.getRequest().getHeaders();
+        if (captureRequestedTenant) {
+            String requestedTenant = currentHeaders.getFirst(tenantHeaderName);
+            if (StringUtils.hasText(requestedTenant)) {
+                exchange.getAttributes().put(GatewayConstants.ATTR_REQUESTED_TENANT_ID, requestedTenant.trim());
+            }
+        }
         boolean containsSensitiveHeader = false;
         for (String headerName : headersToSanitize) {
             if (allowTenantHeader && headerName.equalsIgnoreCase(tenantHeaderName)) {

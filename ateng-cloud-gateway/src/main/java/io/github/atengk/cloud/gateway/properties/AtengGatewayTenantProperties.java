@@ -2,6 +2,10 @@ package io.github.atengk.cloud.gateway.properties;
 
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * 网关多租户入站解析配置属性
  *
@@ -26,6 +30,26 @@ public class AtengGatewayTenantProperties {
      */
     private String headerName = GatewayConstants.X_TENANT_ID;
 
+    /**
+     * 是否允许平台超级管理员通过请求头受控临时切换目标租户上下文 (默认 false 关闭防越权)
+     */
+    private boolean allowSuperAdminSwitch = false;
+
+    /**
+     * 允许执行跨租户切换的平台租户标识白名单 (默认空集合表示不额外限制超管会话归属租户；非空时须同时命中平台租户与超管身份)
+     */
+    private List<String> platformTenantIds = new ArrayList<>();
+
+    /**
+     * 判定为超级管理员的通用角色编码集合 (默认 ["admin", "super_admin"]，下游业务可按需收紧覆盖)
+     */
+    private List<String> superAdminRoles = new ArrayList<>(Arrays.asList("admin", "super_admin"));
+
+    /**
+     * 判定为超级管理员的通配权限编码集合 (默认 ["*", "*:*:*"])
+     */
+    private List<String> superAdminPermissions = new ArrayList<>(Arrays.asList("*", "*:*:*"));
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -48,5 +72,37 @@ public class AtengGatewayTenantProperties {
 
     public void setHeaderName(String headerName) {
         this.headerName = headerName;
+    }
+
+    public boolean isAllowSuperAdminSwitch() {
+        return allowSuperAdminSwitch;
+    }
+
+    public void setAllowSuperAdminSwitch(boolean allowSuperAdminSwitch) {
+        this.allowSuperAdminSwitch = allowSuperAdminSwitch;
+    }
+
+    public List<String> getPlatformTenantIds() {
+        return platformTenantIds;
+    }
+
+    public void setPlatformTenantIds(List<String> platformTenantIds) {
+        this.platformTenantIds = platformTenantIds != null ? platformTenantIds : new ArrayList<>();
+    }
+
+    public List<String> getSuperAdminRoles() {
+        return superAdminRoles;
+    }
+
+    public void setSuperAdminRoles(List<String> superAdminRoles) {
+        this.superAdminRoles = superAdminRoles != null ? superAdminRoles : new ArrayList<>();
+    }
+
+    public List<String> getSuperAdminPermissions() {
+        return superAdminPermissions;
+    }
+
+    public void setSuperAdminPermissions(List<String> superAdminPermissions) {
+        this.superAdminPermissions = superAdminPermissions != null ? superAdminPermissions : new ArrayList<>();
     }
 }

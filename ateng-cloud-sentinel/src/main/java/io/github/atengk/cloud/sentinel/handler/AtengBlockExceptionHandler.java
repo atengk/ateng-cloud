@@ -63,8 +63,10 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response, String resourceName, BlockException e) throws Exception {
+        AtengSentinelProperties.BlockHandlerProperties handlerProps = properties.getBlockHandler();
+        AtengSentinelProperties.BlockCodeMode codeMode = handlerProps.getCodeMode();
         SentinelResultCode resultCode = determineResultCode(e);
-        HttpStatus httpStatus = determineHttpStatus(e);
+        HttpStatus httpStatus = SentinelServletUtil.determineHttpStatus(e, codeMode);
         String ruleType = determineRuleType(e);
         String clientIp = SentinelServletUtil.resolveClientIp(request);
         String origin = resolveOriginSafely(originParser, request);
@@ -87,14 +89,15 @@ public class AtengBlockExceptionHandler implements BlockExceptionHandler {
             return;
         }
 
-        int targetStatus = properties.getBlockHandler().isHttpStatusAlign()
+        int targetStatus = handlerProps.isHttpStatusAlign()
                 ? httpStatus.value()
                 : HttpStatus.OK.value();
-        var headers = SentinelServletUtil.createBlockHeaders(ruleType, properties.getBlockHandler().getRetryAfter());
-        Result<Void> result = Result.fail(resultCode.getCode(), resultCode.getMsg());
+        int bodyCode = SentinelServletUtil.resolveBodyResultCode(resultCode, httpStatus, codeMode);
+        var headers = SentinelServletUtil.createBlockHeaders(ruleType, handlerProps.resolveEffectiveRetryAfter(httpStatus));
+        Result<Void> result = Result.fail(bodyCode, resultCode.getMsg());
 
-        log.warn("Sentinel block triggered: resource='{}', rule={}, code={}, status={}, path='{}', clientIp='{}', origin='{}', traceId='{}'",
-                resourceName, ruleType, resultCode.name(), targetStatus, requestPath, clientIp, origin, traceId);
+        log.warn("Sentinel block triggered: resource='{}', rule={}, code={}, bodyCode={}, status={}, path='{}', clientIp='{}', origin='{}', traceId='{}'",
+                resourceName, ruleType, resultCode.name(), bodyCode, targetStatus, requestPath, clientIp, origin, traceId);
 
         SentinelServletUtil.writeBlockJsonResponse(response, objectMapper, targetStatus, headers, result);
     }

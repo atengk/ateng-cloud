@@ -122,6 +122,11 @@ public final class GatewayConstants {
     public static final String ATTR_CLIENT_IP = "ateng.gateway.clientIp";
 
     /**
+     * 挂载在 ServerWebExchange Attributes 中的请求已通过鉴权登录校验标记键
+     */
+    public static final String ATTR_AUTHENTICATED = "ateng.gateway.authenticated";
+
+    /**
      * 挂载在 ServerWebExchange Attributes 中的当前登录用户 ID 键
      */
     public static final String ATTR_USER_ID = "ateng.gateway.userId";
@@ -130,6 +135,21 @@ public final class GatewayConstants {
      * 挂载在 ServerWebExchange Attributes 中的租户 ID 键
      */
     public static final String ATTR_TENANT_ID = "ateng.gateway.tenantId";
+
+    /**
+     * 挂载在 ServerWebExchange Attributes 中的入站请求原始目标租户 ID 键 (供超管受控切换租户校验使用)
+     */
+    public static final String ATTR_REQUESTED_TENANT_ID = "ateng.gateway.requestedTenantId";
+
+    /**
+     * 挂载在 ServerWebExchange Attributes 中的当前会话超级管理员标识键
+     */
+    public static final String ATTR_SUPER_ADMIN = "ateng.gateway.superAdmin";
+
+    /**
+     * 挂载在 ServerWebExchange Attributes 中的当前命中 Sa-Token 账号体系标识键
+     */
+    public static final String ATTR_LOGIN_TYPE = "ateng.gateway.loginType";
 
     /**
      * 挂载在 ServerWebExchange Attributes 中的流量染色标签键

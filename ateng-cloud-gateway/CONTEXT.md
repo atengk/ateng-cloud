@@ -135,3 +135,23 @@ _Avoid_: Nonce缓存, 内存防重放, 随机数集合
 **Pinning-Free Route Synchronization**:
 网关在执行双轨动态路由热绑与快照刷新时，采用 `ReentrantLock` 替代 `synchronized` 守护临界区，并将反向持久化操作卸载至有界弹性调度器，杜绝 JDK 21+ 虚拟线程 Carrier Pinning 与 Netty EventLoop 阻塞的并发控制机制。
 _Avoid_: 路由同步锁, synchronized刷新, 阻塞持久化
+
+**Multi-Account LoginType Routing**:
+网关根据入站请求路径匹配多账号体系标识（`loginType`），动态路由至对应的隔离鉴权逻辑（`StpLogic`）与独立令牌名称（如 `<tokenName>-<loginType>`），并在未命中映射规则时回退默认账号体系的集中鉴权路由机制。
+_Avoid_: 多端Token硬编码, 全局StpUtil写死, 单一账号校验
+
+**LoginUser Session Extraction**:
+网关在响应式鉴权上下文中全兼容探测 Account Session 与 TokenSession 内的 `login_user` 业务主体载荷、会话级身份模拟标识（`switch_target_user_id`）、直接租户键与 JWT 扩展字段，按权威优先级提取操作人与租户身份的协议适配机制。
+_Avoid_: 单一Session读取, 裸loginId透传, 仅查tenantId键
+
+**Composite LoginId Unpacking**:
+在缺少完整 `LoginUser` 会话载荷时，网关受控按多租户分隔符（`_`）对 `{tenantId}_{userId}` 复合登录主键进行拆解，分别还原纯净用户标识与租户标识以防止复合串透传至下游微服务的标识解包机制。
+_Avoid_: 复合主键原样转发, 无条件截断loginId, 凭据字符串混用
+
+**Super-Admin Tenant Switch**:
+当显式开启受控跨租户开关时，网关对入站 `X-Tenant-Id` 先行暂存并物理剥离，在集中鉴权确认平台超级管理员角色/权限与归属平台租户白名单、并校验目标租户格式与响应式 `GatewayTenantSwitchValidator` SPI 通过后，才允许临时切换目标租户上下文并锁死普通用户与匿名流量的零信任隔离机制。
+_Avoid_: 全局放开租户头, 无条件信任X-Tenant-Id, 超管硬编码租户
+
+**SA-SAME-TOKEN Dual-Header**:
+网关签发内部同源数字签名凭据时同时注入 `Same-Token`、`SAME_TOKEN` 与 `SA-SAME-TOKEN` 请求头，同时兼容旧版网关契约与 `ateng-boot-satoken` 原生 `@CheckSameToken` 校验规范的出站同源签发机制。
+_Avoid_: 单一Same-Token头, 遗漏SA-SAME-TOKEN, 局部头写死

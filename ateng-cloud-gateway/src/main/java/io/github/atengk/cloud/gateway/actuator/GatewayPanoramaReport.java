@@ -85,8 +85,27 @@ public record GatewayPanoramaReport(
             boolean ipFilterEnabled,
             int ipBlacklistCount,
             int ipWhitelistCount,
-            int sanitizeHeadersCount
-    ) implements Serializable {}
+            int sanitizeHeadersCount,
+            String defaultLoginType,
+            int loginTypeMappingCount
+    ) implements Serializable {
+
+        public EdgeSecurityReport(
+                boolean enabled,
+                boolean saTokenEnabled,
+                boolean pathValidationEnabled,
+                boolean headerSanitizeEnabled,
+                boolean clientIpEnabled,
+                boolean ipFilterEnabled,
+                int ipBlacklistCount,
+                int ipWhitelistCount,
+                int sanitizeHeadersCount
+        ) {
+            this(enabled, saTokenEnabled, pathValidationEnabled, headerSanitizeEnabled,
+                    clientIpEnabled, ipFilterEnabled, ipBlacklistCount, ipWhitelistCount,
+                    sanitizeHeadersCount, "login", 0);
+        }
+    }
 
     /**
      * 开放接口 API 签名防篡改与 Nonce 防重放诊断数据

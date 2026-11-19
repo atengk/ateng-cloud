@@ -61,6 +61,26 @@ spring:
           uri: forward:/sample/cloud/gateway/auth/logout
           predicates:
             - Path=/api/auth/logout
+        - id: admin-login
+          uri: forward:/sample/cloud/gateway/auth/admin/login
+          predicates:
+            - Path=/api/admin/login
+        - id: admin-dashboard
+          uri: forward:/sample/cloud/gateway/auth/admin/dashboard
+          predicates:
+            - Path=/api/admin/dashboard
+        - id: admin-public-notice
+          uri: forward:/sample/cloud/gateway/auth/admin/public-notice
+          predicates:
+            - Path=/api/admin/public/notice
+        - id: app-login
+          uri: forward:/sample/cloud/gateway/auth/app/login
+          predicates:
+            - Path=/api/app/login
+        - id: app-profile
+          uri: forward:/sample/cloud/gateway/auth/app/profile
+          predicates:
+            - Path=/api/app/profile
         - id: order-dispatch
           uri: forward:/sample/cloud/gateway/route/order-dispatch
           predicates:
@@ -140,6 +160,13 @@ ateng:
       security:
         enabled: true
         trusted-proxy-count: 1
+        default-login-type: login
+        composite-login-id-enabled: true
+        login-type-mappings:
+          admin:
+            - "/api/admin/**"
+          member:
+            - "/api/app/**"
         exclude-paths:
           - "/api/open/**"
           - "/api/security/**"
@@ -153,6 +180,12 @@ ateng:
           - "/sample/cloud/gateway/auth/inspect-context"
           - "/api/auth/logout"
           - "/sample/cloud/gateway/auth/logout"
+          - "/api/admin/login"
+          - "/sample/cloud/gateway/auth/admin/login"
+          - "/api/admin/public/**"
+          - "/sample/cloud/gateway/auth/admin/public-notice"
+          - "/api/app/login"
+          - "/sample/cloud/gateway/auth/app/login"
           - "/api/order/**"
           - "/sample/cloud/gateway/route/**"
           - "/api/route/**"

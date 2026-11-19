@@ -265,7 +265,9 @@ public class SentinelBlockExceptionAdvice implements HandlerExceptionResolver, O
             HttpServletRequest request,
             boolean skipCounter,
             String resource) {
-        HttpStatus targetStatus = SentinelServletUtil.determineHttpStatus(resultCode);
+        AtengSentinelProperties.BlockAdviceProperties adviceProps = properties.getBlockAdvice();
+        AtengSentinelProperties.BlockCodeMode codeMode = adviceProps.getCodeMode();
+        HttpStatus targetStatus = SentinelServletUtil.determineHttpStatus(resultCode, codeMode);
         String ruleType = SentinelServletUtil.determineRuleType(resultCode);
         String clientIp = SentinelServletUtil.resolveClientIp(request);
         String origin = SentinelServletUtil.resolveOriginSafely(originParser, request);
@@ -275,14 +277,16 @@ public class SentinelBlockExceptionAdvice implements HandlerExceptionResolver, O
             blockCounter.recordBlock(blockForCounter, resource, clientIp, traceId, origin);
         }
 
-        HttpHeaders headers = SentinelServletUtil.createBlockHeaders(ruleType, properties.getBlockAdvice().getRetryAfter());
-        HttpStatus responseStatus = properties.getBlockAdvice().isHttpStatusAlign() ? targetStatus : HttpStatus.OK;
+        int bodyCode = SentinelServletUtil.resolveBodyResultCode(resultCode, targetStatus, codeMode);
+        HttpHeaders headers = SentinelServletUtil.createBlockHeaders(
+                ruleType, adviceProps.resolveEffectiveRetryAfter(targetStatus));
+        HttpStatus responseStatus = adviceProps.isHttpStatusAlign() ? targetStatus : HttpStatus.OK;
         String path = request != null ? request.getRequestURI() : "unknown";
 
         log.warn("Sentinel advice intercepted block/degrade: rule={}, code={}, status={}, path='{}', clientIp='{}', origin='{}', traceId='{}', skipCounter={}",
-                ruleType, resultCode.getCode(), responseStatus.value(), path, clientIp, origin, traceId, skipCounter);
+                ruleType, bodyCode, responseStatus.value(), path, clientIp, origin, traceId, skipCounter);
 
-        return new ResponseEntity<>(Result.fail(resultCode.getCode(), resultCode.getMsg()), headers, responseStatus);
+        return new ResponseEntity<>(Result.fail(bodyCode, resultCode.getMsg()), headers, responseStatus);
     }
 
     private String resolveResourceName(BlockException ex, HttpServletRequest request) {

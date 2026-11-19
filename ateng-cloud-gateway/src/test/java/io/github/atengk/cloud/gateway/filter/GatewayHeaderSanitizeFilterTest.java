@@ -84,4 +84,30 @@ class GatewayHeaderSanitizeFilterTest {
 
         filter.filter(exchange, chain).block();
     }
+
+    @Test
+    @DisplayName("开启 allowSuperAdminSwitch 且 allowHeader=false 时暂存目标租户至属性并仍物理剥离 X-Tenant-Id")
+    void testCaptureRequestedTenantBeforeSanitizingWhenSuperAdminSwitchEnabled() {
+        AtengGatewaySecurityProperties securityProperties = new AtengGatewaySecurityProperties();
+        AtengGatewayTenantProperties tenantProperties = new AtengGatewayTenantProperties();
+        tenantProperties.setAllowHeader(false);
+        tenantProperties.setAllowSuperAdminSwitch(true);
+
+        GatewayHeaderSanitizeFilter filter = new GatewayHeaderSanitizeFilter(securityProperties, tenantProperties);
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/admin/orders")
+                .header(GatewayConstants.X_TENANT_ID, "target-tenant-888")
+                .header(GatewayConstants.X_USER_ID, "forged-user")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        GatewayFilterChain chain = ex -> {
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.X_TENANT_ID));
+            assertNull(ex.getRequest().getHeaders().getFirst(GatewayConstants.X_USER_ID));
+            assertEquals("target-tenant-888", ex.getAttribute(GatewayConstants.ATTR_REQUESTED_TENANT_ID));
+            return Mono.empty();
+        };
+
+        filter.filter(exchange, chain).block();
+    }
 }

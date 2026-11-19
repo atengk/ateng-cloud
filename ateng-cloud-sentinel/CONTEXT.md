@@ -21,7 +21,7 @@ _Avoid_: 路径格式化, URL替换, 资源过滤
 _Avoid_: 来源提取器, Header解析器, IP获取工具
 
 **Block Dual-Alignment Contract**:
-当入站 Web、切面注解或出站 Feign 请求触发流量防卫阻断时，同时返回物理 HTTP 状态码（HTTP 429 Too Many Requests / HTTP 503 Service Unavailable，含可选退避响应头）与强类型统一响应体 `Result<Void>` 的双重对齐响应契约。
+当入站 Web、切面注解或出站 Feign 请求触发流量防卫阻断时，同时返回物理 HTTP 状态码（HTTP 429 Too Many Requests / HTTP 503 Service Unavailable / HTTP 403 Forbidden，含可选退避响应头）与强类型统一响应体 `Result<Void>` 的双重对齐响应契约，并支持通过 `BlockCodeMode`（`SENTINEL_CODE` 4201~4205 或 `HTTP_STATUS` 429/503/403）与网关统一响应口径。
 _Avoid_: 拦截报错, 限流提示, 降级错误输出
 
 **Aspect Escape Defense**:

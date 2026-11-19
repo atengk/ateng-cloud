@@ -23,7 +23,8 @@
 2. **外部标头强制清洗与零信任同源防御 (Header Sanitization & Same-Token Guard)**：
    - 装配高优先级 `GatewayHeaderSanitizeFilter`：请求入站时无条件物理剥离外部传入的所有内部受信与分布式上下文标头（默认覆盖 `X-User-Id`、`X-Tenant-Id`、`X-Ignore-Tenant`、`Same-Token`、`SA-SAME-TOKEN`、`TX_XID`、`X-Traffic-Lane`、`X-Traffic-Rule`）；
    - 集中挂载 Sa-Token 反应式鉴权过滤器（`SaTokenGatewayFilter`），内置系统白名单并支持 `ateng.cloud.gateway.security.exclude-paths` 属性扩展，网关聚焦全局身份认证与租户信息提取，业务接口细粒度权限校验下放至下游微服务；
-   - 校验合法后由网关从受信登录态动态重注 `X-User-Id` 与 `X-Tenant-Id`，并在 `ateng.cloud.gateway.security.same-token-enabled=true`（默认开启）时使用 `SaSameUtil.getToken()` 动态签发内部同源数字凭证 `Same-Token`；未携带合法签名的直连内网流量被微服务直接 401 熔断。
+   - **多账号体系路由与 `LoginUser` 协议兼容**：支持通过 `ateng.cloud.gateway.security.default-login-type` 与 `login-type-mappings`（`loginType -> List<AntPath>`，采用 `AntPathMatcher.getPatternComparator` 最具体模式优先仲裁）路由至对应 `StpLogic`（优先复用 `SaManager` 已注册实例，未注册时按 `ReentrantLock` 无 Pinning 懒加载注册 `<tokenName>-<loginType>`），跨账号凭据严格 401 零回退；身份提取全兼容 Account Session / TokenSession 中的 `login_user` JSON 载荷（经 `JsonUtil` 解析）、`switch_target_user_id` 会话级模拟态、JWT `extra`、`tenantId` 键，并在缺少 `login_user` 时按 `composite-login-id-enabled`（默认开启）受控解包 `{tenantId}_{userId}` 复合主键；命中白名单路径亦先解析目标 `loginType` 并按需同步已登录上下文；
+   - 校验合法后由网关从受信登录态动态重注纯净 `X-User-Id` 与 `X-Tenant-Id`，并在 `ateng.cloud.gateway.security.same-token-enabled=true`（默认开启）时使用 `SaSameUtil.getToken()` 同步签发内部同源数字凭证 `Same-Token`、`SAME_TOKEN` 与 `SA-SAME-TOKEN`（兼容 `ateng-boot-satoken` 原生 `@CheckSameToken`）；未携带合法签名的直连内网流量被微服务直接 401 熔断。
 
 3. **Nacos 动态路由双轨持久化、快照容错与防 Pinning 并发控制 (Dynamic Route Hot-Reload & Pinning-Free Lock)**：
    - 实现 `RouteDefinitionRepository` SPI，默认持久化载体为 Nacos `gateway-routes.json`（支持属性自定义扩展，初始拉取超时默认 `5s`）；
@@ -76,9 +77,10 @@
     - 提供可配置的 `GatewayAccessLogFilter`，过滤健康检查端点；
     - 依托 Reactor `doFinally` 异步度量耗时，结构化单行输出 `[ACCESS]` 核心指标（方法、URI、状态码、耗时、真实 IP、userId、traceId），内置超过 3000ms 慢请求 WARN 告警。
 
-14. **多租户安全入站解析与防跨越不变量 (Multi-Tenancy Ingress Resolution)**：
-    - 鉴权优先：已登录请求强制使用 Token 内部绑定的真实 `tenantId` 覆盖任何入站头，杜绝越权串租户；
-    - 开放/白名单流量受控解析：仅在 `ateng.cloud.gateway.tenant.allow-header: true` 时允许读取入站 `X-Tenant-Id`，否则强制置空。
+14. **多租户安全入站解析与防跨越不变量 (Multi-Tenancy Ingress Resolution & Super-Admin Controlled Switch)**：
+    - 鉴权优先：已登录请求（标记 `ATTR_AUTHENTICATED` 或 `ATTR_USER_ID`）默认强制使用 Token/Session 内部绑定的真实 `tenantId` 覆盖任何入站头；即便已登录会话自身未绑定 `tenantId`，也绝不采信入站 `X-Tenant-Id`，彻底杜绝越权串租户；
+    - 平台超管受控切换：当显式开启 `ateng.cloud.gateway.tenant.allow-super-admin-switch=true`（默认 `false`）时，`GatewayHeaderSanitizeFilter` 在物理剥离 `X-Tenant-Id` 前将其暂存至 Exchange 属性；经 `SaTokenGatewayFilter` 确认超管角色/权限与 `platform-tenant-ids`（为空时不限制）后，由 `GatewayTenantFilter` 执行格式正则防卫与可选响应式 `GatewayTenantSwitchValidator` SPI 校验通过后放行目标租户，同时保持普通登录用户与匿名流量绝对隔离；
+    - 开放/白名单匿名流量受控解析：仅在未登录且 `ateng.cloud.gateway.tenant.allow-header: true` 时允许读取入站 `X-Tenant-Id`，否则强制置空。
 
 15. **URI 规范化与目录穿越攻击快速熔断 (Path Traversal & Normalization Defense)**：
     - 实现 `GatewayPathValidationFilter`：自动规范化多重斜杠（`///` $\to$ `/`）；

@@ -291,6 +291,29 @@ class SentinelBlockExceptionAdviceTest {
         assertThat(counter.getTotalBlocked()).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("blockAdvice 开启 HTTP_STATUS 口径对齐模式：输出 429/503/403 且 429 默认带 Retry-After: 1")
+    void testBlockAdviceHttpStatusCodeMode() {
+        properties.getBlockAdvice().setCodeMode(AtengSentinelProperties.BlockCodeMode.HTTP_STATUS);
+
+        ResponseEntity<Result<Void>> flowResp = advice.handleBlockException(new FlowException("flow"), request);
+        assertThat(flowResp.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(flowResp.getBody()).isNotNull();
+        assertThat(flowResp.getBody().getCode()).isEqualTo(429);
+        assertThat(flowResp.getHeaders().getFirst("Retry-After")).isEqualTo("1");
+
+        ResponseEntity<Result<Void>> degradeResp = advice.handleBlockException(new DegradeException("degrade"), request);
+        assertThat(degradeResp.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(degradeResp.getBody()).isNotNull();
+        assertThat(degradeResp.getBody().getCode()).isEqualTo(503);
+        assertThat(degradeResp.getHeaders().getFirst("Retry-After")).isNull();
+
+        ResponseEntity<Result<Void>> authResp = advice.handleBlockException(new AuthorityException("res"), request);
+        assertThat(authResp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(authResp.getBody()).isNotNull();
+        assertThat(authResp.getBody().getCode()).isEqualTo(403);
+    }
+
     interface DummyClient {
         String call();
     }

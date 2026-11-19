@@ -207,4 +207,36 @@ class AtengBlockExceptionHandlerTest {
         assertThat(noRetryResponse.getHeader("X-Sentinel-Block-Rule")).isEqualTo("DEGRADE");
         assertThat(noRetryResponse.getHeader("Retry-After")).isNull();
     }
+
+    @Test
+    @DisplayName("HTTP_STATUS 口径对齐模式：Result.code 输出 429/503/403 且 429 自动附带 Retry-After: 1")
+    void testHttpStatusCodeModeAlignedWithGateway() throws Exception {
+        properties.getBlockHandler().setCodeMode(AtengSentinelProperties.BlockCodeMode.HTTP_STATUS);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/orders");
+
+        MockHttpServletResponse flowResp = new MockHttpServletResponse();
+        handler.handle(request, flowResp, "order-resource", new FlowException("flow"));
+        assertThat(flowResp.getStatus()).isEqualTo(429);
+        assertThat(flowResp.getHeader("Retry-After")).isEqualTo("1");
+        assertThat(objectMapper.readTree(flowResp.getContentAsString()).get("code").asInt()).isEqualTo(429);
+
+        MockHttpServletResponse degradeResp = new MockHttpServletResponse();
+        handler.handle(request, degradeResp, "pay-resource", new DegradeException("degrade"));
+        assertThat(degradeResp.getStatus()).isEqualTo(503);
+        assertThat(degradeResp.getHeader("Retry-After")).isNull();
+        assertThat(objectMapper.readTree(degradeResp.getContentAsString()).get("code").asInt()).isEqualTo(503);
+
+        MockHttpServletResponse authResp = new MockHttpServletResponse();
+        handler.handle(request, authResp, "admin-resource", new AuthorityException("admin-resource", "app-a"));
+        assertThat(authResp.getStatus()).isEqualTo(403);
+        assertThat(authResp.getHeader("Retry-After")).isNull();
+        assertThat(objectMapper.readTree(authResp.getContentAsString()).get("code").asInt()).isEqualTo(403);
+
+        // 显式置为 0s 后即使处于 HTTP_STATUS 模式也不输出 Retry-After
+        properties.getBlockHandler().setRetryAfter(java.time.Duration.ZERO);
+        MockHttpServletResponse explicitNoRetry = new MockHttpServletResponse();
+        handler.handle(request, explicitNoRetry, "order-resource", new FlowException("flow"));
+        assertThat(explicitNoRetry.getHeader("Retry-After")).isNull();
+    }
 }
