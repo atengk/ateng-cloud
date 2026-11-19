@@ -23,11 +23,11 @@
 | `AtengFeignClientProperties` | 单 Client 隔离属性 | 按 `contextId` 优先配置单客户端超时、重试、解包、日志、防爆与慢调用阈值 | 映射 `ateng.cloud.feign.clients.<name>.*`，未配项平滑继承全局基线 |
 | `@AdaptiveUnwrap` | 声明式注解 | 显式开启 (`true`) 或关闭 (`false`) 指定 `@FeignClient` 接口或方法的 `Result<T>` 自动剥壳 | 可标注于类级与方法级；方法级优先级最高，可覆盖白名单与全局配置 |
 | `FeignHeaderConstants` | 标头常量规约 | 收敛四维上下文、灰度三元组 (`X-Traffic-*`)、`TX_XID`、`Same-Token` 与 MDC 键常量 | 消除硬编码魔法字符串，与核心底层 `MessageHeaderConstants` 对齐 |
-| `AtengFeignDecoder` | 双模自适应解码器 | 流式白名单透传、分级载荷防爆、GZIP 魔法字节自动解压、`Result<T>` 剥壳与原生类型 null 防卫 | 标配 `@ConditionalOnMissingBean`，支持 `Content-Length` 预检与有界流读防御 |
-| `AtengFeignErrorDecoder` | HTTP 错误解码器 | 拦截 HTTP 4xx/5xx 错误响应，优先提取远端 `Result` 业务码并携带原始 `FeignException` 因果链 | 标配 `@ConditionalOnMissingBean`，100% 保留原始 `cause` |
+| `AtengFeignDecoder` | 双模自适应解码器 | 流式白名单透传、分级载荷防爆、GZIP 魔法字节自动解压、`Result<T>` 剥壳（含远端 `traceId` 回填）与原生类型 null 防卫 | 标配 `@ConditionalOnMissingBean`，支持 `Content-Length` 预检与有界流读防御 |
+| `AtengFeignErrorDecoder` | HTTP 错误解码器 | 拦截 HTTP 4xx/5xx 错误响应，优先提取远端 `Result` 业务码与 `traceId`（回退 `X-Trace-Id`）并携带原始 `FeignException` 因果链 | 标配 `@ConditionalOnMissingBean`，100% 保留原始 `cause` |
 | `AtengFeignRetryer` | 防雪崩重试器 | 严格执行非幂等写与读超时禁重试铁律；仅允许 GET/HEAD 建连异常按保底 Full Jitter 重试 | 标配 `@ConditionalOnMissingBean`，线程局部随机退避防重试风暴 |
-| `AtengFeignInvocationHandlerFactory` | 动态代理调用工厂 | 剥离 `DecodeException` 包装还原真实 `BusinessException`，按开关因果转译网络层/未捕获 `FeignException` | 默认开启异常剥壳；`translate-network-exceptions=true` 时激活网络异常转译 |
-| `FeignContextPropagationInterceptor` | 出站请求拦截器 | 以 `Ordered.HIGHEST_PRECEDENCE` 在出站时清洗脏字面量并注入四维上下文、灰度、XID 与 `Same-Token` | 满足 `context.enabled=true` 时自动装配，确保业务自定义拦截器之前完成注入 |
+| `AtengFeignInvocationHandlerFactory` | 动态代理调用工厂 | 剥离 `DecodeException` 包装还原真实 `BusinessException`，按开关因果转译网络层/未捕获 `FeignException`；与 `SentinelFeign$Builder` 共存时通过代理后置处理器共享同源转译逻辑 | 默认开启异常剥壳；`translate-network-exceptions=true` 时激活网络异常转译 |
+| `FeignContextPropagationInterceptor` | 出站请求拦截器 | 以 `Ordered.HIGHEST_PRECEDENCE` 在出站时清洗脏字面量并注入四维上下文、灰度、XID 及 `Same-Token`/`SA-SAME-TOKEN` 双标头 | 满足 `context.enabled=true` 时自动装配，确保业务自定义拦截器之前完成注入 |
 | `FeignContextWebFilter` | 入站对称过滤器 | 服务端入站执行 `Same-Token` Fail-Closed 校验，对称还原四维/灰度/XID 上下文并在 `finally` 无损恢复 | Servlet Web 下 `inbound-enabled=true` 或 `check-same-token=true` 时注册 |
 | `AtengFeignAcceptGzipEncodingInterceptor` | 响应压缩协商拦截器 | 为出站请求注入 `Accept-Encoding: gzip, deflate` 请求头 | 当 `ateng.cloud.feign.compression.response-enabled=true` 时激活 |
 | `AtengFeignContentGzipEncodingInterceptor` | 请求压缩拦截器 | 对命中 MIME 白名单且体量达标的请求体执行 GZIP 压缩并附加 `Content-Encoding: gzip` | 当 `ateng.cloud.feign.compression.request-enabled=true` 时激活 |
@@ -107,7 +107,7 @@
 | `X-Traffic-Lane` | `TRAFFIC_LANE` | `TrafficContextHolder` / `MDC` (`trafficLane`) | 灰度全链路泳道标识随 `tag` 协同穿透与还原 |
 | `X-Traffic-Rule` | `TRAFFIC_RULE` | `TrafficContextHolder` / `MDC` (`trafficRule`) | 动态流量规则命中追踪元数据对称透传 |
 | `TX_XID` | `TX_XID` | Seata `RootContext` / `MDC` (`xid`) | 兼容 `org.apache.seata` 与 `io.seata`，仅解绑本次入站新绑定的事务 XID |
-| `Same-Token` / `SA-SAME-TOKEN` | `SAME_TOKEN` / `SA_SAME_TOKEN` | `SameTokenProvider` | 出站注 `Same-Token` 并在日志中强制星号掩码 (`******`)；入站兼容别名验真 |
+| `Same-Token` / `SA-SAME-TOKEN` | `SAME_TOKEN` / `SA_SAME_TOKEN` | `SameTokenProvider` | 出站对称注入双标头并在日志（含 `same_token`）中强制星号掩码 (`******`)；入站兼容别名验真 |
 
 ---
 
@@ -838,8 +838,8 @@ public Result<ToleranceResultVO> testHttp500() {
 
 **③ 机制原理解析**：
 
-- **因果链不丢弃铁律**：`AtengFeignErrorDecoder` 拦截 HTTP 4xx/5xx 响应，优先识别响应体是否为标准 `Result` 结构（透传远端 `code` / `msg` 并挂接原始 `FeignException` 为 `cause`），非标准结构则经 `FeignErrorSupport.mapHttpStatusToResultCode` 映射为标准 `CommonResultCode` 并挂载原 `FeignException` 异常原因。
-- **动态代理与熔断兼容边界**：`AtengFeignInvocationHandlerFactory` 始终把编码阶段产生的 `DecodeException` 拆包还原为 `BusinessException`；而对穿透重试器的网络层超时 (`RetryableException`) 或未转译 `FeignException`，默认按原始类型继续向外抛出以兼容 Sentinel / Resilience4j 默认错误统计规则；若下游全局由 `BusinessException` 统一拦截兜底，可按需开启 `translate-network-exceptions: true` 将其统一转译并携带 `CommonResultCode.SERVICE_UNAVAILABLE` 与原始 `cause`。
+- **因果链与 TraceId 不丢弃铁律**：`AtengFeignErrorDecoder` 与 `AtengFeignDecoder` 在解析标准 `Result` 业务错误或 HTTP 4xx/5xx 响应时，优先提取 JSON `Result.traceId`（缺失时回退响应头 `X-Trace-Id`）并调用 `BusinessException.withTraceId(...)` 回填远端链路标识；非标准错误结构经 `FeignErrorSupport.mapHttpStatusToResultCode` 精准映射标准 `CommonResultCode`（含 `406->NOT_ACCEPTABLE`、`409->CONFLICT`、`415->UNSUPPORTED_MEDIA_TYPE`、`504->SERVICE_UNAVAILABLE` 等），100% 挂载原始 `FeignException` 作为 `cause`。
+- **动态代理与 Sentinel 熔断兼容边界**：`AtengFeignAutoConfiguration` 检测到 `SentinelFeign$Builder` 时主动跳过会抛出 `UnsupportedOperationException` 的 `builder.invocationHandlerFactory(...)` 覆写，改以外层 `BeanPostProcessor` 包装 `SentinelInvocationHandler` 代理并统一复用 `AtengFeignInvocationHandlerFactory.translateInvocationException(...)`；始终把编码阶段产生的 `DecodeException` 拆包还原为携带 `traceId` 的 `BusinessException`，而对穿透重试器的网络层超时 (`RetryableException`) 或未转译 `FeignException` 默认保留原生异常抛出以兼容 Sentinel / Resilience4j 默认错误统计规则，开启 `translate-network-exceptions: true` 时统一转译并携带 `CommonResultCode.SERVICE_UNAVAILABLE`、远端 `traceId` 与原始 `cause`。
 
 ---
 

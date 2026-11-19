@@ -91,7 +91,7 @@ class DubboContractAssertFilterTest {
         RpcInvocation invocation = new RpcInvocation();
         invocation.setMethodName("queryUser");
 
-        AppResponse response = new AppResponse(Result.fail(4001, "用户不存在"));
+        AppResponse response = new AppResponse(Result.fail(4001, "用户不存在").traceId("dubbo-trace-777"));
         filter.onResponse(response, invoker, invocation);
 
         assertThat(response.hasException()).isTrue();
@@ -99,7 +99,19 @@ class DubboContractAssertFilterTest {
         BusinessException be = (BusinessException) response.getException();
         assertThat(be.getCode()).isEqualTo(4001);
         assertThat(be.getMessage()).isEqualTo("用户不存在");
+        assertThat(be.getTraceId()).isEqualTo("dubbo-trace-777");
         assertThat(response.getValue()).isNull();
+
+        // Result.traceId 为 "null" 脏字面量时应清洗并回退 MDC traceId
+        org.slf4j.MDC.put("traceId", "mdc-fallback-trace-888");
+        try {
+            AppResponse dirtyResponse = new AppResponse(Result.fail(4002, "状态异常").traceId("null"));
+            filter.onResponse(dirtyResponse, invoker, invocation);
+            BusinessException dirtyBe = (BusinessException) dirtyResponse.getException();
+            assertThat(dirtyBe.getTraceId()).isEqualTo("mdc-fallback-trace-888");
+        } finally {
+            org.slf4j.MDC.remove("traceId");
+        }
     }
 
     @Test

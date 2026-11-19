@@ -1,6 +1,10 @@
 package io.github.atengk.cloud.feign.decoder;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import feign.Response;
+import io.github.atengk.cloud.feign.support.FeignContextHeaderSupport;
+import io.github.atengk.cloud.feign.support.FeignErrorSupport;
+import org.springframework.util.StringUtils;
 
 /**
  * Feign Result 统一物理契约解析辅助类
@@ -51,5 +55,33 @@ final class FeignResultSupport {
             return jsonNode.get("message").asText();
         }
         return "";
+    }
+
+    /**
+     * 从 Result JSON 节点中提取可选 {@code traceId} 字段
+     *
+     * @param jsonNode JSON 节点
+     * @return 链路追踪标识，缺失或空白返回 {@code null}
+     */
+    static String extractTraceId(JsonNode jsonNode) {
+        if (jsonNode == null || !jsonNode.has("traceId") || jsonNode.get("traceId").isNull()) {
+            return null;
+        }
+        return FeignContextHeaderSupport.normalize(jsonNode.get("traceId").asText(null));
+    }
+
+    /**
+     * 解析远端响应关联的 {@code traceId}（优先提取 JSON {@code Result.traceId}，缺失时回退响应头 {@code X-Trace-Id}）
+     *
+     * @param jsonNode JSON 节点（可为 {@code null}）
+     * @param response Feign 原始响应对象
+     * @return 链路追踪标识或 {@code null}
+     */
+    static String resolveResponseTraceId(JsonNode jsonNode, Response response) {
+        String bodyTraceId = extractTraceId(jsonNode);
+        if (StringUtils.hasText(bodyTraceId)) {
+            return bodyTraceId;
+        }
+        return response != null ? FeignErrorSupport.extractTraceIdFromHeaders(response.headers()) : null;
     }
 }

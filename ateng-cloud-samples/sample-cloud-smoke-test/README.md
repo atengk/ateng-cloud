@@ -31,6 +31,7 @@
 | :--- | :--- | :--- | :--- |
 | **冒烟心跳存活探测** | `SmokeTestController` | `GET /sample/cloud/smoke/ping` | `curl "http://localhost:8080/sample/cloud/smoke/ping"` |
 | **全家桶组件装配状态** | `SmokeTestController` | `GET /sample/cloud/smoke/status` | `curl "http://localhost:8080/sample/cloud/smoke/status"` |
+| **Feign + Sentinel 共存契约与降级探测** | `SmokeFeignProviderController` | `GET /sample/cloud/smoke/feign/dto/{id}` / `/result/{id}` / `/biz-error` / `/server-error` | `curl "http://localhost:8080/sample/cloud/smoke/feign/dto/1001"` |
 
 ---
 

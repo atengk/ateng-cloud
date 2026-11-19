@@ -18,7 +18,7 @@
 | `AtengDubboApplicationProperties` | 应用配置属性类 | 应用级服务发现模式与优雅停机等待超时 | 默认应用级注册 `instance`，停机超时硬兜底 `15000ms` |
 | `AtengDubboContextProperties` | 上下文配置属性类 | 全链路四维上下文出站注入与入站还原开关 | 默认 `true` 开启 |
 | `AtengDubboSameTokenProperties` | 零信任配置属性类 | 零信任内网防穿透 Same-Token 校验开关 | 默认 `true` 开启 |
-| `AtengDubboExceptionProperties` | 异常配置属性类 | 因果异常保真与第三方未知未受检异常转译开关 | 默认 `true` 开启 |
+| `AtengDubboExceptionProperties` | 异常配置属性类 | 因果异常保真、非白名单 `cause` 剥离与第三方未知未受检异常转译开关 | 默认 `enabled=true`、`sanitize-untrusted-cause=true` |
 | `AtengDubboContractProperties` | 契约配置属性类 | 双模契约校验与非 200 业务结果自动断言转译开关 | 默认 `true` 开启 (`ateng.cloud.dubbo.contract.enabled=true`) |
 | `AtengDubboTrafficProperties` | 流量路由配置属性类 | 金丝雀灰度发布流量染色穿透与标签路由模式配置 | 默认 `true` 开启，`tag-force=false` 平滑降级兜底 |
 | `AtengDubboOverloadProperties` | 过载保护配置属性类 | 服务端线程池过载保护转译与指标采集导出开关 | 默认 `true` 开启，`metrics-enabled=true` |
@@ -82,6 +82,8 @@
 | `ateng.cloud.dubbo.same-token.exclude-interfaces` | `List<String>` | `[]` | 豁免 Same-Token 入站强校验的 RPC 接口全限定名或通配符列表（如 `*OpenRpcService`） |
 | `ateng.cloud.dubbo.exception.enabled` | `boolean` | `true` | 是否开启因果异常保真与第三方未知未受检异常转译 |
 | `ateng.cloud.dubbo.exception.translate-consumer-rpc-exception` | `boolean` | `false` | 消费端无原生 `mock` 时是否将底层 `RpcException` 按需因果转译为受管 `BusinessException` (504/503/500) |
+| `ateng.cloud.dubbo.exception.sanitize-untrusted-cause` | `boolean` | `true` | 是否递归校验 `cause`/`suppressed` 异常链并剥离非安全包前缀的不可信 `cause`（防消费端反序列化 `ClassNotFoundException`） |
+| `ateng.cloud.dubbo.exception.trusted-cause-packages` | `List<String>` | `[]` | 允许保留在 `cause` 中的额外信任包前缀列表（与内置 `java.`/`javax.`/`jakarta.`/`io.github.atengk.` 自动合并） |
 | `ateng.cloud.dubbo.contract.enabled` | `boolean` | `true` | 是否开启双模契约校验与非 200 业务结果自动断言转译 |
 | `ateng.cloud.dubbo.contract.assert-non-null-result` | `boolean` | `true` | 当接口声明返回 `Result<T>` 且对端返回 `null` 空壳响应时是否断言失败并抛出 `BusinessException` |
 | `ateng.cloud.dubbo.traffic.enabled` | `boolean` | `true` | 是否开启金丝雀灰度流量染色与标签路由支持 |
@@ -667,6 +669,8 @@ ateng:
       exception:
         enabled: true                            # 启用因果异常保真与未知异常防反序列化崩溃转译
         translate-consumer-rpc-exception: false  # 消费端无原生 mock 时按需将底层 RpcException 转译为 504/503/500
+        sanitize-untrusted-cause: true           # 默认开启：递归剥离非白名单三方 cause 并在消息追加 [cause=...]
+        trusted-cause-packages: []               # 可选追加允许透传 cause 的受信任包前缀
 ```
 
 治理控制器异常场景验证：
@@ -707,8 +711,8 @@ public class DubboGovernanceConsumerController {
 ```
 
 **核心机制与容灾边界**：
-- **业务异常 100% 因果保真**：受管 `BusinessException` 列入白名单放行，错误码与多语言消息完全无损穿透；
-- **防御 ClassNotFoundException 崩溃**：对端抛出未声明的底层非 JDK 私有异常（如驱动层死锁异常），由 `AtengDubboExceptionFilter` 安全转译为通用 `BusinessException(500, "系统执行异常: ...")`，杜绝消费端因缺少私有异常类导致的二次反序列化瘫痪；
+- **业务异常 100% 因果保真与 TraceId 回传**：受管 `BusinessException` 列入白名单放行，错误码与多语言消息无损穿透；`AtengDubboExceptionFilter` 与 `DubboContractAssertFilter` 协同优先提取 `Result.traceId` / Dubbo 隐式附件并回退 MDC `traceId`，自动调用 `BusinessException.withTraceId(...)` 保证跨进程故障可观测对齐；
+- **递归剥离不可信 Cause 防反序列化崩溃**：开启 `sanitize-untrusted-cause=true`（默认）时，`AtengDubboExceptionFilter` 递归检查整个 `cause` 与 `suppressed` 异常链（支持环路防卫）；对未命中内置安全包前缀（`java.`、`javax.`、`jakarta.`、`io.github.atengk.`）或自定义 `trusted-cause-packages` 的驱动/第三方异常类，先在 Provider 记录完整现场堆栈，随后剥离不可信 `cause` 并于消息尾部追加 `[cause=<SimpleName>]` 标记（未知非白名单异常同步转译为 `BusinessException(500, ...)`），彻底杜绝消费端 `ClassNotFoundException`；
 - **消费端底层 `RpcException` 按需因果转译**：开启 `translate-consumer-rpc-exception=true` 且方法未配置原生 `mock` 时，`DubboConsumerExceptionClusterFilter` 将超时、网络异常等转译为保留原始 `cause` 的受管 `BusinessException`（504/503/500）。
 
 ---
@@ -1038,6 +1042,8 @@ ateng:
       exception:
         enabled: true
         translate-consumer-rpc-exception: false
+        sanitize-untrusted-cause: true
+        trusted-cause-packages: []
 
       # 双模契约校验与结果自动断言
       contract:

@@ -180,4 +180,88 @@ class AtengFeignInvocationExceptionTranslationTest {
         assertThat(decodeBe.getCode()).isEqualTo(CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
         assertThat(decodeBe.getCause()).isInstanceOf(DecodeException.class);
     }
+
+    @Test
+    @DisplayName("校验 HTTP 409/504/406/415 状态码映射及 ErrorDecoder 远端 traceId 回填")
+    void testHttp409And504MappingAndErrorTraceIdPropagation() {
+        AtengFeignProperties properties = new AtengFeignProperties();
+        AtengFeignErrorDecoder errorDecoder = new AtengFeignErrorDecoder(objectMapper);
+
+        // 1. 纯文本 HTTP 409 -> CommonResultCode.CONFLICT (409) + X-Trace-Id
+        DemoRemoteApi conflictClient = buildClient(properties, (request, options) -> Response.builder()
+                .status(409)
+                .reason("Conflict")
+                .request(request)
+                .headers(Collections.singletonMap("X-Trace-Id", Collections.singletonList("trace-409-header")))
+                .body("version conflict", StandardCharsets.UTF_8)
+                .build(), errorDecoder);
+        BusinessException conflictEx = assertThrows(BusinessException.class, conflictClient::submit);
+        assertThat(conflictEx.getCode()).isEqualTo(CommonResultCode.CONFLICT.getCode());
+        assertThat(conflictEx.getTraceId()).isEqualTo("trace-409-header");
+
+        // 2. HTTP 504 -> SERVICE_UNAVAILABLE (503) + JSON Result.traceId 优先
+        DemoRemoteApi gatewayTimeoutClient = buildClient(properties, (request, options) -> Response.builder()
+                .status(504)
+                .reason("Gateway Timeout")
+                .request(request)
+                .headers(Collections.singletonMap("X-Trace-Id", Collections.singletonList("trace-header-ignored")))
+                .body("{\"code\":504,\"msg\":\"upstream timeout\",\"traceId\":\"trace-504-body\"}", StandardCharsets.UTF_8)
+                .build(), errorDecoder);
+        BusinessException timeoutEx = assertThrows(BusinessException.class, gatewayTimeoutClient::ping);
+        assertThat(timeoutEx.getCode()).isEqualTo(504);
+        assertThat(timeoutEx.getTraceId()).isEqualTo("trace-504-body");
+
+        // 3. 验证 406 / 415 / 504 映射表覆盖完整
+        assertThat(io.github.atengk.cloud.feign.support.FeignErrorSupport.mapHttpStatusToResultCode(406))
+                .isEqualTo(CommonResultCode.NOT_ACCEPTABLE);
+        assertThat(io.github.atengk.cloud.feign.support.FeignErrorSupport.mapHttpStatusToResultCode(409))
+                .isEqualTo(CommonResultCode.CONFLICT);
+        assertThat(io.github.atengk.cloud.feign.support.FeignErrorSupport.mapHttpStatusToResultCode(415))
+                .isEqualTo(CommonResultCode.UNSUPPORTED_MEDIA_TYPE);
+        assertThat(io.github.atengk.cloud.feign.support.FeignErrorSupport.mapHttpStatusToResultCode(504))
+                .isEqualTo(CommonResultCode.SERVICE_UNAVAILABLE);
+
+        // 4. 一次性底层 InputStream 在 FeignException.errorStatus 消耗后仍可从缓存字节解析 Result.traceId
+        byte[] oneShotBytes = "{\"code\":500,\"msg\":\"server err\",\"traceId\":\"trace-oneshot-500\"}"
+                .getBytes(StandardCharsets.UTF_8);
+        java.io.ByteArrayInputStream oneShotStream = new java.io.ByteArrayInputStream(oneShotBytes);
+        Response.Body oneShotBody = new Response.Body() {
+            @Override
+            public Integer length() {
+                return oneShotBytes.length;
+            }
+
+            @Override
+            public boolean isRepeatable() {
+                return false;
+            }
+
+            @Override
+            public java.io.InputStream asInputStream() {
+                return oneShotStream;
+            }
+
+            @Override
+            public java.io.Reader asReader(java.nio.charset.Charset charset) {
+                return new java.io.InputStreamReader(oneShotStream, charset);
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        Response oneShotResponse = Response.builder()
+                .status(500)
+                .reason("Internal Server Error")
+                .request(feign.Request.create(feign.Request.HttpMethod.GET, "/err", Collections.emptyMap(), null, StandardCharsets.UTF_8, null))
+                .headers(Collections.singletonMap("X-Trace-Id", Collections.singletonList("trace-header-ignored")))
+                .body(oneShotBody)
+                .build();
+        Exception decoded = errorDecoder.decode("DemoRemoteApi#ping()", oneShotResponse);
+        assertThat(decoded).isInstanceOf(BusinessException.class);
+        BusinessException oneShotBe = (BusinessException) decoded;
+        assertThat(oneShotBe.getCode()).isEqualTo(500);
+        assertThat(oneShotBe.getMsg()).isEqualTo("server err");
+        assertThat(oneShotBe.getTraceId()).isEqualTo("trace-oneshot-500");
+    }
 }

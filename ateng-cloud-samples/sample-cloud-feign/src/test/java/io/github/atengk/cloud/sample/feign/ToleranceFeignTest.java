@@ -264,6 +264,7 @@ public class ToleranceFeignTest {
         assertThat(receivedHeaders.get("x-ignore-tenant")).isEqualTo("true");
         assertThat(receivedHeaders.get("x-traffic-tag")).isEqualTo("canary-v1");
         assertThat(receivedHeaders.get("same-token")).isEqualTo(TEST_SAME_TOKEN);
+        assertThat(receivedHeaders.get("sa-same-token")).isEqualTo(TEST_SAME_TOKEN);
     }
 
     @Test

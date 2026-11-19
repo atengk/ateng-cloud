@@ -41,7 +41,7 @@ flowchart TD
         RPCLink <--> Governance
     end
 
-    UpstreamBoot["ateng-boot-bom: 1.1.0<br>(单体通用底座 / Web / 持久层 / 安全 / 观测门面)"] -.->|"单向依赖消费"| InternalCluster
+    UpstreamBoot["ateng-boot-bom: 1.2.0<br>(单体通用底座 / Web / 持久层 / 安全 / 观测门面)"] -.->|"单向依赖消费"| InternalCluster
 ```
 
 ---

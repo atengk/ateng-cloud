@@ -280,4 +280,60 @@ public class AtengFeignDecoderUnitTest {
                 createResultResponseForClient(OrderReadClient.class, "order-service"), SamplePayload.class);
         assertEquals(999L, fallbackDisabled.id(), "contextId 配置中未指定 adaptiveUnwrap 时应回退继承服务名配置");
     }
+
+    @Test
+    @DisplayName("测试非 200 业务异常回填 Result.traceId 并支持回退响应头 X-Trace-Id")
+    void testBusinessExceptionTraceIdExtractionAndHeaderFallback() {
+        Decoder delegate = (resp, type) -> null;
+        AtengFeignProperties properties = new AtengFeignProperties();
+        AtengFeignDecoder decoder = new AtengFeignDecoder(delegate, properties, objectMapper);
+        Request request = Request.create(Request.HttpMethod.GET, "/api/orders/1", Collections.emptyMap(), null, StandardCharsets.UTF_8, null);
+
+        // 1. JSON body 含 traceId（优先级高于响应头）
+        Response bodyTraceResp = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.singletonMap("X-Trace-Id", Collections.singletonList("header-trace-ignored")))
+                .body("{\"code\":4221,\"msg\":\"库存不足\",\"traceId\":\"body-trace-101\"}", StandardCharsets.UTF_8)
+                .build();
+        BusinessException exFromBody = assertThrows(BusinessException.class,
+                () -> decoder.decode(bodyTraceResp, SamplePayload.class));
+        assertEquals("body-trace-101", exFromBody.getTraceId());
+
+        // 2. JSON body 无 traceId 时回退提取 X-Trace-Id 响应头
+        Response headerTraceResp = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.singletonMap("x-trace-id", Collections.singletonList("header-trace-202")))
+                .body("{\"code\":4222,\"msg\":\"账户冻结\"}", StandardCharsets.UTF_8)
+                .build();
+        BusinessException exFromHeader = assertThrows(BusinessException.class,
+                () -> decoder.decode(headerTraceResp, SamplePayload.class));
+        assertEquals("header-trace-202", exFromHeader.getTraceId());
+
+        // 3. 清洗 "null" 脏字面量：JSON 为 "null" 时回退响应头；响应头也为 "null" 时置空
+        Response dirtyBodyResp = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.singletonMap("X-Trace-Id", Collections.singletonList("clean-header-303")))
+                .body("{\"code\":4223,\"msg\":\"脏字面量\",\"traceId\":\"null\"}", StandardCharsets.UTF_8)
+                .build();
+        BusinessException exCleanFallback = assertThrows(BusinessException.class,
+                () -> decoder.decode(dirtyBodyResp, SamplePayload.class));
+        assertEquals("clean-header-303", exCleanFallback.getTraceId());
+
+        Response dirtyBothResp = Response.builder()
+                .status(200)
+                .reason("OK")
+                .request(request)
+                .headers(Collections.singletonMap("X-Trace-Id", Collections.singletonList("NULL")))
+                .body("{\"code\":4224,\"msg\":\"双脏字面量\",\"traceId\":\" null \"}", StandardCharsets.UTF_8)
+                .build();
+        BusinessException exNullBoth = assertThrows(BusinessException.class,
+                () -> decoder.decode(dirtyBothResp, SamplePayload.class));
+        assertNull(exNullBoth.getTraceId());
+    }
 }

@@ -1,6 +1,8 @@
 package io.github.atengk.cloud.dubbo.filter;
 
+import com.thirdparty.mock.VendorDriverException;
 import io.github.atengk.boot.core.code.CommonResultCode;
+import io.github.atengk.boot.core.constant.MessageHeaderConstants;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.cloud.dubbo.overload.DubboOverloadListener;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
@@ -18,9 +20,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
 
@@ -46,6 +50,7 @@ class AtengDubboExceptionFilterTest {
 
     @AfterEach
     void tearDown() {
+        MDC.clear();
         DubboPropertiesHolder.reset();
         DubboOverloadListener.reset();
     }
@@ -214,6 +219,124 @@ class AtengDubboExceptionFilterTest {
 
         filter.onResponse(response, invoker, invocation);
         assertThat(response.getException()).isSameAs(driverEx);
+    }
+
+    @Test
+    @DisplayName("默认开启 sanitizeUntrustedCause 时自动剥离非白名单第三方异常 cause 并回填 traceId")
+    void testUntrustedThirdPartyCauseSanitizedByDefaultAndTraceIdBound() {
+        MDC.put("traceId", "dubbo-provider-trace-101");
+        Invoker<?> invoker = mock(Invoker.class);
+        when(invoker.getInterface()).thenReturn((Class) SampleService.class);
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("query");
+        invocation.setParameterTypes(new Class<?>[0]);
+
+        // 1. 第三方非白名单包异常：默认剥离 cause 防止消费端反序列化 ClassNotFoundException / 安全校验拦截
+        VendorDriverException vendorEx = new VendorDriverException("mysql deadlock");
+        AppResponse response1 = new AppResponse(vendorEx);
+        filter.onResponse(response1, invoker, invocation);
+
+        BusinessException be1 = (BusinessException) response1.getException();
+        assertThat(be1.getCode()).isEqualTo(CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
+        assertThat(be1.getCause()).isNull();
+        assertThat(be1.getMessage()).contains("mysql deadlock").contains("VendorDriverException");
+        assertThat(be1.getTraceId()).isEqualTo("dubbo-provider-trace-101");
+
+        // 2. 过载异常嵌套非白名单 cause 时同样安全剥离，防止嵌套 cause 导致反序列化失败
+        RejectedExecutionException nestedOverload = new RejectedExecutionException("thread pool is exhausted", vendorEx);
+        AppResponse response2 = new AppResponse(nestedOverload);
+        filter.onResponse(response2, invoker, invocation);
+
+        BusinessException be2 = (BusinessException) response2.getException();
+        assertThat(be2.getCode()).isEqualTo(CommonResultCode.TOO_MANY_REQUESTS.getCode());
+        assertThat(be2.getCause()).isNull();
+        assertThat(be2.getTraceId()).isEqualTo("dubbo-provider-trace-101");
+
+        // 3. 受管 BusinessException 若 traceId 为空则自动从 MDC 回填；若已有 traceId 则保留原值
+        BusinessException bizNoTrace = new BusinessException(4003, "库存锁定失败");
+        AppResponse response3 = new AppResponse(bizNoTrace);
+        filter.onResponse(response3, invoker, invocation);
+        assertThat(bizNoTrace.getTraceId()).isEqualTo("dubbo-provider-trace-101");
+
+        BusinessException bizWithTrace = new BusinessException(4003, "库存锁定失败").withTraceId("existing-trace-999");
+        AppResponse response4 = new AppResponse(bizWithTrace);
+        filter.onResponse(response4, invoker, invocation);
+        assertThat(bizWithTrace.getTraceId()).isEqualTo("existing-trace-999");
+
+        // 4. 受管 BusinessException 携带非白名单 cause 时同样安全剥离并保留 resultCode / code / traceId
+        BusinessException bizWithVendorCause = new BusinessException(
+                CommonResultCode.CONFLICT, "唯一键冲突", new RuntimeException("wrapper", vendorEx));
+        AppResponse response5 = new AppResponse(bizWithVendorCause);
+        filter.onResponse(response5, invoker, invocation);
+        BusinessException sanitizedBiz = (BusinessException) response5.getException();
+        assertThat(sanitizedBiz.getResultCode()).isEqualTo(CommonResultCode.CONFLICT);
+        assertThat(sanitizedBiz.getCode()).isEqualTo(CommonResultCode.CONFLICT.getCode());
+        assertThat(sanitizedBiz.getCause()).isNull();
+        assertThat(sanitizedBiz.getSuppressed()).isEmpty();
+        assertThat(sanitizedBiz.getMessage()).contains("唯一键冲突").contains("VendorDriverException");
+        assertThat(sanitizedBiz.getTraceId()).isEqualTo("dubbo-provider-trace-101");
+
+        // 5. JDK 异常内部嵌套非白名单 cause 时同样在出口安全转译剥离并保留全栈日志
+        IllegalStateException jdkWrappingVendor = new IllegalStateException("wrapped jdk error", vendorEx);
+        AppResponse response6 = new AppResponse(jdkWrappingVendor);
+        filter.onResponse(response6, invoker, invocation);
+        BusinessException sanitizedJdk = (BusinessException) response6.getException();
+        assertThat(sanitizedJdk.getCode()).isEqualTo(CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
+        assertThat(sanitizedJdk.getCause()).isNull();
+        assertThat(sanitizedJdk.getMessage()).contains("wrapped jdk error").contains("VendorDriverException");
+        assertThat(sanitizedJdk.getTraceId()).isEqualTo("dubbo-provider-trace-101");
+
+        // 6. Dubbo RpcException 嵌套非白名单 cause 时同样安全剥离；纯 RpcException 则保持放行
+        RpcException rpcWrappingVendor = new RpcException("rpc wrapped vendor", vendorEx);
+        AppResponse response7 = new AppResponse(rpcWrappingVendor);
+        filter.onResponse(response7, invoker, invocation);
+        BusinessException sanitizedRpc = (BusinessException) response7.getException();
+        assertThat(sanitizedRpc.getCode()).isEqualTo(CommonResultCode.INTERNAL_SERVER_ERROR.getCode());
+        assertThat(sanitizedRpc.getCause()).isNull();
+        assertThat(sanitizedRpc.getMessage()).contains("VendorDriverException");
+    }
+
+    @Test
+    @DisplayName("关闭 sanitizeUntrustedCause 或将第三方包加入 trustedCausePackages 时保留原始 cause")
+    void testPreserveUntrustedCauseWhenDisabledOrTrustedPackageConfigured() {
+        Invoker<?> invoker = mock(Invoker.class);
+        when(invoker.getInterface()).thenReturn((Class) SampleService.class);
+        RpcInvocation invocation = new RpcInvocation();
+        invocation.setMethodName("query");
+        invocation.setParameterTypes(new Class<?>[0]);
+        invocation.setAttachment(MessageHeaderConstants.TRACE_ID, "attachment-trace-202");
+
+        // 1. 关闭 sanitizeUntrustedCause
+        AtengDubboProperties disabledSanitizeProps = new AtengDubboProperties();
+        disabledSanitizeProps.getException().setSanitizeUntrustedCause(false);
+        DubboPropertiesHolder.set(disabledSanitizeProps);
+
+        VendorDriverException vendorEx = new VendorDriverException("raw vendor cause");
+        AppResponse response1 = new AppResponse(vendorEx);
+        filter.onResponse(response1, invoker, invocation);
+
+        BusinessException be1 = (BusinessException) response1.getException();
+        assertThat(be1.getCause()).isSameAs(vendorEx);
+        assertThat(be1.getTraceId()).isEqualTo("attachment-trace-202");
+
+        // 2. 开启 sanitizeUntrustedCause 但将 com.thirdparty.mock 加入可信包前缀白名单
+        AtengDubboProperties trustedPkgProps = new AtengDubboProperties();
+        trustedPkgProps.getException().setSanitizeUntrustedCause(true);
+        trustedPkgProps.getException().setTrustedCausePackages(List.of("com.thirdparty.mock"));
+        DubboPropertiesHolder.set(trustedPkgProps);
+
+        AppResponse response2 = new AppResponse(vendorEx);
+        filter.onResponse(response2, invoker, invocation);
+
+        BusinessException be2 = (BusinessException) response2.getException();
+        assertThat(be2.getCause()).isSameAs(vendorEx);
+
+        // 3. 加入 trustedCausePackages 时受管 BusinessException 也原样保留其 cause
+        BusinessException trustedBiz = new BusinessException(4009, "透传第三方因果", vendorEx);
+        AppResponse response3 = new AppResponse(trustedBiz);
+        filter.onResponse(response3, invoker, invocation);
+        assertThat(response3.getException()).isSameAs(trustedBiz);
+        assertThat(response3.getException().getCause()).isSameAs(vendorEx);
     }
 
     interface SampleService {

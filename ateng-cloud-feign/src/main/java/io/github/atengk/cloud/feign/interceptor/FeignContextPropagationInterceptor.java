@@ -83,10 +83,14 @@ public class FeignContextPropagationInterceptor implements RequestInterceptor, O
         String xid = FeignSeataPropagationSupport.getXID();
         addHeaderIfValid(template, FeignHeaderConstants.TX_XID, xid);
 
-        // 8. 提取并透传微服务零信任受信凭据 (Same-Token)
-        if (sameTokenProvider != null) {
+        // 8. 提取并透传微服务零信任受信凭据 (Same-Token + SA-SAME-TOKEN)
+        // 若调用方已显式携带任一同源凭据标头，则保持调用方显式指定，不予混写覆盖
+        if (sameTokenProvider != null
+                && !template.headers().containsKey(FeignHeaderConstants.SAME_TOKEN)
+                && !template.headers().containsKey(FeignHeaderConstants.SA_SAME_TOKEN)) {
             String sameToken = sameTokenProvider.getSameToken();
             addHeaderIfValid(template, FeignHeaderConstants.SAME_TOKEN, sameToken);
+            addHeaderIfValid(template, FeignHeaderConstants.SA_SAME_TOKEN, sameToken);
         }
     }
 

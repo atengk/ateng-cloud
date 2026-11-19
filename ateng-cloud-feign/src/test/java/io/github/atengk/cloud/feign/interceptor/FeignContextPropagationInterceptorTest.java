@@ -64,6 +64,7 @@ class FeignContextPropagationInterceptorTest {
         assertThat(getHeader(template, FeignHeaderConstants.IGNORE_TENANT)).isEqualTo("true");
         assertThat(getHeader(template, FeignHeaderConstants.TRAFFIC_TAG)).isEqualTo("gray-v2");
         assertThat(getHeader(template, FeignHeaderConstants.SAME_TOKEN)).isEqualTo("same-token-val-9999");
+        assertThat(getHeader(template, FeignHeaderConstants.SA_SAME_TOKEN)).isEqualTo("same-token-val-9999");
     }
 
     @Test
@@ -89,6 +90,7 @@ class FeignContextPropagationInterceptorTest {
         assertThat(template.headers()).doesNotContainKey(FeignHeaderConstants.IGNORE_TENANT);
         assertThat(template.headers()).doesNotContainKey(FeignHeaderConstants.TRAFFIC_TAG);
         assertThat(template.headers()).doesNotContainKey(FeignHeaderConstants.SAME_TOKEN);
+        assertThat(template.headers()).doesNotContainKey(FeignHeaderConstants.SA_SAME_TOKEN);
 
         // 验证脏 "null" 标头被防御性清洗移除
         assertThat(template.headers()).doesNotContainKey("X-Dirty-Null");

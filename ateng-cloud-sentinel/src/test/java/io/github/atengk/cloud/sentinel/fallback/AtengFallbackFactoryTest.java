@@ -274,5 +274,30 @@ class AtengFallbackFactoryTest {
                 });
         assertThat(counter.getFlowCount()).isEqualTo(1);
         assertThat(counter.getTotalBlocked()).isEqualTo(2);
+
+        // 3. DecodeException 内嵌 BusinessException（普通业务异常透传且不计数；Sentinel 阻断异常按原规则计数并继承 traceId）
+        feign.Request req = feign.Request.create(feign.Request.HttpMethod.GET, "/test",
+                Collections.emptyMap(), null, java.nio.charset.StandardCharsets.UTF_8, null);
+        BusinessException ordinaryBiz = new BusinessException(4001, "余额不足").withTraceId("biz-trace-01");
+        feign.codec.DecodeException ordinaryDecodeEx = new feign.codec.DecodeException(200, "biz", req, ordinaryBiz);
+        UserService ordinaryDecodeClient = factory.create(ordinaryDecodeEx);
+        assertThatThrownBy(() -> ordinaryDecodeClient.getUserName(1L))
+                .isSameAs(ordinaryBiz);
+        assertThat(counter.getTotalBlocked()).isEqualTo(2);
+
+        BusinessException decodedFlowBiz = new BusinessException(SentinelResultCode.FLOW_LIMIT, "downstream-flow")
+                .withTraceId("flow-trace-02");
+        feign.codec.DecodeException flowDecodeEx = new feign.codec.DecodeException(200, "flow", req, decodedFlowBiz);
+        UserService flowDecodeClient = factory.create(flowDecodeEx);
+        assertThatThrownBy(() -> flowDecodeClient.getUserName(1L))
+                .isInstanceOf(BusinessException.class)
+                .isInstanceOf(SentinelBlockTracked.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getResultCode()).isEqualTo(SentinelResultCode.FLOW_LIMIT);
+                    assertThat(be.getTraceId()).isEqualTo("flow-trace-02");
+                });
+        assertThat(counter.getFlowCount()).isEqualTo(2);
+        assertThat(counter.getTotalBlocked()).isEqualTo(3);
     }
 }

@@ -21,11 +21,11 @@ _Avoid_: 标头透传, 请求头复制, 线程变量传递
 _Avoid_: 灰度标头透传, 标签传递, 染色转发
 
 **Same-Token Fail-Fast Guard**:
-依托 `SameTokenProvider` SPI 向出站 Feign 请求动态挂载内部同源受信凭据标头（`Same-Token`），并在服务端入站过滤器中支持按需开启 `Same-Token` 强校验与白名单路径放行，对绕过网关直连内网暴露端口的非受信任流量实施快速 401 阻断的内网零信任防穿透机制。
+依托 `SameTokenProvider` SPI 向出站 Feign 请求对称注入内部同源受信凭据双标头（`Same-Token` 与 `SA-SAME-TOKEN`），并在日志门面中对双标头及 `same_token` 强制执行星号掩码脱敏；在服务端入站过滤器中支持按需开启 `Same-Token` 强校验与白名单路径放行，对绕过网关直连内网暴露端口的非受信任流量实施快速 401 阻断的内网零信任防穿透机制。
 _Avoid_: 内网Token拦截, 鉴权请求头, 安全签名透传
 
 **Causal Error Decoding**:
-当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，优先按对端标准 `Result` 报文的业务错误状态转译为受管的强类型 `BusinessException`，且 100% 完整保留原始因果链（底层 `FeignException` 作为 `cause`）；对于网络建连/读取超时（`RetryableException`），默认保留原生异常以兼容熔断器统计，并支持按需开启网络异常强转译的防御性异常解码体系。
+当远端服务返回业务错误码、HTTP 4xx/5xx 错误或非标准报文时，优先按对端标准 `Result` 报文的业务错误状态转译为受管的强类型 `BusinessException`，精确提取远端 `Result.traceId`（缺失时回退响应头 `X-Trace-Id`）回填至 `BusinessException.traceId`，并映射标准 HTTP 状态码（含 `406`/`409`/`415`/`504`）且完整保留原始因果链（底层 `FeignException` 作为 `cause`）；在启用 Sentinel Feign 代理（`SentinelFeign$Builder`）时通过外层 `BeanPostProcessor` 复用剥壳与网络异常转译逻辑，并保留原生 `RetryableException` 兼容熔断器统计的防御性异常解码体系。
 _Avoid_: 统一异常拦截, 错误包装器, Feign异常处理
 
 **Connection Pool Warm Transport**:

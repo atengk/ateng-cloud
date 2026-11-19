@@ -390,7 +390,7 @@ public Result<PaymentResultVO> pay(
 `AtengFallbackFactory<T>` 通过 Spring `ResolvableType` 自动解析泛型 `<T>`（同时提供 `Class<T>` 显式构造器兼容匿名类）创建 JDK 动态代理，并在降级触发时执行**五重受管分派逻辑**：
 
 1. **接口 `default` 默认方法与 `Object` 基类方法放行**：自动跳过 `toString`/`hashCode`/`equals` 并在目标实现为 `default` 方法时直接反射执行默认实现。
-2. **下游普通 `BusinessException` 原样透传**：识别非 `SentinelResultCode` 的下游 `BusinessException` 时直接原样重新抛出，绝不被篡改为 `4202 DEGRADE` 掩盖业务语义（如库存不足、余额不足）。
+2. **下游 `BusinessException` 解包与原样透传**：识别 `DecodeException` 包装或直接抛出的非 `SentinelResultCode` 下游 `BusinessException` 时先剥壳提取并原样重新抛出，绝不被篡改为 `4202 DEGRADE` 掩盖业务语义（如库存不足、余额不足）。
 3. **`BlockException` 精准映射与防重计数**：从 `cause` 因果链递归提取真实 `FlowException` / `DegradeException` / `ParamFlowException` 等并精准映射为 `4201~4205`；若容器已注入 `SentinelBlockCounter`，则在源头主动计数一次并抛出实现 `SentinelBlockTracked` 契约的异常包装，后续被 `SentinelBlockExceptionAdvice` 捕获时自动跳过二次计数。
 4. **底层网络/超时故障保底转译**：无 `BlockException` 的其余 `Throwable`（如 Socket 超时、5xx 网关崩溃）统一转译为携带完整原始 `cause` 链的 `DEGRADE (4202)` `BusinessException`。
 5. **自定义 `handleFallback` 返回 `null` 时的空安全兜底**：当接口返回类型为 `List`/`Set`/`Map`/`Collection`/`Iterable`/`Optional` 或 Java 基本类型时，自动兜底返回 `Collections.emptyList()`、`Optional.empty()` 或安全零值（`Result<T>` 除外，由上层按契约判定）。

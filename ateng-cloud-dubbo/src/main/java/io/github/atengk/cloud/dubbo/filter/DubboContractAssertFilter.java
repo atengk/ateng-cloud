@@ -71,11 +71,14 @@ public class DubboContractAssertFilter implements Filter, BaseFilter.Listener {
         if (value instanceof io.github.atengk.boot.core.model.Result<?> result && !result.isSuccess()) {
             int code = result.getCode() != null ? result.getCode() : CommonResultCode.INTERNAL_SERVER_ERROR.getCode();
             String msg = result.getMsg() != null ? result.getMsg() : "RPC 远端业务调用失败";
-            log.warn("[DUBBO] 消费端拦截到非 200 业务结果: code={}, msg={}, service={}, method={}",
-                    code, msg,
+            String traceId = DubboAttachmentSupport.isValidAttachmentValue(result.getTraceId())
+                    ? result.getTraceId().trim()
+                    : DubboAttachmentSupport.resolveMdcTraceId();
+            log.warn("[DUBBO] 消费端拦截到非 200 业务结果: code={}, msg={}, traceId={}, service={}, method={}",
+                    code, msg, traceId,
                     DubboAttachmentSupport.resolveServiceName(invoker),
                     DubboExceptionUtils.resolveMethodName(invocation));
-            failWithBusinessException(appResponse, new BusinessException(code, msg));
+            failWithBusinessException(appResponse, new BusinessException(code, msg).withTraceId(traceId));
         }
     }
 

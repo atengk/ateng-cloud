@@ -59,8 +59,13 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.util.StringUtils;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -201,8 +206,116 @@ public class AtengFeignAutoConfiguration {
             capabilitiesProvider.orderedStream().forEach(builder::addCapability);
 
             // 挂载动态代理调用异常治理（DecodeException 剥壳与可选网络异常因果转译）
-            builder.invocationHandlerFactory(new AtengFeignInvocationHandlerFactory(properties));
+            // SentinelFeign$Builder 禁止覆写 invocationHandlerFactory，改为通过 BeanPostProcessor 在代理外层兜底
+            if (!isSentinelFeignBuilder(builder)) {
+                builder.invocationHandlerFactory(new AtengFeignInvocationHandlerFactory(properties));
+            }
         };
+    }
+
+    /**
+     * 为 SentinelFeign 生成的客户端代理补充外层异常剥壳与可选网络异常转译支持，
+     * 规避 {@code SentinelFeign$Builder#invocationHandlerFactory} 抛出 {@link UnsupportedOperationException}
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "atengFeignSentinelProxyPostProcessor")
+    public static BeanPostProcessor atengFeignSentinelProxyPostProcessor(
+            ObjectProvider<AtengFeignProperties> propertiesProvider) {
+        return new SentinelProxyBeanPostProcessor(propertiesProvider);
+    }
+
+    private static boolean isSentinelFeignBuilder(Feign.Builder builder) {
+        return builder != null
+                && "com.alibaba.cloud.sentinel.feign.SentinelFeign$Builder".equals(builder.getClass().getName());
+    }
+
+    private static boolean isSentinelInvocationHandler(Object handler) {
+        return handler != null
+                && "com.alibaba.cloud.sentinel.feign.SentinelInvocationHandler".equals(handler.getClass().getName());
+    }
+
+    private static final class SentinelProxyBeanPostProcessor implements BeanPostProcessor, Ordered {
+
+        private final ObjectProvider<AtengFeignProperties> propertiesProvider;
+
+        private SentinelProxyBeanPostProcessor(ObjectProvider<AtengFeignProperties> propertiesProvider) {
+            this.propertiesProvider = propertiesProvider;
+        }
+
+        @Override
+        public int getOrder() {
+            // 早于 Spring 常规 AOP / MethodValidation 后置处理器执行，确保识别到原始 SentinelInvocationHandler
+            return Ordered.HIGHEST_PRECEDENCE + 100;
+        }
+
+        @Override
+        public Object postProcessAfterInitialization(Object bean, String beanName) {
+            if (bean == null || !Proxy.isProxyClass(bean.getClass())) {
+                return bean;
+            }
+            Object handler = Proxy.getInvocationHandler(bean);
+            if (!isSentinelInvocationHandler(handler)) {
+                return bean;
+            }
+            Class<?>[] interfaces = bean.getClass().getInterfaces();
+            Class<?> primaryType = interfaces.length > 0 ? interfaces[0] : null;
+            return Proxy.newProxyInstance(
+                    bean.getClass().getClassLoader(),
+                    interfaces,
+                    new SentinelProxyInvocationHandler(bean, primaryType, propertiesProvider)
+            );
+        }
+    }
+
+    private static final class SentinelProxyInvocationHandler implements InvocationHandler {
+
+        private final Object targetProxy;
+        private final Class<?> primaryType;
+        private final ObjectProvider<AtengFeignProperties> propertiesProvider;
+
+        private SentinelProxyInvocationHandler(Object targetProxy,
+                                               Class<?> primaryType,
+                                               ObjectProvider<AtengFeignProperties> propertiesProvider) {
+            this.targetProxy = targetProxy;
+            this.primaryType = primaryType;
+            this.propertiesProvider = propertiesProvider;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getDeclaringClass() == Object.class) {
+                return invokeObjectMethod(proxy, method, args);
+            }
+            try {
+                return method.invoke(targetProxy, args);
+            } catch (InvocationTargetException ite) {
+                Throwable target = ite.getTargetException();
+                if (target instanceof feign.FeignException fe) {
+                    throw AtengFeignInvocationHandlerFactory.translateInvocationException(
+                            primaryType, method, fe, propertiesProvider.getIfAvailable());
+                }
+                throw target;
+            }
+        }
+
+        private Object invokeObjectMethod(Object proxy, Method method, Object[] args) throws Throwable {
+            String name = method.getName();
+            if ("equals".equals(name) && args != null && args.length == 1) {
+                Object other = args[0];
+                if (other == proxy) {
+                    return true;
+                }
+                if (other == null) {
+                    return false;
+                }
+                if (Proxy.isProxyClass(other.getClass())
+                        && Proxy.getInvocationHandler(other) instanceof SentinelProxyInvocationHandler otherHandler) {
+                    return targetProxy.equals(otherHandler.targetProxy);
+                }
+                return targetProxy.equals(other);
+            }
+            return method.invoke(targetProxy, args);
+        }
     }
 
     @Bean

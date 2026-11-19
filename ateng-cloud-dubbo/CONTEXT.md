@@ -17,7 +17,7 @@ _Avoid_: 上下文拦截器, 隐式传参过滤器, RpcContext透传器
 _Avoid_: 内网Token拦截器, RPC鉴权过滤器, Dubbo安全拦截
 
 **Causal Exception Filter**:
-阻断 Dubbo 原生对未受检异常的抹平行为，白名单透传受管业务异常并对底层未检异常实施因果转译的守护过滤器。
+阻断 Dubbo 原生对未受检异常的抹平行为，白名单透传受管业务异常并递归校验完整 `cause`/`suppressed` 异常链（默认剥离非安全包前缀的第三方 `cause` 并在消息附加 `[cause=<SimpleName>]` 防反序列化崩溃），同时将远端/MDC `traceId` 回填至异常对象并与契约断言链路对齐的守护过滤器。
 _Avoid_: Dubbo异常包装器, 异常转换器, 错误捕获过滤器
 
 **Dual-Mode RPC Contract**:

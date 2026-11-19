@@ -5,7 +5,7 @@
 ## Language
 
 **Managed Fallback Factory**:
-基于 `AtengFallbackFactory<T>` 实现的受管 Feign 降级工厂。自动识别并原样透传下游已解码的业务异常，将客户端流控或熔断异常精准映射为对应阻断错误码并联动阻断计数器，其余底层网络异常转译为保留因果链的降级异常；同时对集合、字典与可选容器提供空安全兜底并开放柔性保底钩子。
+基于 `AtengFallbackFactory<T>` 实现的受管 Feign 降级工厂。自动识别并剥壳透传 `DecodeException` 内嵌或下游直抛的受管 `BusinessException`，将客户端流控或熔断异常精准映射为对应阻断错误码并联动阻断计数器，其余底层网络异常转译为保留因果链的降级异常；同时对集合、字典与可选容器提供空安全兜底并开放柔性保底钩子。
 _Avoid_: 降级实现类, Feign回调桩, 熔断兜底对象
 
 **Exception Trace Bridge**:

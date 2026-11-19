@@ -41,6 +41,9 @@ class AtengFeignLoggerTest {
         assertThat(logger.isSensitiveHeader("Same-Token")).isTrue();
         assertThat(logger.isSensitiveHeader("same-token")).isTrue();
         assertThat(logger.isSensitiveHeader("SAME-TOKEN")).isTrue();
+        assertThat(logger.isSensitiveHeader("SA-SAME-TOKEN")).isTrue();
+        assertThat(logger.isSensitiveHeader("sa-same-token")).isTrue();
+        assertThat(logger.isSensitiveHeader("same_token")).isTrue();
         assertThat(logger.isSensitiveHeader("Authorization")).isTrue();
         assertThat(logger.isSensitiveHeader("Proxy-Authorization")).isTrue();
         assertThat(logger.isSensitiveHeader("Cookie")).isTrue();

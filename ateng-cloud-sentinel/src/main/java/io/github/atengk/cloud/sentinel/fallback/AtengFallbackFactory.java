@@ -152,7 +152,8 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
      * @throws Throwable 业务感知的降级或下游透传异常
      */
     protected Object handleFallback(Method method, Object[] args, Throwable cause) throws Throwable {
-        if (cause instanceof BusinessException businessEx) {
+        Throwable effectiveCause = unwrapDecodeBusinessException(cause);
+        if (effectiveCause instanceof BusinessException businessEx) {
             SentinelResultCode existingCode = SentinelServletUtil.resolveSentinelResultCode(businessEx);
             if (existingCode == null) {
                 log.debug("Feign client received downstream BusinessException, passing through untouched: client='{}', method='{}', code={}",
@@ -163,28 +164,29 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
                 throw businessEx;
             }
             // 未实现 SentinelBlockTracked 的上游 Sentinel 业务异常在源头已按原规则计数，补充追踪包装防止切面二次计数
-            throw new TrackedFallbackBusinessException(existingCode, businessEx.getMessage(), businessEx);
+            throw new TrackedFallbackBusinessException(existingCode, businessEx.getMessage(), businessEx)
+                    .withTraceId(businessEx.getTraceId());
         }
 
-        BlockException blockEx = SentinelServletUtil.extractBlockException(cause);
+        BlockException blockEx = SentinelServletUtil.extractBlockException(effectiveCause);
         if (blockEx != null) {
             SentinelResultCode resultCode = SentinelServletUtil.determineResultCode(blockEx);
             String ruleType = SentinelServletUtil.determineRuleType(resultCode);
             log.warn("Feign client Sentinel block triggered: client='{}', method='{}', rule={}, code={}, cause='{}'",
-                    targetType.getSimpleName(), method.getName(), ruleType, resultCode.getCode(), cause.toString());
+                    targetType.getSimpleName(), method.getName(), ruleType, resultCode.getCode(), effectiveCause.toString());
             throw new TrackedFallbackBusinessException(
                     resultCode,
                     "Feign 远程调用触发 Sentinel 阻断 (" + ruleType + "): " + targetType.getSimpleName() + "#" + method.getName(),
-                    cause);
+                    effectiveCause);
         }
 
         log.warn("Feign client fallback triggered: client='{}', method='{}', cause='{}'",
                 targetType.getSimpleName(), method.getName(),
-                cause != null ? cause.toString() : "unknown");
+                effectiveCause != null ? effectiveCause.toString() : "unknown");
         throw new TrackedFallbackBusinessException(
                 SentinelResultCode.DEGRADE,
                 "Feign 远程调用熔断降级: " + targetType.getSimpleName() + "#" + method.getName(),
-                cause);
+                effectiveCause);
     }
 
     private boolean recordBlockAtSource(Method method, Throwable cause) {
@@ -192,12 +194,13 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
         if (counter == null) {
             return false;
         }
+        Throwable effectiveCause = unwrapDecodeBusinessException(cause);
         String defaultResource = targetType.getSimpleName() + "#" + method.getName();
-        BlockException rawBlockEx = SentinelServletUtil.extractBlockException(cause);
+        BlockException rawBlockEx = SentinelServletUtil.extractBlockException(effectiveCause);
         String resource = SentinelServletUtil.resolveBlockResourceName(rawBlockEx, defaultResource);
         BlockException blockEx = rawBlockEx != null
                 ? rawBlockEx
-                : resolveFallbackBlockForCounter(defaultResource, cause);
+                : resolveFallbackBlockForCounter(defaultResource, effectiveCause);
         HttpServletRequest currentRequest = resolveCurrentRequest();
         String clientIp = currentRequest != null ? SentinelServletUtil.resolveClientIp(currentRequest) : "feign-client";
         String traceId = SentinelServletUtil.resolveTraceId();
@@ -230,11 +233,21 @@ public abstract class AtengFallbackFactory<T> implements FallbackFactory<T> {
     }
 
     private static boolean shouldSkipSourceCount(Throwable cause) {
-        if (cause instanceof SentinelBlockTracked tracked && tracked.isSourceCounted()) {
+        Throwable effectiveCause = unwrapDecodeBusinessException(cause);
+        if (effectiveCause instanceof SentinelBlockTracked tracked && tracked.isSourceCounted()) {
             return true;
         }
-        return cause instanceof BusinessException businessEx
+        return effectiveCause instanceof BusinessException businessEx
                 && SentinelServletUtil.resolveSentinelResultCode(businessEx) == null;
+    }
+
+    private static Throwable unwrapDecodeBusinessException(Throwable cause) {
+        if (cause != null
+                && "feign.codec.DecodeException".equals(cause.getClass().getName())
+                && cause.getCause() instanceof BusinessException be) {
+            return be;
+        }
+        return cause;
     }
 
     private class FallbackInvocationHandler implements InvocationHandler {

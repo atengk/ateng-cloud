@@ -4,7 +4,7 @@
 `ateng-cloud` 是面向生产就绪的 Spring Cloud 2023 / Spring Cloud Alibaba 微服务治理与分布式架构 Starter 套件，单向锁定并复用 `ateng-boot-bom` 底座（ADR-0001、ADR-0002；全量索引见 [`docs/adr/README.md`](./docs/adr/README.md)）。
 
 - **运行与编译**：JDK 17 LTS（字节码 17，兼容 JDK 21+ 虚拟线程运行时）
-- **核心基线**：`ateng-boot-bom:1.1.0`（Spring Boot `3.3.13`）、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、Apache Dubbo `3.3.x`
+- **核心基线**：`ateng-boot-bom:1.2.0`（Spring Boot `3.3.13`）、Spring Cloud `2023.0.x`、Spring Cloud Alibaba `2023.0.x`、Apache Dubbo `3.3.x`
 - **命名坐标**：GroupId `io.github.atengk`，基础包名 `io.github.atengk.cloud.*`，配置前缀 `ateng.cloud.*`
 
 ---

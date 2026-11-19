@@ -113,9 +113,10 @@ public class AtengFeignDecoder implements Decoder {
             int code = FeignResultSupport.extractCode(jsonNode);
             String msg = FeignResultSupport.extractMessage(jsonNode);
 
-            // 6.1 业务失败 (code != 200)，直接抛出受管 BusinessException
+            // 6.1 业务失败 (code != 200)，直接抛出受管 BusinessException 并回填远端 traceId
             if (code != 200) {
-                throw new BusinessException(code, msg);
+                String remoteTraceId = FeignResultSupport.resolveResponseTraceId(jsonNode, response);
+                throw new BusinessException(code, msg).withTraceId(remoteTraceId);
             }
 
             // 6.2 业务成功，处理 void 返回

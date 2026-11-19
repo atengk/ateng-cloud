@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.sample.dubbo;
 
+import com.thirdparty.mock.VendorDriverException;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
@@ -7,9 +8,11 @@ import io.github.atengk.cloud.sample.dubbo.api.UserRpcService;
 import io.github.atengk.cloud.sample.dubbo.model.UserVO;
 import org.apache.dubbo.config.annotation.DubboReference;
 import org.apache.dubbo.config.spring.ServiceBean;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -49,14 +52,32 @@ public class ContractAndExceptionDubboRpcTest {
     )
     private PrimitiveNullConsumerService primitiveNullConsumerService;
 
+    @DubboReference(
+            interfaceClass = UntrustedCauseDubboService.class,
+            url = "tri://127.0.0.1:${test.contract.dubbo.port}",
+            check = false
+    )
+    private UntrustedCauseDubboService untrustedCauseDubboService;
+
     @Autowired
     private ServiceBean<PrimitiveNullConsumerService> primitiveNullProvider;
+
+    @Autowired
+    private ServiceBean<UntrustedCauseDubboService> untrustedCauseProvider;
 
     @BeforeEach
     void ensurePrimitiveNullProviderExported() {
         if (!primitiveNullProvider.isExported()) {
             primitiveNullProvider.export();
         }
+        if (!untrustedCauseProvider.isExported()) {
+            untrustedCauseProvider.export();
+        }
+    }
+
+    @AfterEach
+    void clearTraceMdc() {
+        MDC.clear();
     }
 
     @Test
@@ -131,8 +152,50 @@ public class ContractAndExceptionDubboRpcTest {
         assertTrue(ex.getMessage().contains("long"), "异常信息应包含基本类型名称");
     }
 
+    @Test
+    @DisplayName("验证 Triple 跨进程抛出非白名单第三方异常时剥离 cause 防反序列化失败，并端到端透传 traceId")
+    void testUntrustedThirdPartyCauseSanitizedAndTraceIdPropagatedOverTriple() {
+        MDC.put("traceId", "dubbo-triple-trace-555");
+
+        // 1. 第三方非白名单包异常：消费端稳定捕获 BusinessException(500) 且 cause 为 null、traceId 完整回传
+        BusinessException vendorBe = assertThrows(BusinessException.class,
+                () -> untrustedCauseDubboService.throwVendorException());
+        assertEquals(CommonResultCode.INTERNAL_SERVER_ERROR.getCode(), vendorBe.getCode());
+        assertNull(vendorBe.getCause());
+        assertTrue(vendorBe.getMessage().contains("VendorDriverException"));
+        assertEquals("dubbo-triple-trace-555", vendorBe.getTraceId());
+
+        // 2. 受管 BusinessException 嵌套第三方 cause 时同样安全剥离 cause 且保留原业务码与 traceId
+        BusinessException wrappedVendorBe = assertThrows(BusinessException.class,
+                () -> untrustedCauseDubboService.throwBusinessWithVendorCause());
+        assertEquals(CommonResultCode.CONFLICT.getCode(), wrappedVendorBe.getCode());
+        assertNull(wrappedVendorBe.getCause());
+        assertTrue(wrappedVendorBe.getMessage().contains("VendorDriverException"));
+        assertEquals("dubbo-triple-trace-555", wrappedVendorBe.getTraceId());
+
+        // 3. 服务端抛出受管 BusinessException 时自动回填并透传 traceId
+        BusinessException bizBe = assertThrows(BusinessException.class,
+                () -> userRpcService.throwBusinessException());
+        assertEquals("dubbo-triple-trace-555", bizBe.getTraceId());
+
+        // 4. 服务端显式返回携带不同 Result.traceId 的失败契约时，消费端优先透传远端 Result.traceId（而非覆盖为本地 MDC）
+        MDC.put("traceId", "consumer-local-mdc-ignored");
+        BusinessException remoteResultBe = assertThrows(BusinessException.class,
+                () -> untrustedCauseDubboService.getFailedResultWithRemoteTrace());
+        assertEquals(4099, remoteResultBe.getCode());
+        assertEquals("remote-result-trace-999", remoteResultBe.getTraceId());
+    }
+
     public interface PrimitiveNullConsumerService {
         long getNullCount();
+    }
+
+    public interface UntrustedCauseDubboService {
+        String throwVendorException();
+
+        String throwBusinessWithVendorCause();
+
+        io.github.atengk.boot.core.model.Result<String> getFailedResultWithRemoteTrace();
     }
 
     @TestConfiguration
@@ -143,6 +206,33 @@ public class ContractAndExceptionDubboRpcTest {
             ServiceBean<PrimitiveNullConsumerService> serviceBean = new ServiceBean<>(applicationContext);
             serviceBean.setInterface(PrimitiveNullConsumerService.class);
             serviceBean.setRef(() -> 0L);
+            return serviceBean;
+        }
+
+        @Bean
+        ServiceBean<UntrustedCauseDubboService> untrustedCauseProvider(ApplicationContext applicationContext) {
+            ServiceBean<UntrustedCauseDubboService> serviceBean = new ServiceBean<>(applicationContext);
+            serviceBean.setInterface(UntrustedCauseDubboService.class);
+            serviceBean.setRef(new UntrustedCauseDubboService() {
+                @Override
+                public String throwVendorException() {
+                    throw new VendorDriverException("thirdparty vendor driver crash");
+                }
+
+                @Override
+                public String throwBusinessWithVendorCause() {
+                    throw new BusinessException(
+                            CommonResultCode.CONFLICT,
+                            "下游存储并发冲突",
+                            new VendorDriverException("thirdparty deadlock"));
+                }
+
+                @Override
+                public io.github.atengk.boot.core.model.Result<String> getFailedResultWithRemoteTrace() {
+                    return io.github.atengk.boot.core.model.Result.<String>fail(4099, "远端失败")
+                            .traceId("remote-result-trace-999");
+                }
+            });
             return serviceBean;
         }
     }

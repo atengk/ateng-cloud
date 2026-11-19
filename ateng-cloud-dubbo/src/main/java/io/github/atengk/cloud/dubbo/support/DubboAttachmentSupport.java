@@ -125,6 +125,18 @@ public final class DubboAttachmentSupport {
      * @return 有效 TraceId 或 {@code "N/A"}
      */
     public static String resolveTraceId(Invocation invocation, boolean consumerSide) {
+        String traceId = resolveTraceIdOrNull(invocation, consumerSide);
+        return traceId != null ? traceId : "N/A";
+    }
+
+    /**
+     * 按 MDC -&gt; Invocation 附件 -&gt; RpcContext 附件顺序提取有效 {@code traceId}（缺失返回 {@code null}）
+     *
+     * @param invocation   当前 RPC 调用元数据
+     * @param consumerSide 是否为消费端
+     * @return 有效 TraceId 或 {@code null}
+     */
+    public static String resolveTraceIdOrNull(Invocation invocation, boolean consumerSide) {
         String traceId = resolveMdcTraceId();
         if (traceId != null) {
             return traceId;
@@ -151,7 +163,7 @@ public final class DubboAttachmentSupport {
                 }
             }
         }
-        return "N/A";
+        return null;
     }
 
     private static String findValidAttachment(Invocation invocation, String key) {

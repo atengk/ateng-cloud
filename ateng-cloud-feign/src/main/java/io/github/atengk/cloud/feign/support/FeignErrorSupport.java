@@ -47,9 +47,12 @@ public final class FeignErrorSupport {
             case 403 -> CommonResultCode.FORBIDDEN;
             case 404 -> CommonResultCode.NOT_FOUND;
             case 405 -> CommonResultCode.METHOD_NOT_ALLOWED;
+            case 406 -> CommonResultCode.NOT_ACCEPTABLE;
+            case 409 -> CommonResultCode.CONFLICT;
             case 413 -> CommonResultCode.PAYLOAD_TOO_LARGE;
+            case 415 -> CommonResultCode.UNSUPPORTED_MEDIA_TYPE;
             case 429 -> CommonResultCode.TOO_MANY_REQUESTS;
-            case 503 -> CommonResultCode.SERVICE_UNAVAILABLE;
+            case 503, 504 -> CommonResultCode.SERVICE_UNAVAILABLE;
             default -> CommonResultCode.INTERNAL_SERVER_ERROR;
         };
     }
@@ -144,7 +147,32 @@ public final class FeignErrorSupport {
         String message = resultCode == CommonResultCode.SERVICE_UNAVAILABLE
                 ? String.format("Feign 调用下游服务网络异常: [%s], 原始错误: %s", methodLabel, exception.getMessage())
                 : String.format("Feign 调用下游服务异常: [%s], HTTP 状态码: %d", methodLabel, exception.status());
-        return new BusinessException(resultCode, message, exception);
+        String traceId = extractTraceIdFromHeaders(exception.responseHeaders());
+        return new BusinessException(resultCode, message, exception).withTraceId(traceId);
+    }
+
+    /**
+     * 从响应头集合中大小写不敏感提取 {@code X-Trace-Id}
+     *
+     * @param headers 响应头集合
+     * @return 非空链路追踪标识或 {@code null}
+     */
+    public static String extractTraceIdFromHeaders(java.util.Map<String, java.util.Collection<String>> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return null;
+        }
+        for (java.util.Map.Entry<String, java.util.Collection<String>> entry : headers.entrySet()) {
+            if (io.github.atengk.cloud.feign.constant.FeignHeaderConstants.TRACE_ID.equalsIgnoreCase(entry.getKey())
+                    && entry.getValue() != null) {
+                for (String value : entry.getValue()) {
+                    String normalized = FeignContextHeaderSupport.normalize(value);
+                    if (normalized != null) {
+                        return normalized;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private static IResultCode resolveTranslatedResultCode(FeignException exception) {

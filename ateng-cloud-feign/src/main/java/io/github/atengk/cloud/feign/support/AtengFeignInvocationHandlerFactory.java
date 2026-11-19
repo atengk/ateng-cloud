@@ -41,24 +41,37 @@ public class AtengFeignInvocationHandlerFactory implements InvocationHandlerFact
             try {
                 return defaultHandler.invoke(proxy, method, args);
             } catch (FeignException e) {
-                if (e instanceof DecodeException && e.getCause() instanceof BusinessException be) {
-                    throw be;
-                }
-                if (isTranslateNetworkExceptions()) {
-                    throw FeignErrorSupport.translateFeignException(formatMethodKey(target, method), e);
-                }
-                throw e;
+                throw translateInvocationException(target != null ? target.type() : null, method, e, properties);
             }
         };
     }
 
-    private boolean isTranslateNetworkExceptions() {
-        return properties != null && properties.isTranslateNetworkExceptions();
+    /**
+     * 统一执行 Feign 代理调用异常剥壳（{@link DecodeException} 还原为 {@link BusinessException}）
+     * 与可选网络异常因果转译，供原生代理工厂与 SentinelFeign 兼容代理共用
+     *
+     * @param targetType Feign 接口类型（可为 {@code null}）
+     * @param method     被调用方法
+     * @param exception  捕获的 {@link FeignException}
+     * @param properties Feign 配置属性
+     * @return 处理后的受管异常或原异常
+     */
+    public static RuntimeException translateInvocationException(Class<?> targetType,
+                                                               Method method,
+                                                               FeignException exception,
+                                                               AtengFeignProperties properties) {
+        if (exception instanceof DecodeException && exception.getCause() instanceof BusinessException be) {
+            return be;
+        }
+        if (properties != null && properties.isTranslateNetworkExceptions()) {
+            return FeignErrorSupport.translateFeignException(formatMethodKey(targetType, method), exception);
+        }
+        return exception;
     }
 
-    private String formatMethodKey(Target target, Method method) {
-        if (target != null && target.type() != null && method != null) {
-            return Feign.configKey(target.type(), method);
+    private static String formatMethodKey(Class<?> targetType, Method method) {
+        if (targetType != null && method != null) {
+            return Feign.configKey(targetType, method);
         }
         if (method != null) {
             return method.getDeclaringClass().getSimpleName() + "#" + method.getName() + "()";

@@ -19,9 +19,10 @@
    - **原生基本类型 null 防卫铁律**：当接口方法声明返回 Java 原生基本数据类型（如 `long`、`int`、`boolean`，非包装类）时，无论该 `null` 源于 `Result.data == null`、HTTP 204 No Content 还是 0 字节空响应体，解码器统一严格 Fail-Fast 抛出受管 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，彻底杜绝 JVM 拆箱引发的无上下文裸 NPE；
    - **精细化规避与第三方豁免**：提供 `@AdaptiveUnwrap(false)` 注解（支持类与方法级）与 `ateng.cloud.feign.adaptive-unwrap.exclude-clients` 配置白名单，对非标准 JSON 响应自动降级为原生 Jackson 反序列化，彻底消除误杀。
 
-2. **因果异常解码与因果链保真 (Causal Error Decoding)**：
-   - 定制 `AtengFeignErrorDecoder`，当遭遇非 2xx HTTP 状态码时，确立“业务状态优先于传输层状态”原则：优先尝试按 `Result<?>` 格式解析并转译为业务异常（`BusinessException(code, msg, feignException)`）；
-   - 无法解析时，由 `FeignErrorSupport` 按 HTTP 状态码精确映射对应 `CommonResultCode`（如 400/401/403/404/405/413/429/503，其余兜底映射为 `CommonResultCode.INTERNAL_SERVER_ERROR`），同时将底层原始 HTTP 状态码、请求 URL 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染；
+2. **因果异常解码、TraceId 回传与 Sentinel 代理协同 (Causal Error Decoding & Sentinel Compatibility)**：
+   - 定制 `AtengFeignErrorDecoder` 与 `AtengFeignDecoder`，当遭遇非 2xx HTTP 状态码或 2xx 非 200 `Result<?>` 业务错误时，确立“业务状态优先于传输层状态”原则：优先按 `Result<?>` 格式提取 `code`/`msg` 与 `traceId`（缺失 `Result.traceId` 时回退响应头 `X-Trace-Id`）并转译为携带 `traceId` 的受管 `BusinessException`；
+   - 无法解析时，由 `FeignErrorSupport` 按 HTTP 状态码精确映射对应 `CommonResultCode`（含 400/401/403/404/405/406/409/413/415/429/503/504，其中 `406->NOT_ACCEPTABLE`、`409->CONFLICT`、`415->UNSUPPORTED_MEDIA_TYPE`、`504->SERVICE_UNAVAILABLE`，其余兜底映射为 `CommonResultCode.INTERNAL_SERVER_ERROR`），同时将底层原始 HTTP 状态码、请求 URL、远端 `X-Trace-Id` 与原始根因因果链（`cause`，挂载底层 `FeignException`）100% 完整保留，杜绝吞咽异常或 Log-and-Throw 污染；
+   - **Sentinel 熔断代理双模兼容**：`AtengFeignAutoConfiguration` 检测到 `SentinelFeign$Builder` 时跳过会抛出 `UnsupportedOperationException` 的 `builder.invocationHandlerFactory(...)` 覆写，改由外层 `BeanPostProcessor` 包装 `SentinelInvocationHandler` 代理并统一复用 `AtengFeignInvocationHandlerFactory.translateInvocationException(...)`，确保无论 `feign.sentinel.enabled` 为 `true` 或 `false`，`DecodeException(BusinessException)` 均稳定剥壳且 `translate-network-exceptions` 语义保持一致；
    - **网络层异常（`RetryableException`）兼容与可选转译**：对于建连失败或读取超时耗尽后抛出的 `RetryableException`，默认保留原生异常抛出以兼容 Sentinel / Resilience4j 熔断器异常识别，同时支持通过 `ateng.cloud.feign.translate-network-exceptions=true` 按需在动态代理层因果转译为 `BusinessException(CommonResultCode.SERVICE_UNAVAILABLE, ...)` 并保留原始 `cause`。
 
 3. **防雪崩弹性重试纪律 (Retry Storm Defense)**：
@@ -35,7 +36,7 @@
    - **出站注入（Consumer）**：实现 `FeignContextPropagationInterceptor`，显式实现 `Ordered.HIGHEST_PRECEDENCE` 确保第一顺位执行，在请求出站前自动从当前线程提取并标准化挂载：`x-trace-id`、`x-user-id`、`x-tenant-id`、`x-ignore-tenant`、灰度泳道元数据（`X-Traffic-Tag`、`X-Traffic-Lane`、`X-Traffic-Rule`）及 Seata 全局事务 `TX_XID`；
    - **入站还原与确定性清理（Provider）**：在 Servlet 环境下自动装配 `FeignContextWebFilter`，入站自动提取 HTTP 标头并还原至 `UserContextHolder`、`TenantContextHolder`、`TrafficContextHolder`、Seata `RootContext` 与 `MDC`，在出口 `finally` 块中按快照恢复与幂等清理原则 100% 强制释放，杜绝容器线程池复用污染；
    - **零强依赖跨模块反射桥接**：内置 `FeignTrafficPropagationSupport` 与 `FeignSeataPropagationSupport`，通过 `ClassUtils` 优先读写 `TrafficContextHolder`（平滑回退 MDC）与 Seata `RootContext`，既兑现 `AtengTrafficFeignAutoConfiguration` 的让位契约，又保持零额外编译期强依赖；
-   - **零信任凭据签发与入站校验**：基于 `@ConditionalOnClass(SaSameUtil.class)` 条件探测与 `SameTokenProvider` SPI 出站附加 `Same-Token`；入站支持通过 `ateng.cloud.feign.context.check-same-token=true` 开启强校验（支持白名单路径放行），对绕过网关的未授权直连请求快速返回 `401 UNAUTHORIZED`；
+   - **零信任凭据签发与入站校验**：基于 `@ConditionalOnClass(SaSameUtil.class)` 条件探测与 `SameTokenProvider` SPI 出站对称注入 `Same-Token` 与 `SA-SAME-TOKEN` 双标头，且 `AtengFeignLogger` 对双方标头（及 `same_token` 变体）强制执行星号掩码脱敏；入站支持通过 `ateng.cloud.feign.context.check-same-token=true` 开启强校验（支持白名单路径放行），对绕过网关的未授权直连请求快速返回 `401 UNAUTHORIZED`；
    - **空值防呆清洗**：上下文项为空时直接跳过标头注入，严禁向 HTTP Headers 写入 `"null"` 脏数据；
    - **日志脱敏与慢调用主动告警**：定制 `AtengFeignLogger`，对 `Same-Token`、`Authorization` 等敏感标头执行自动掩码脱敏；同时内置基于 `slow-call-threshold`（默认 `2s`，支持单 Client 覆盖）的慢调用检测，超阈值时突破 `DEBUG` 限制主动输出 `WARN` 告警日志。
 

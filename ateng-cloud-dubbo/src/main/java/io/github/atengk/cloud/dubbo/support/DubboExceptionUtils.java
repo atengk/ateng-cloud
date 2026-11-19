@@ -15,6 +15,9 @@ import org.apache.dubbo.rpc.service.GenericService;
 import org.apache.dubbo.rpc.support.RpcUtils;
 import org.springframework.util.StringUtils;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
@@ -327,5 +330,119 @@ public final class DubboExceptionUtils {
         }
         Class<?> returnType = RpcUtils.getReturnType(invocation);
         return isStreamObserver(returnType);
+    }
+
+    /**
+     * 校验异常及其整个因果链（含 suppressed 异常）是否全部属于可信序列化白名单包前缀
+     * （内置放行 {@code java.}、{@code javax.}、{@code jakarta.}、{@code io.github.atengk.} 与可选额外包前缀）
+     *
+     * @param throwable            待校验异常
+     * @param extraTrustedPackages 额外配置的可信包前缀列表
+     * @return true 表示因果链全部可信，false 表示存在非白名单第三方包异常类
+     */
+    public static boolean isTrustedCauseChain(Throwable throwable, List<String> extraTrustedPackages) {
+        return findFirstUntrustedCause(throwable, extraTrustedPackages) == null;
+    }
+
+    /**
+     * 在异常自身的嵌套因果（{@code getCause()} 与 {@code getSuppressed()}）中查找首个非白名单第三方包异常，
+     * 适用于外层异常类型本身已受契约/框架保障（如接口 {@code throws} 声明或 {@code RpcException}）场景
+     *
+     * @param throwable            待检外层异常
+     * @param extraTrustedPackages 额外配置的可信包前缀列表
+     * @return 首个非白名单嵌套异常；若无则返回 {@code null}
+     */
+    public static Throwable findUntrustedNestedCause(Throwable throwable, List<String> extraTrustedPackages) {
+        if (throwable == null) {
+            return null;
+        }
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        visited.add(throwable);
+        if (throwable.getCause() != null) {
+            Throwable nestedUntrusted = findUntrustedNodeRecursive(throwable.getCause(), extraTrustedPackages, visited, 1);
+            if (nestedUntrusted != null) {
+                return nestedUntrusted;
+            }
+        }
+        for (Throwable suppressed : throwable.getSuppressed()) {
+            Throwable suppressedUntrusted = findUntrustedNodeRecursive(suppressed, extraTrustedPackages, visited, 1);
+            if (suppressedUntrusted != null) {
+                return suppressedUntrusted;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 在异常因果链（含 suppressed 异常）中查找首个非白名单第三方包异常实例
+     *
+     * @param throwable            待检异常
+     * @param extraTrustedPackages 额外配置的可信包前缀列表
+     * @return 首个非白名单异常实例；若整条链路全部可信或入参为 {@code null} 则返回 {@code null}
+     */
+    public static Throwable findFirstUntrustedCause(Throwable throwable, List<String> extraTrustedPackages) {
+        if (throwable == null) {
+            return null;
+        }
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        return findUntrustedNodeRecursive(throwable, extraTrustedPackages, visited, 0);
+    }
+
+    private static Throwable findUntrustedNodeRecursive(Throwable node,
+                                                        List<String> extraTrustedPackages,
+                                                        Set<Throwable> visited,
+                                                        int depth) {
+        if (node == null) {
+            return null;
+        }
+        if (depth >= MAX_CAUSE_DEPTH) {
+            // Fail-closed：超深因果链默认按非白名单节点处理，防止深层嵌套夹带不可反序列化异常逃逸
+            return node;
+        }
+        if (!visited.add(node)) {
+            return null;
+        }
+        if (!isTrustedExceptionClass(node.getClass(), extraTrustedPackages)) {
+            return node;
+        }
+        if (node.getCause() != null) {
+            Throwable nestedUntrusted = findUntrustedNodeRecursive(node.getCause(), extraTrustedPackages, visited, depth + 1);
+            if (nestedUntrusted != null) {
+                return nestedUntrusted;
+            }
+        }
+        for (Throwable suppressed : node.getSuppressed()) {
+            Throwable suppressedUntrusted = findUntrustedNodeRecursive(suppressed, extraTrustedPackages, visited, depth + 1);
+            if (suppressedUntrusted != null) {
+                return suppressedUntrusted;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isTrustedExceptionClass(Class<?> clazz, List<String> extraTrustedPackages) {
+        if (clazz == null) {
+            return true;
+        }
+        String className = clazz.getName();
+        if (className.startsWith("java.")
+                || className.startsWith("javax.")
+                || className.startsWith("jakarta.")
+                || className.startsWith("io.github.atengk.")) {
+            return true;
+        }
+        if (extraTrustedPackages != null) {
+            for (String rawPrefix : extraTrustedPackages) {
+                if (!StringUtils.hasText(rawPrefix)) {
+                    continue;
+                }
+                String prefix = rawPrefix.trim();
+                String prefixWithDot = prefix.endsWith(".") ? prefix : prefix + ".";
+                if (className.equals(prefix) || className.startsWith(prefixWithDot)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

@@ -10,7 +10,7 @@
 
 | 依赖坐标 (GroupId : ArtifactId) | 纳管版本号 | 来源 / 类型 | 核心职责与治理边界 |
 | :--- | :--- | :--- | :--- |
-| `io.github.atengk:ateng-boot-bom` | `1.1.0` | 内部底座 / BOM Import | 单体纯净基础设施底座（单向依赖消费已发布 Release 稳定版） |
+| `io.github.atengk:ateng-boot-bom` | `1.2.0` | 内部底座 / BOM Import | 单体纯净基础设施底座（单向依赖消费已发布 Release 稳定版） |
 | `org.springframework.boot:spring-boot-dependencies` | `3.3.13` | 官方框架 / BOM Import | Spring Boot 3 官方依赖基线（JDK 17 LTS 字节码标准） |
 | `org.springframework.cloud:spring-cloud-dependencies` | `2023.0.6` | 官方框架 / BOM Import | Spring Cloud 2023 官方微服务治理依赖基线 |
 | `com.alibaba.cloud:spring-cloud-alibaba-dependencies` | `2023.0.3.4` | 官方生态 / BOM Import | Spring Cloud Alibaba 官方套件（Nacos、Sentinel 等） |
@@ -76,7 +76,7 @@
 ```mermaid
 flowchart TD
     subgraph Upstream ["上游基础物料清单 (Upstream BOMs)"]
-        BootBOM["ateng-boot-bom:1.1.0<br>(单体底座全套工具/Web/持久化/安全)"]
+        BootBOM["ateng-boot-bom:1.2.0<br>(单体底座全套工具/Web/持久化/安全)"]
         SpringBoot["spring-boot-dependencies:3.3.13"]
         SpringCloud["spring-cloud-dependencies:2023.0.6"]
         SCA["spring-cloud-alibaba-dependencies:2023.0.3.4"]
@@ -104,7 +104,7 @@ flowchart TD
 ```
 
 - **一站式全能传递铁律**：`ateng-cloud-bom` 内部已经显式 import 导入了 `ateng-boot-bom`，下游业务工程无需在 POM 中分别声明 `ateng-boot-bom` 与 `ateng-cloud-bom`，只需导入 `ateng-cloud-bom` 即可同时拥有单体底座与微服务套件的全量版本托管能力；
-- **上游单向锁定铁律**：`ateng-cloud` 仅单向依赖已发布的 `ateng-boot-bom` 正式 Release 版本（当前锁定 `1.1.0`），坚决杜绝依赖 SNAPSHOT 快照，保障生产构建的绝对确定性。
+- **上游单向锁定铁律**：`ateng-cloud` 仅单向依赖已发布的 `ateng-boot-bom` 正式 Release 版本（当前锁定 `1.2.0`），坚决杜绝依赖 SNAPSHOT 快照，保障生产构建的绝对确定性。
 
 ---
 

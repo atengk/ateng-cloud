@@ -31,10 +31,11 @@
      - **确定性生命周期清理**：在 `finally` 块中强制执行 `clear()`，并在且仅在入站执行过 bind 时执行 `RootContext.unbind()`，杜绝 Netty 线程池脏读与事务悬挂；
    - **零信任内网防穿透**：平滑条件探测 Sa-Token。当微服务开启 `same-token.check=true` 时，Consumer 自动附加 `Same-Token`，Provider 强制执行合法性校验，缺失或无效凭据直接 Fail-Fast 401 阻断；支持 `injvm` 本地短路调用豁免与 `same-token.exclude-interfaces` 接口白名单精确/通配豁免。
 
-4. **因果异常保真与反序列化防御 (Causal Exception Defense)**：
+4. **因果异常保真、TraceId 回传与反序列化安全防御 (Causal Exception Defense)**：
    - 实现定制 `AtengDubboExceptionFilter`（接管 Dubbo 原生 ExceptionFilter）：
-     - 对 `BusinessException`、JSR-303 参数校验异常及 JDK 标准异常实施白名单放行，100% 完整保留原始错误码、错误信息及因果链；
-     - 对客户端类路径可能缺失的底层未知系统崩溃异常，在 Provider 端安全包装为 `BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, ...)`，彻底防御 Consumer 端 `ClassNotFoundException`；
+     - 对 `BusinessException`、JSR-303 参数校验异常及 JDK 标准异常实施白名单放行，按配置（`sanitize-untrusted-cause`，默认 `true`）递归校验整个 `cause` 与 `suppressed` 异常链是否全部命中安全包前缀（内置 `java.`、`javax.`、`jakarta.`、`io.github.atengk.` 及可选扩展 `trusted-cause-packages`）；
+     - 若异常链中混入非白名单第三方/私有异常类（即使挂接在受管 `BusinessException.cause` 下），在 Provider 端记录完整现场堆栈后安全剥离不可信 `cause` 并在消息尾部追加 `[cause=<SimpleName>]` 诊断标记（未知非白名单异常同时转译为受管 `BusinessException(500, ...)`），彻底防御 Consumer 端因缺少驱动/三方依赖类触发的反序列化 `ClassNotFoundException`；
+     - 自动将远端 `traceId`（来自 `Result.traceId`、Dubbo 隐式附件或 Provider/Consumer 当前 MDC）精确回填至 `BusinessException.traceId`，并在 `DubboContractAssertFilter` 断言非 200 `Result<?>` 失败时同步透传 `result.getTraceId()`（回退 MDC `traceId`），保障跨进程失败响应与日志 `traceId` 1:1 可观测追溯；
    - **消费端底层 `RpcException` 按需因果转译**：提供 `DubboConsumerExceptionClusterFilter`（`exception.translate-consumer-rpc-exception=true` 时生效且主动让路已配置原生 `mock` 的调用），将超时、网络断连/无可用提供者等底层 `RpcException` 安全转译为保留原始 `cause` 的受管 `BusinessException`（504/503/500）。
 
 5. **防重试雪崩安全生产基线 (Retry Storm Defense)**：

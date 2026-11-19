@@ -38,6 +38,8 @@ public class AtengFeignLogger extends Logger {
      */
     private static final Set<String> SENSITIVE_HEADERS = Set.of(
             "same-token",
+            "same_token",
+            "sa-same-token",
             "authorization",
             "proxy-authorization",
             "cookie",
