@@ -49,8 +49,6 @@
 | `DubboBusinessExceptionHandler` | 协议异常处理器 | Triple 传输层受管 `BusinessException` 保真回传 | HTTP/2 协议层异常处理器，流式通信自动放行 |
 | `DubboOverloadExceptionHandler` | 协议异常处理器 | Triple 传输层线程池过载拒绝异常转译为 429 业务异常 | HTTP/2 协议层异常处理器，杜绝传输物理断连 |
 | `DubboValidationExceptionHandler` | 协议异常处理器 | Triple 传输层参数校验违规异常转译为 400 业务异常 | HTTP/2 协议层异常处理器，保真违规字段信息 |
-| `DubboResultUnwrapFilter` | RPC 过滤器 (已废弃) | 旧版业务结果自动解包过滤器，平滑标记弃用 | `@Deprecated`，建议迁移至 `DubboContractAssertFilter`，保持类二进制与编译向后兼容 |
-| `AtengDubboResultUnwrapProperties` | 配置属性类 (已废弃) | 旧版 `ateng.cloud.dubbo.result-unwrap.*` 配置，映射至新契约属性 | `@Deprecated`，建议迁移至 `AtengDubboContractProperties` |
 
 ---
 

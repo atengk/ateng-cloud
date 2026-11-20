@@ -181,16 +181,6 @@ public class AtengDubboProperties {
         this.contract = contract;
     }
 
-    @Deprecated(since = "1.0.0", forRemoval = false)
-    public AtengDubboContractProperties getResultUnwrap() {
-        return contract;
-    }
-
-    @Deprecated(since = "1.0.0", forRemoval = false)
-    public void setResultUnwrap(AtengDubboContractProperties resultUnwrap) {
-        this.contract = resultUnwrap;
-    }
-
     public AtengDubboTrafficProperties getTraffic() {
         return traffic;
     }

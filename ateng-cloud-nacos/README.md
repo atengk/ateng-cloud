@@ -19,7 +19,6 @@
 | `NacosContextBarrier` | 上下文隔离屏障 | 提供 `run`、`call`、`callWithTrace` 静态门面，针对 `<MDC traceId, UserContextHolder, TenantContextHolder>` 保存快照并在 `finally` 对称恢复/清理 | 保持对 `traffic`/`seata` 模块零依赖 |
 | `NacosWarmupHelper` | 辅助计算类 | 集中计算节点启动预热窗口时长、已运行秒数、剩余倒计时与完成状态 `WarmupStatus` | 供 Actuator、健康检查与指标管理器复用 |
 | `NacosHealthChecker` | 启动诊断器 | 全景健康就绪诊断器，检测 `spring.config.import`、网卡绑定、回环告警、元数据快照、快照目录可写性与 K8s 排空预警 | 标配 `@ConditionalOnMissingBean`，启动即时自检 |
-| `NacosConfigHealthChecker` | 诊断兼容类（`@Deprecated`） | 继承 [`NacosHealthChecker`](src/main/java/io/github/atengk/cloud/nacos/health/NacosHealthChecker.java) 的历史配置诊断向后兼容门面 | `@Deprecated(since = "1.0.0")`，新代码请迁移使用 `NacosHealthChecker` |
 | `SingletonImmutabilityGuard` | 架构守卫 | `BeanFactoryPostProcessor` 容器启动扫描，严禁 `@Service`/`@Repository` 单例标注 `@RefreshScope` | 标配开启，违规直接 `IllegalStateException` 阻断启动 |
 | `NacosConfigRefreshEngine` | 安全热更引擎 | 仅增量重绑 `@ConfigurationProperties` 单例，执行 `ValidatorUtil` JSR-303 兜底校验，维护三元上下文与失败隔离 | 异常不击穿容器，失败广播 `SafeConfigRefreshFailureEvent` |
 | `SafeConfigRefreshEvent` | 应用事件类 | 携带配置变更集、新旧对比明细及 `traceId` 的强类型 Spring 事件 | 继承 `ApplicationEvent`，脱敏边界自动掩码 |

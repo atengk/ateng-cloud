@@ -2,9 +2,7 @@ package io.github.atengk.cloud.dubbo.filter;
 
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
-import io.github.atengk.cloud.dubbo.properties.AtengDubboContractProperties;
 import io.github.atengk.cloud.dubbo.properties.AtengDubboProperties;
-import io.github.atengk.cloud.dubbo.properties.AtengDubboResultUnwrapProperties;
 import io.github.atengk.cloud.dubbo.support.DubboPropertiesHolder;
 import org.apache.dubbo.common.URL;
 import org.apache.dubbo.common.extension.ExtensionLoader;
@@ -40,7 +38,7 @@ class DubboContractAssertFilterTest {
     }
 
     @Test
-    @DisplayName("验证 SPI 注册表中 contractAssert 生效且已清理废弃的 resultUnwrap")
+    @DisplayName("验证 SPI 注册表中 contractAssert 生效")
     void testFilterSpiRegistration() {
         ExtensionLoader<Filter> loader = ApplicationModel.defaultModel()
                 .getDefaultModule()
@@ -49,20 +47,6 @@ class DubboContractAssertFilterTest {
         assertThat(loader.hasExtension("contractAssert")).isTrue();
         Filter filter = loader.getExtension("contractAssert");
         assertThat(filter).isInstanceOf(DubboContractAssertFilter.class);
-
-        // resultUnwrap 已从 SPI 注册表中安全移除
-        assertThat(loader.hasExtension("resultUnwrap")).isFalse();
-    }
-
-    @Test
-    @DisplayName("验证废弃类 DubboResultUnwrapFilter 与 AtengDubboResultUnwrapProperties 的向后兼容性")
-    void testDeprecatedClassesBackwardCompatibility() {
-        DubboResultUnwrapFilter deprecatedFilter = new DubboResultUnwrapFilter();
-        assertThat(deprecatedFilter).isInstanceOf(DubboContractAssertFilter.class);
-
-        AtengDubboResultUnwrapProperties deprecatedProps = new AtengDubboResultUnwrapProperties();
-        assertThat(deprecatedProps).isInstanceOf(AtengDubboContractProperties.class);
-        assertThat(deprecatedProps.isEnabled()).isTrue();
     }
 
     @Test

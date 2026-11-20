@@ -25,6 +25,10 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -334,5 +338,31 @@ class NacosHealthCheckerTest {
         // 平滑执行无异常
         checker.afterSingletonsInstantiated();
         checker.checkAndLogStatus();
+    }
+
+    @Test
+    @DisplayName("配置启动自检门禁：checkOnStartup 关闭时跳过配置导入探测，开启时执行探测")
+    void testCheckOnStartupToggle() {
+        AtengNacosProperties properties = new AtengNacosProperties();
+        MockEnvironment environment = new MockEnvironment();
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+
+        NacosHealthChecker checker = spy(new NacosHealthChecker(
+                properties, environment, beanFactory.getBeanProvider(NacosConfigManager.class)
+        ));
+
+        // 1. 关闭配置启动自检时跳过配置导入与活跃源探测
+        properties.getConfig().setCheckOnStartup(false);
+        checker.afterSingletonsInstantiated();
+        verify(checker, never()).detectConfigImportDirective();
+        verify(checker, never()).detectActiveNacosPropertySources();
+
+        // 2. 开启配置启动自检时覆盖无/有导入指令分支
+        properties.getConfig().setCheckOnStartup(true);
+        checker.afterSingletonsInstantiated();
+        environment.setProperty("spring.config.import", "optional:nacos:test.yml");
+        checker.afterSingletonsInstantiated();
+        verify(checker, times(2)).detectConfigImportDirective();
+        verify(checker, times(2)).detectActiveNacosPropertySources();
     }
 }

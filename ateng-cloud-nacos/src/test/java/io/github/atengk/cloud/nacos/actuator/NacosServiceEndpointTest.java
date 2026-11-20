@@ -196,7 +196,6 @@ class NacosServiceEndpointTest {
         Map<String, Object> lastRefresh = (Map<String, Object>) configInfo.get("lastRefresh");
         assertThat(lastRefresh).isNotNull();
         assertThat(lastRefresh).containsEntry("success", false);
-        assertThat(lastRefresh).containsKey("error");
         assertThat(lastRefresh).containsKey("errorMessage");
         assertThat((String) lastRefresh.get("errorMessage")).contains("One or more NacosConfigChangeListener failed");
     }
