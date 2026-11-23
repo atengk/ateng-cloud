@@ -30,7 +30,10 @@ public class AccountService implements TwoPhaseAction {
     }
 
     public void initAccount(String userId, int money) {
-        jdbcTemplate.update("MERGE INTO account_tbl (user_id, money) KEY(user_id) VALUES (?, ?)", userId, money);
+        int updated = jdbcTemplate.update("UPDATE account_tbl SET money = ? WHERE user_id = ?", money, userId);
+        if (updated == 0) {
+            jdbcTemplate.update("INSERT INTO account_tbl (user_id, money) VALUES (?, ?)", userId, money);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)

@@ -6,6 +6,8 @@ import io.github.atengk.cloud.sample.seata.service.StorageService;
 import io.github.atengk.cloud.seata.code.SeataResultCode;
 import io.github.atengk.cloud.seata.constant.SeataConstants;
 import org.apache.seata.core.context.RootContext;
+import org.apache.seata.tm.api.GlobalTransaction;
+import org.apache.seata.tm.api.GlobalTransactionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -13,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,6 +42,9 @@ class SampleSeataSentinelFallbackIntegrationTest {
 
     @Autowired
     private StorageService storageService;
+
+    @Autowired
+    private Environment environment;
 
     private static final String USER_ID = "sentinel_user_001";
     private static final String COMMODITY_CODE = "product_sentinel_001";
@@ -105,15 +112,32 @@ class SampleSeataSentinelFallbackIntegrationTest {
 
     @Test
     @DisplayName("正向用例：活跃全局事务下，下游正常调用全量提交")
-    void shouldCommitNormallyWhenDownstreamSucceedsInActiveTx() {
-        RootContext.bind(TEST_XID);
+    void shouldCommitNormallyWhenDownstreamSucceedsInActiveTx() throws Exception {
+        GlobalTransaction tx = null;
+        if (environment.acceptsProfiles(Profiles.of("local"))) {
+            tx = GlobalTransactionContext.getCurrentOrCreate();
+            tx.begin(30000, "sample-seata-sentinel-commit");
+        } else {
+            RootContext.bind(TEST_XID);
+        }
 
-        Long orderId = orderService.createOrderWithDownstream(USER_ID, COMMODITY_CODE, 3, () -> {
-            // 下游远程调用执行成功
-        });
+        try {
+            Long orderId = orderService.createOrderWithDownstream(USER_ID, COMMODITY_CODE, 3, () -> {
+                // 下游远程调用执行成功
+            });
 
-        assertThat(orderId).isPositive();
-        assertThat(orderService.getOrderCount(USER_ID)).isEqualTo(1);
-        assertThat(storageService.getStock(COMMODITY_CODE)).isEqualTo(97);
+            if (tx != null) {
+                tx.commit();
+            }
+
+            assertThat(orderId).isPositive();
+            assertThat(orderService.getOrderCount(USER_ID)).isEqualTo(1);
+            assertThat(storageService.getStock(COMMODITY_CODE)).isEqualTo(97);
+        } catch (Throwable ex) {
+            if (tx != null) {
+                tx.rollback();
+            }
+            throw ex;
+        }
     }
 }

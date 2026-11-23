@@ -7,12 +7,17 @@ import io.github.atengk.cloud.seata.tcc.TccFenceRecord;
 import io.github.atengk.cloud.seata.tcc.TccFenceStatus;
 import org.apache.seata.core.context.RootContext;
 import org.apache.seata.rm.tcc.api.BusinessActionContext;
+import org.apache.seata.tm.api.GlobalTransaction;
+import org.apache.seata.tm.api.GlobalTransactionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -44,19 +49,49 @@ class SampleSeataTccFenceIntegrationTest {
     @Autowired
     private TccFenceBarrier tccFenceBarrier;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private Environment environment;
+
+    private GlobalTransaction activeTx;
+    private String activeXid;
+
     private static final String USER_ID = "tcc_user_001";
-    private static final String XID = "127.0.0.1:8091:112233445566778899";
+    private static final String STUB_XID = "127.0.0.1:8091:112233445566778899";
 
     @BeforeEach
-    void setUp() {
-        RootContext.bind(XID);
+    void setUp() throws Exception {
+        if (RootContext.inGlobalTransaction()) {
+            RootContext.unbind();
+        }
+        jdbcTemplate.update("DELETE FROM tcc_fence_log");
         accountService.initAccount(USER_ID, 1000);
+
+        if (environment.acceptsProfiles(Profiles.of("local"))) {
+            activeTx = GlobalTransactionContext.getCurrentOrCreate();
+            activeTx.begin(30000, "sample-seata-tcc-fence");
+            activeXid = activeTx.getXid();
+        } else {
+            activeTx = null;
+            activeXid = STUB_XID;
+            RootContext.bind(activeXid);
+        }
     }
 
     @AfterEach
-    void tearDown() {
-        if (RootContext.inGlobalTransaction()) {
-            RootContext.unbind();
+    void tearDown() throws Exception {
+        try {
+            if (activeTx != null) {
+                activeTx.rollback();
+            }
+        } finally {
+            activeTx = null;
+            if (RootContext.inGlobalTransaction()) {
+                RootContext.unbind();
+            }
+            jdbcTemplate.update("DELETE FROM tcc_fence_log");
         }
     }
 
@@ -64,7 +99,7 @@ class SampleSeataTccFenceIntegrationTest {
         Map<String, Object> params = new HashMap<>();
         params.put("userId", USER_ID);
         params.put("money", money);
-        return new BusinessActionContext(XID, String.valueOf(branchId), params);
+        return new BusinessActionContext(activeXid, String.valueOf(branchId), params);
     }
 
     @Test
@@ -84,7 +119,7 @@ class SampleSeataTccFenceIntegrationTest {
         assertThat(accountService.getBalance(USER_ID)).isEqualTo(800);
 
         // 校验防卫日志终态为 COMMITTED
-        TccFenceRecord record = tccFenceBarrier.getRepository().findByXidAndBranchId(XID, branchId).orElseThrow();
+        TccFenceRecord record = tccFenceBarrier.getRepository().findByXidAndBranchId(activeXid, branchId).orElseThrow();
         assertThat(record.getStatus()).isEqualTo(TccFenceStatus.COMMITTED);
     }
 
@@ -106,7 +141,7 @@ class SampleSeataTccFenceIntegrationTest {
         assertThat(accountService.getBalance(USER_ID)).isEqualTo(1000);
 
         // 校验防卫日志终态为 ROLLBACKED
-        TccFenceRecord record = tccFenceBarrier.getRepository().findByXidAndBranchId(XID, branchId).orElseThrow();
+        TccFenceRecord record = tccFenceBarrier.getRepository().findByXidAndBranchId(activeXid, branchId).orElseThrow();
         assertThat(record.getStatus()).isEqualTo(TccFenceStatus.ROLLBACKED);
     }
 
@@ -124,7 +159,7 @@ class SampleSeataTccFenceIntegrationTest {
         assertThat(accountService.getBalance(USER_ID)).isEqualTo(1000);
 
         // 关键断言：防卫日志记录已原子占位为 SUSPENDED
-        TccFenceRecord record = tccFenceBarrier.getRepository().findByXidAndBranchId(XID, branchId).orElseThrow();
+        TccFenceRecord record = tccFenceBarrier.getRepository().findByXidAndBranchId(activeXid, branchId).orElseThrow();
         assertThat(record.getStatus()).isEqualTo(TccFenceStatus.SUSPENDED);
     }
 

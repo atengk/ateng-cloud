@@ -77,7 +77,10 @@ import static org.mockito.Mockito.when;
  * @since 2026-10-29
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(SampleCloudTrafficIntegrationTest.OfflineMockConfig.class)
+@Import({
+        SampleCloudTrafficIntegrationTest.SimulatedTopologyConfig.class,
+        SampleCloudTrafficIntegrationTest.OfflineMockConfig.class
+})
 @DisplayName("全链路微服务流量染色与金丝雀灰度端到端集成实测")
 class SampleCloudTrafficIntegrationTest {
 
@@ -1034,17 +1037,23 @@ class SampleCloudTrafficIntegrationTest {
     }
 
     /**
-     * 离线 Mock 与沙箱拓扑配置 (优先缺省守卫，仅非 local Profile 激活)
+     * 电商履约多跳拓扑模拟配置（在离线与 local 双模下均提供虚拟服务实例，由 CompositeDiscoveryClient 合并真实 Nacos 实例）
+     */
+    @TestConfiguration
+    static class SimulatedTopologyConfig {
+
+        @Bean
+        public DynamicTestDiscoveryClient dynamicTestDiscoveryClient() {
+            return new DynamicTestDiscoveryClient();
+        }
+    }
+
+    /**
+     * 离线 Mock 配置 (优先缺省守卫，仅非 local Profile 激活，local 时自动让位真实 NacosTemplate)
      */
     @TestConfiguration
     @org.springframework.context.annotation.Profile("!local")
     static class OfflineMockConfig {
-
-        @Bean
-        @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
-        public DynamicTestDiscoveryClient dynamicTestDiscoveryClient() {
-            return new DynamicTestDiscoveryClient();
-        }
 
         @Bean
         @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean

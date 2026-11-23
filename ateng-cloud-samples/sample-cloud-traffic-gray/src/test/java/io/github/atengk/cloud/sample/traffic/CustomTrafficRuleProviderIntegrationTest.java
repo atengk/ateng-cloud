@@ -31,7 +31,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "ateng.cloud.traffic.sample.custom-rule-provider-enabled=true"
 })
-@Import(SampleCloudTrafficIntegrationTest.OfflineMockConfig.class)
+@Import({
+        SampleCloudTrafficIntegrationTest.SimulatedTopologyConfig.class,
+        SampleCloudTrafficIntegrationTest.OfflineMockConfig.class
+})
 @DisplayName("自定义 TrafficRuleProvider SPI 扩展接管实测")
 class CustomTrafficRuleProviderIntegrationTest {
 

@@ -6,6 +6,8 @@ import io.github.atengk.cloud.sample.seata.service.AccountService;
 import io.github.atengk.cloud.sample.seata.service.OrderService;
 import io.github.atengk.cloud.sample.seata.service.StorageService;
 import org.apache.seata.core.context.RootContext;
+import org.apache.seata.tm.api.GlobalTransaction;
+import org.apache.seata.tm.api.GlobalTransactionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +16,8 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -49,6 +53,9 @@ class SampleSeataPurchaseOrderControllerTest {
     @Autowired
     private AccountService accountService;
 
+    @Autowired
+    private Environment environment;
+
     private static final String USER_ID = "user_purchase_001";
     private static final String COMMODITY_CODE = "product_purchase_001";
 
@@ -72,25 +79,44 @@ class SampleSeataPurchaseOrderControllerTest {
     @DisplayName("测试采购提单正常提交：扣减库存与余额并生成订单")
     void testSubmitPurchaseOrder_Success() throws Exception {
         PurchaseOrderDTO dto = new PurchaseOrderDTO(USER_ID, COMMODITY_CODE, 2);
+        GlobalTransaction tx = null;
+        String txXid = "127.0.0.1:8091:202611030001";
+        if (environment.acceptsProfiles(Profiles.of("local"))) {
+            tx = GlobalTransactionContext.getCurrentOrCreate();
+            tx.begin(30000, "sample-seata-purchase");
+            txXid = tx.getXid();
+            RootContext.unbind();
+        }
 
-        mockMvc.perform(post("/sample/cloud/seata/purchase/submit")
-                        .header("TX_XID", "127.0.0.1:8091:202611030001")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.data.userId").value(USER_ID))
-                .andExpect(jsonPath("$.data.commodityCode").value(COMMODITY_CODE))
-                .andExpect(jsonPath("$.data.count").value(2))
-                .andExpect(jsonPath("$.data.orderMoney").value(200))
-                .andExpect(jsonPath("$.data.stockRemaining").value(98))
-                .andExpect(jsonPath("$.data.balanceRemaining").value(800))
-                .andExpect(jsonPath("$.data.status").value("COMMITTED"));
+        try {
+            mockMvc.perform(post("/sample/cloud/seata/purchase/submit")
+                            .header("TX_XID", txXid)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(dto)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.userId").value(USER_ID))
+                    .andExpect(jsonPath("$.data.commodityCode").value(COMMODITY_CODE))
+                    .andExpect(jsonPath("$.data.count").value(2))
+                    .andExpect(jsonPath("$.data.orderMoney").value(200))
+                    .andExpect(jsonPath("$.data.stockRemaining").value(98))
+                    .andExpect(jsonPath("$.data.balanceRemaining").value(800))
+                    .andExpect(jsonPath("$.data.status").value("COMMITTED"));
 
-        // 强断言底层 H2 数据库真实落库
-        assertThat(storageService.getStock(COMMODITY_CODE)).isEqualTo(98);
-        assertThat(accountService.getBalance(USER_ID)).isEqualTo(800);
-        assertThat(orderService.getOrderCount(USER_ID)).isEqualTo(1);
+            if (tx != null) {
+                RootContext.bind(txXid);
+                tx.commit();
+            }
+
+            // 强断言底层数据库真实落库
+            assertThat(storageService.getStock(COMMODITY_CODE)).isEqualTo(98);
+            assertThat(accountService.getBalance(USER_ID)).isEqualTo(800);
+            assertThat(orderService.getOrderCount(USER_ID)).isEqualTo(1);
+        } finally {
+            if (tx != null && RootContext.inGlobalTransaction()) {
+                RootContext.unbind();
+            }
+        }
     }
 
     @Test

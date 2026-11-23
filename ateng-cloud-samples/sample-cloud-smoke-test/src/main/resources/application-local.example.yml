@@ -7,6 +7,8 @@ spring:
   config:
     activate:
       on-profile: local
+    import:
+      - "optional:nacos:${spring.application.name}.yaml"
   cloud:
     nacos:
       server-addr: YOUR_NACOS_SERVER:8848
@@ -15,12 +17,16 @@ spring:
       discovery:
         server-addr: ${spring.cloud.nacos.server-addr}
         enabled: true
+        namespace: YOUR_NAMESPACE
       config:
         server-addr: ${spring.cloud.nacos.server-addr}
         enabled: true
+        namespace: YOUR_NAMESPACE
 
 dubbo:
   registry:
     address: nacos://${spring.cloud.nacos.server-addr}
     username: ${spring.cloud.nacos.username:}
     password: ${spring.cloud.nacos.password:}
+    parameters:
+      namespace: ${spring.cloud.nacos.discovery.namespace:}

@@ -37,6 +37,7 @@ custom_bump_version() {
       # 统一使用 '#' 作为分隔符，彻底规避 XML 斜杠与正则管道符 '|' 的解析冲突
       sed "${SED_OPTS[@]}" "/<artifactId>ateng-cloud-(all|bom)<\/artifactId>/{n;s#<version>[^<]+</version>#<version>${RAW_VERSION}</version>#}" "$readme"
       sed "${SED_OPTS[@]}" "s#(io\.github\.atengk:ateng-cloud-(all|bom)):[0-9A-Za-z.-]+#\1:${RAW_VERSION}#g" "$readme"
+      sed "${SED_OPTS[@]}" "s#(ateng-cloud-(all|bom)):[0-9A-Za-z.-]+#\1:${RAW_VERSION}#g" "$readme"
     fi
   done
 

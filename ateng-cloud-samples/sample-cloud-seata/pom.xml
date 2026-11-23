@@ -45,6 +45,13 @@
             <artifactId>h2</artifactId>
         </dependency>
 
+        <!-- MySQL 驱动 (支持 local Profile 直连真实 MySQL 与 Seata TC 联调) -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Spring Boot Test 离线单测套件 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

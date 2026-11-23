@@ -5,12 +5,16 @@ import io.github.atengk.cloud.sample.seata.service.AccountService;
 import io.github.atengk.cloud.sample.seata.service.OrderService;
 import io.github.atengk.cloud.sample.seata.service.StorageService;
 import org.apache.seata.core.context.RootContext;
+import org.apache.seata.tm.api.GlobalTransaction;
+import org.apache.seata.tm.api.GlobalTransactionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,25 +44,44 @@ class SampleSeataDistributedTransactionIntegrationTest {
     @Autowired
     private AccountService accountService;
 
+    @Autowired
+    private Environment environment;
+
+    private GlobalTransaction activeTx;
+
     private static final String USER_ID = "user_test_001";
     private static final String COMMODITY_CODE = "product_test_001";
 
     @BeforeEach
-    void setUp() {
-        // 模拟分布式事务 XID 绑定
-        RootContext.bind("127.0.0.1:8091:998877665544332211");
-
-        // 初始化数据：库存 100 件，账户余额 1000 元，清空历史订单
+    void setUp() throws Exception {
+        // 先于 XID 绑定初始化基础测试数据，避免在 local 真实 TC 模式下触发无关分支注册
+        if (RootContext.inGlobalTransaction()) {
+            RootContext.unbind();
+        }
         storageService.initStock(COMMODITY_CODE, 100);
         accountService.initAccount(USER_ID, 1000);
         orderService.cleanOrders();
+
+        if (environment.acceptsProfiles(Profiles.of("local"))) {
+            activeTx = GlobalTransactionContext.getCurrentOrCreate();
+            activeTx.begin(30000, "sample-seata-distributed-tx");
+        } else {
+            activeTx = null;
+            RootContext.bind("127.0.0.1:8091:998877665544332211");
+        }
     }
 
     @AfterEach
-    void tearDown() {
-        // 彻底清理上下文，杜绝线程污染
-        if (RootContext.inGlobalTransaction()) {
-            RootContext.unbind();
+    void tearDown() throws Exception {
+        try {
+            if (activeTx != null) {
+                activeTx.rollback();
+            }
+        } finally {
+            activeTx = null;
+            if (RootContext.inGlobalTransaction()) {
+                RootContext.unbind();
+            }
         }
     }
 

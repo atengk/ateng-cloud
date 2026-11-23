@@ -29,7 +29,10 @@ public class StorageService {
     }
 
     public void initStock(String commodityCode, int count) {
-        jdbcTemplate.update("MERGE INTO storage_tbl (commodity_code, count) KEY(commodity_code) VALUES (?, ?)", commodityCode, count);
+        int updated = jdbcTemplate.update("UPDATE storage_tbl SET count = ? WHERE commodity_code = ?", count, commodityCode);
+        if (updated == 0) {
+            jdbcTemplate.update("INSERT INTO storage_tbl (commodity_code, count) VALUES (?, ?)", commodityCode, count);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)

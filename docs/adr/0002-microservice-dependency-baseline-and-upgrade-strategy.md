@@ -12,7 +12,7 @@
 | :--- | :--- | :--- | :--- |
 | **Spring Boot** | `3.3.13` | 继承 `ateng-boot-bom:1.2.0` 统一底座 | 严格对齐单体底座 |
 | **Spring Cloud** | `2023.0.6` | Gateway `4.1.9`、OpenFeign `4.1.5`、CircuitBreaker `3.1.5` | 严禁跨代升级至 `2024.0.x` (因其强绑 Boot 3.4+) |
-| **Spring Cloud Alibaba** | `2023.0.3.4` | Nacos Client `2.4.3`、Sentinel `1.8.8`、Seata `2.1.0` | 锁定 2023.0.3 系列最新补丁 |
+| **Spring Cloud Alibaba** | `2023.0.3.4` | Nacos Client `2.4.3`、Sentinel `1.8.8`、Seata `2.5.0`（核心由 BOM 覆写锁定） | 锁定 2023.0.3 系列最新补丁，Seata 由 `ateng-cloud-bom` 显式升级至 `2.5.0` |
 | **Apache Dubbo** | `3.3.6` | Triple (HTTP/2) 协议稳定性增强、Netty 4 线程模型优化 | 锁定 3.3 系列最新补丁版，严禁使用 `.0` 首发版 |
 
 ## Consequences
