@@ -59,7 +59,7 @@
         <dependency>
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-bom</artifactId>
-            <version>1.0.0</version>
+            <version>1.1.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -83,7 +83,7 @@ flowchart TD
         DubboBOM["dubbo-bom:3.3.6"]
     end
 
-    CloudBOM["ateng-cloud-bom:1.0.0<br>(微服务全域物料清单)"]
+    CloudBOM["ateng-cloud-bom:1.1.0<br>(微服务全域物料清单)"]
     
     BootBOM -->|import| CloudBOM
     SpringBoot -->|import| CloudBOM
@@ -132,7 +132,7 @@ Maven 在处理 `<dependencyManagement>` 中的版本继承时，遵循 **“先
             <dependency>
                 <groupId>io.github.atengk</groupId>
                 <artifactId>ateng-cloud-bom</artifactId>
-                <version>1.0.0</version>
+                <version>1.1.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -192,7 +192,7 @@ Maven 在处理 `<dependencyManagement>` 中的版本继承时，遵循 **“先
         <dependency>
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-cloud-bom</artifactId>
-            <version>1.0.0</version>
+            <version>1.1.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
