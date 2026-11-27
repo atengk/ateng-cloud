@@ -121,8 +121,8 @@
 
 23. **网关全景健康与双轨动态路由运维诊断端点 (Gateway Panorama Diagnostics)**：
     - 暴露非阻塞响应式 Actuator 端点 `@Endpoint(id = "atengGateway")`（同时注册兼容别名路由 `/actuator/atengGateway` 与 `/actuator/ateng-gateway`）；
-    - 输出四大核心维度的只读聚合报告（`dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard`）；
-    - 恪守生产零泄密红线，IP 黑白名单与 AppKey 仅暴露规则总数与运行态健康状态，绝不暴露内部明细拓扑。
+    - 输出五大核心维度的只读聚合报告（`dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard`、`cryptoGuard`）；
+    - 恪守生产零泄密红线，IP 黑白名单、AppKey 与加密密钥版本仅暴露规则/版本数量与运行态健康状态，绝不暴露内部明细拓扑或任何密钥内容。
 
 24. **响应式访问审计安全脱敏与超长防撑爆保护 (Sanitized Query Audit)**：
     - `GatewayAccessLogFilter` 提供可选的 Query 参数审计（`ateng.cloud.gateway.access-log.include-query=false`）；
@@ -144,6 +144,18 @@
 28. **非阻塞遥测旁路绝缘原则 (Non-Blocking Telemetry Isolation)**：
     - 访问日志脱敏在面对非法转义或畸形 Query 字符时，采用前置防御兜底（`query="[malformed-query]"`），坚决不抛出异常阻断业务调用链；
     - 全景诊断端点只读暴露内存无锁快照，微秒级响应，零外部网络 IO 阻塞。
+
+29. **开放接口统一规范签协议、多算法与分布式响应式防重放 (Standardized Multi-Algorithm Sign & Reactive Replay Defense)**：
+    - `GatewaySignGuardFilter`（`ORDER_SIGN_GUARD = -101`）引入 `canonical-mode` 双模规范切换：默认 `LEGACY` 保持既有接入 100% 向后兼容，生产推荐使用 `STANDARD` 对齐 `ateng-boot-web` 的 6 行请求规范串（Method + URI + Timestamp + Nonce + 排序 Query + Body SHA-256）与 3 行出站响应规范串，并在 `STANDARD` 模式下默认对非二进制/流式写请求自动计算请求体摘要；
+    - 通过 `GatewayApiSigner` SPI 支持 `HMAC_SHA256`、`RSA`（`SHA256withRSA`）与国密 `SM2`（复用 `ateng-boot-core` 原语，零 BouncyCastle 新增依赖），支持可选 `sign-response` / `sign-error-response` 出站加签与多应用密钥映射（`apps.<appId>.*`）；
+    - 提供纯响应式 Nonce 防重放 SPI（`ReactiveGatewayNonceValidator`）与四级 Bean 装配优先级（自定义响应式实现 > 旧版同步 `GatewayNonceValidator` 经 `boundedElastic` 适配器 > `ReactiveStringRedisTemplate` 分布式原子 `SET NX EX` > 有界内存滑动窗口），默认开启 `nonce-fail-open=false` 严格 `Fail-Closed` 返回 HTTP 503，彻底消除多实例网关集群防重放盲区与 Netty EventLoop 阻塞风险；
+    - 全景诊断报告 `SignGuardReport` 新增展示规范模式、算法套件、出站加签状态与实际生效 Nonce 防重放模式。
+
+30. **边缘响应式 API 混合加解密、SPA 会话密钥握手与物理 Encrypt-then-Sign 协同 (Edge Hybrid Crypto & Encrypt-then-Sign Synergy)**：
+    - 在鉴权之后、多租户与灰度之前固定装配 `GatewayCryptoFilter`（`ORDER_CRYPTO = -95`，默认 `enabled=false` 零侵入），严格形成外层 `GatewaySignGuardFilter (-101)` $\to$ `SaTokenGatewayFilter (-100)` $\to$ `GatewayCryptoFilter (-95)` 的物理 **Encrypt-then-Sign** 序列：入站先校验外层密文签名再执行内层解密，出站先封装内层加密信封再回签外层摘要，从架构层彻底封堵未认证密文解密与篡改攻击，且独立于 `ServerWebExchangeUtils.CACHED_REQUEST_BODY_ATTR` 防御堆外缓冲互踩；
+    - 基于纯 JDK 17 底座原语提供 `RSA_AES_GCM`（RSA-OAEP-SHA256 + AES-256-GCM）与国密 `SM2_SM4_GCM`（SM2 + SM4-128-GCM）双混合加密引擎、统一 `{"cipherText":"..."}` 信封载荷、`bind-aad` 防跨应用/版本标头替换绑定、`keys.<keyId>` 无缝多版本轮转与禁用版本 `400` Fail-Closed 阻断，以及流式（SSE）/二进制流量直通放行；
+    - 同时支持 `CLIENT_PUBLIC_KEY` 与 `REQUEST_SESSION_KEY` 双响应密钥协商模式：`REQUEST_SESSION_KEY` 支持浏览器 SPA 仅携带请求头 `X-Encrypt-Key` 发起无体 `GET` 握手并复用单次解封会话密钥与全新随机 12B IV 加密响应（响应头物理剔除 `X-Encrypt-Key`），且临时会话密钥字节数组在请求链结束 `doFinally` 中执行确定性清零；
+    - `GatewaySecurityHeadersFilter` 在跨域响应激活时自动将已写出的签名与加解密响应头增量合并至 `Access-Control-Expose-Headers`；全景诊断报告扩展无密钥泄密的 `CryptoGuardReport`。
 
 ## Consequences
 

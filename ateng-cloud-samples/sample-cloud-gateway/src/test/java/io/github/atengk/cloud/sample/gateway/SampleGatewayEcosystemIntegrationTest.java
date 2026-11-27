@@ -397,7 +397,8 @@ public class SampleGatewayEcosystemIntegrationTest {
                 .jsonPath("$.edgeSecurity.ipBlacklist").doesNotExist()
                 .jsonPath("$.edgeSecurity.ipWhitelist").doesNotExist()
                 .jsonPath("$.signGuard.enabled").isEqualTo(true)
-                .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
+                .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true)
+                .jsonPath("$.cryptoGuard.enabled").isEqualTo(false);
     }
 
     @Test

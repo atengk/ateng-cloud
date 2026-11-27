@@ -137,6 +137,18 @@ spring:
           uri: forward:/sample/cloud/gateway/resilience/satoken/not-permission
           predicates:
             - Path=/api/resilience/satoken/not-permission
+        - id: crypto-checkout
+          uri: forward:/sample/cloud/gateway/crypto/checkout
+          predicates:
+            - Path=/api/crypto/checkout
+        - id: crypto-spa-profile
+          uri: forward:/sample/cloud/gateway/crypto/spa/profile
+          predicates:
+            - Path=/api/crypto/spa/profile
+        - id: crypto-stream-events
+          uri: forward:/sample/cloud/gateway/crypto/stream/events
+          predicates:
+            - Path=/api/crypto/stream/events
 
 ateng:
   cloud:
@@ -169,6 +181,8 @@ ateng:
             - "/api/app/**"
         exclude-paths:
           - "/api/open/**"
+          - "/api/crypto/**"
+          - "/sample/cloud/gateway/crypto/**"
           - "/api/security/**"
           - "/sample/cloud/gateway/security/**"
           - "/api/resilience/**"

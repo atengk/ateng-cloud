@@ -7,8 +7,8 @@ import java.io.Serializable;
  *
  * <p>微服务专属架构铁律落地：
  * <ul>
- *     <li><b>四维只读聚合</b>：聚合动态双轨路由、金丝雀灰度负载均衡、零信任边缘安全与开放接口签名防卫；</li>
- *     <li><b>零泄漏机密脱敏</b>：IP 黑白名单与敏感标头仅输出规则总数，绝不向外暴露内部 CIDR 拓扑与敏感密钥；</li>
+ *     <li><b>五维只读聚合</b>：聚合动态双轨路由、金丝雀灰度负载均衡、零信任边缘安全、开放接口签名防卫与边缘报文混合加解密；</li>
+ *     <li><b>零泄漏机密脱敏</b>：IP 黑白名单、敏感标头与密钥版本仅输出规则/版本计数，绝不向外暴露内部 CIDR 拓扑与非对称私公钥；</li>
  *     <li><b>非阻塞无锁快照</b>：指标 100% 提取自内存原子快照，微秒级极速响应，零外部网络 IO 阻塞。</li>
  * </ul>
  * </p>
@@ -23,8 +23,22 @@ public record GatewayPanoramaReport(
         DynamicRouteReport dynamicRoute,
         GrayLoadBalancerReport grayLoadBalancer,
         EdgeSecurityReport edgeSecurity,
-        SignGuardReport signGuard
+        SignGuardReport signGuard,
+        CryptoGuardReport cryptoGuard
 ) implements Serializable {
+
+    public GatewayPanoramaReport(
+            String status,
+            String gatewayId,
+            long timestamp,
+            DynamicRouteReport dynamicRoute,
+            GrayLoadBalancerReport grayLoadBalancer,
+            EdgeSecurityReport edgeSecurity,
+            SignGuardReport signGuard
+    ) {
+        this(status, gatewayId, timestamp, dynamicRoute, grayLoadBalancer, edgeSecurity, signGuard,
+                new CryptoGuardReport(false, "RSA_AES_GCM", "CLIENT_PUBLIC_KEY", "v1", 0, false, true, 0, 0));
+    }
 
     /**
      * 动态双轨路由诊断数据
@@ -133,4 +147,19 @@ public record GatewayPanoramaReport(
                     "LEGACY", "HMAC_SHA256", false, "IN_MEMORY");
         }
     }
+
+    /**
+     * 边缘 API 报文混合加解密防窃听诊断数据（零密钥泄密）
+     */
+    public record CryptoGuardReport(
+            boolean enabled,
+            String algorithm,
+            String responseKeyMode,
+            String activeKeyId,
+            int keyVersionCount,
+            boolean bindAad,
+            boolean required,
+            int includePathsCount,
+            int excludePathsCount
+    ) implements Serializable {}
 }

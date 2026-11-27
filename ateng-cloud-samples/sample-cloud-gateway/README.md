@@ -1,6 +1,6 @@
 # sample-cloud-gateway 响应式微服务 API 网关体验工程
 
-> 专注于演示与自验 `ateng-cloud-gateway` 核心微服务网关特性（零信任安全鉴权、双轨动态路由、金丝雀灰度与复合负载均衡、弹性防雪崩重试、429 限流转译与有界防重放护栏）在纯响应式 WebFlux/Netty 场景下的开箱使用。
+> 专注于演示与自验 `ateng-cloud-gateway` 核心微服务网关特性（零信任安全鉴权、统一规范多算法签名防重放、边缘 API 混合加解密与 `Encrypt-then-Sign`、双轨动态路由、金丝雀灰度与复合负载均衡、弹性防雪崩重试及 429 限流转译）在纯响应式 WebFlux/Netty 场景下的开箱使用。
 
 ---
 
@@ -26,7 +26,7 @@ mvn spring-boot:run -pl ateng-cloud-samples/sample-cloud-gateway -Dspring-boot.r
 
 ## 3. 核心 Controller 接口与一键体验
 
-> **说明**：网关作为分布式边缘反向代理层，对外统一暴露 `/api/**` 边缘路由端点；客户端请求经由网关全局过滤器链与路由断言后，在内部通过响应式 `forward:/` 转发至对应微服务领域的底层 Controller 契约。
+> **说明**：网关作为分布式边缘反向代理层，对外统一暴露 `/api/**` 边缘路由端点；客户端请求经由网关全局过滤器链与路由断言后，在内部通过响应式 `forward:/` 转发至对应微服务领域的底层 Controller 契约。其中 `/api/crypto/**` 加解密网关功能在默认 `application.yml` 中处于 `enabled=false` 零侵入状态，如需手工 `curl` 实测真加解密拦截，请在启动命令追加 `--ateng.cloud.gateway.crypto.enabled=true` 并配置测试公钥/私钥。
 
 | 功能场景 | 承接 Controller 契约 | 网关边缘代理请求方式与路径 | 快速体验 cURL 命令 |
 | :--- | :--- | :--- | :--- |
@@ -45,6 +45,9 @@ mvn spring-boot:run -pl ateng-cloud-samples/sample-cloud-gateway -Dspring-boot.r
 | **金丝雀全下线平滑降级** | `GatewayRouteTrafficController#canaryFallback` | `GET /api/order/fallback` | `curl "http://localhost:9000/api/order/fallback?orderId=ORD-1002"` |
 | **开放平台 HMAC 加签同步** | `GatewaySecurityGuardController#syncMerchantOrder` | `POST /api/open/merchant/sync-order` | `curl -X POST -H "Content-Type: application/json" -H "X-App-Id: sample-app" -H "X-Timestamp: YOUR_TS" -H "X-Nonce: YOUR_NONCE" -H "X-Signature: YOUR_SIG" -d '{"orderId":"ORD-001","merchantId":"MCH-01","amount":199.50,"channel":"ALIPAY"}' "http://localhost:9000/api/open/merchant/sync-order"` |
 | **开放平台 GET 签名校验** | `GatewaySecurityGuardController#queryMerchantOrder` | `GET /api/open/merchant/query-order` | `curl -H "X-App-Id: sample-app" -H "X-Timestamp: YOUR_TS" -H "X-Nonce: YOUR_NONCE" -H "X-Signature: YOUR_SIG" "http://localhost:9000/api/open/merchant/query-order?orderId=ORD-001"` |
+| **边缘混合加解密结算接口** | `GatewayCryptoController#checkout` | `POST /api/crypto/checkout` | `curl -X POST -H "Content-Type: application/json" -H "X-App-Id: app-mall" -H "X-Encrypt-Key: YOUR_ENCRYPTED_KEY" -H "X-Encrypt-Iv: YOUR_GCM_IV" -H "X-Key-Id: v1" -H "X-Encrypt-Alg: RSA_AES_GCM" -d '{"cipherText":"YOUR_CIPHERTEXT"}' "http://localhost:9000/api/crypto/checkout"` |
+| **SPA 会话密钥 GET 握手加密** | `GatewayCryptoController#spaProfile` | `GET /api/crypto/spa/profile` | `curl -H "X-Encrypt-Key: YOUR_ENCRYPTED_SESSION_KEY" "http://localhost:9000/api/crypto/spa/profile"` |
+| **加密路由下 SSE 流式直通** | `GatewayCryptoController#streamEvents` | `GET /api/crypto/stream/events` | `curl -N -H "Accept: text/event-stream" "http://localhost:9000/api/crypto/stream/events"` |
 | **2MB 载荷硬防爆探测** | `GatewaySecurityGuardController#payloadGuard` | `POST /api/security/payload-guard` | `curl -X POST -H "Content-Type: application/octet-stream" --data-binary "@test.bin" "http://localhost:9000/api/security/payload-guard"` |
 | **IP 黑白名单防卫探测** | `GatewaySecurityGuardController#ipGuard` | `GET /api/security/ip-guard` | `curl -H "X-Forwarded-For: 203.0.113.50" "http://localhost:9000/api/security/ip-guard"` |
 | **目录穿越与路径规范化** | `GatewaySecurityGuardController#pathGuard` | `GET /api/security/path-guard` | `curl "http://localhost:9000///api///security/path-guard"` |

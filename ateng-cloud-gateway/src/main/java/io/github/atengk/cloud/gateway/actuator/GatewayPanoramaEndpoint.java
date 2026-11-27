@@ -1,5 +1,6 @@
 package io.github.atengk.cloud.gateway.actuator;
 
+import io.github.atengk.cloud.gateway.properties.AtengGatewayCryptoProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayDynamicRouteProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySecurityProperties;
@@ -193,6 +194,27 @@ public class GatewayPanoramaEndpoint {
                 reactiveNonceMode
         );
 
+        // 5. 边缘 API 混合加解密防窃听诊断（仅暴露版本计数，零密钥泄密）
+        AtengGatewayCryptoProperties cryptoProps = props.getCrypto() != null
+                ? props.getCrypto() : new AtengGatewayCryptoProperties();
+        String cryptoAlgStr = cryptoProps.getAlgorithm() != null
+                ? cryptoProps.getAlgorithm().name() : "RSA_AES_GCM";
+        String cryptoRespModeStr = cryptoProps.getResponseKeyMode() != null
+                ? cryptoProps.getResponseKeyMode().name() : "CLIENT_PUBLIC_KEY";
+        String activeKeyId = StringUtils.hasText(cryptoProps.getActiveKeyId())
+                ? cryptoProps.getActiveKeyId().trim() : "v1";
+        GatewayPanoramaReport.CryptoGuardReport cryptoReport = new GatewayPanoramaReport.CryptoGuardReport(
+                cryptoProps.isEnabled(),
+                cryptoAlgStr,
+                cryptoRespModeStr,
+                activeKeyId,
+                cryptoProps.getKeys() != null ? cryptoProps.getKeys().size() : 0,
+                cryptoProps.isBindAad(),
+                cryptoProps.isRequired(),
+                cryptoProps.getIncludePaths() != null ? cryptoProps.getIncludePaths().size() : 0,
+                cryptoProps.getExcludePaths() != null ? cryptoProps.getExcludePaths().size() : 0
+        );
+
         boolean overallHealthy = nacosHealthy && mainHealthy;
         String status = overallHealthy ? "UP" : "DEGRADED";
 
@@ -203,7 +225,8 @@ public class GatewayPanoramaEndpoint {
                 dynamicRouteReport,
                 grayReport,
                 secReport,
-                signReport
+                signReport,
+                cryptoReport
         );
     }
 

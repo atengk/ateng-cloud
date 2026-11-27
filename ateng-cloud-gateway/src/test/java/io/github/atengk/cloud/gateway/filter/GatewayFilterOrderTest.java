@@ -3,12 +3,14 @@ package io.github.atengk.cloud.gateway.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayAccessLogProperties;
+import io.github.atengk.cloud.gateway.properties.AtengGatewayCryptoProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayOpenApiProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySecurityHeadersProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySecurityProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySignProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayTenantProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayTrafficProperties;
+import io.github.atengk.cloud.gateway.spi.GatewayCryptoKeyProvider;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
 import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
 import org.junit.jupiter.api.DisplayName;
@@ -24,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 网关内置 13 个全局过滤器与 WebFilter 执行顺序单调无碰撞校验单测
+ * 网关内置 14 个全局过滤器与 WebFilter 执行顺序单调无碰撞校验单测
  *
  * @author Ateng
  * @since 2026-11-12
@@ -33,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class GatewayFilterOrderTest {
 
     @Test
-    @DisplayName("13 个内置过滤器 Order 严格单调递增且零碰撞")
+    @DisplayName("14 个内置过滤器 Order 严格单调递增且零碰撞")
     void testAllBuiltInFilterOrdersStrictlyMonotonic() {
         ObjectMapper objectMapper = new ObjectMapper();
         AtengGatewaySecurityProperties securityProperties = new AtengGatewaySecurityProperties();
@@ -49,13 +51,14 @@ class GatewayFilterOrderTest {
                 new OpenApiGuardFilter(new AtengGatewayOpenApiProperties(), objectMapper),
                 new GatewaySignGuardFilter(new AtengGatewaySignProperties(), Mockito.mock(SignSecretProvider.class), objectMapper),
                 new SaTokenGatewayFilter(securityProperties),
+                new GatewayCryptoFilter(new AtengGatewayCryptoProperties(), Mockito.mock(GatewayCryptoKeyProvider.class), objectMapper),
                 new GatewayTenantFilter(new AtengGatewayTenantProperties()),
                 new GatewayTrafficTagFilter(new AtengGatewayTrafficProperties()),
                 rateLimitResponseFilter,
                 new GatewayAccessLogFilter(new AtengGatewayAccessLogProperties())
         );
 
-        assertEquals(13, filtersInExecutionOrder.size());
+        assertEquals(14, filtersInExecutionOrder.size());
 
         Set<Integer> distinctOrders = new HashSet<>();
         for (int i = 0; i < filtersInExecutionOrder.size(); i++) {

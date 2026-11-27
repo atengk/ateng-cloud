@@ -73,7 +73,7 @@ _Avoid_: 容错重试, 弹性重试机制, 失败轮询
 _Avoid_: 安全响应头, 响应头加固, 等保响应头
 
 **API Sign & Replay Defense**:
-基于时间戳偏差防偏、Redis Nonce 唯一性防重放及 HMAC-SHA256 签名校验的多层安全防御机制，防止公网开放接口参数被篡改或恶意重放。
+基于时间戳防偏、可选 `STANDARD` 六行规范待签串（或 `LEGACY` 兼容串）、`HMAC_SHA256`/`RSA`/`SM2` 多算法签验、可选出站响应回签以及分布式 Redis 原子写入或有界内存滑动窗口 Nonce 唯一性校验的开放接口双向防篡改防重放防御机制，防止公网开放接口请求与回包参数被篡改或恶意重放。
 _Avoid_: 签名校验, 接口验签, 防重放拦截
 
 **Canary Gray LoadBalancing**:
@@ -93,7 +93,7 @@ _Avoid_: 动态打标器, 灰度解析器, 染色策略
 _Avoid_: 双轨路由, 动态路由双源, 路由双监听
 
 **Body Digest Sign Guard**:
-网关在 2MB 硬防爆边界内，利用响应式缓存机制对 POST/PUT 请求体计算 SHA-256 摘要并混入规范签名串的防篡改防御机制。
+网关在 2MB 硬防爆边界内，利用响应式缓存机制对 POST/PUT/PATCH 请求体计算 SHA-256 摘要并混入规范签名串的防篡改防御机制。
 _Avoid_: 请求体加签, Body验签, 报文哈希
 
 **Sentinel Reactive Adapter**:
@@ -155,3 +155,23 @@ _Avoid_: 全局放开租户头, 无条件信任X-Tenant-Id, 超管硬编码租�
 **SA-SAME-TOKEN Dual-Header**:
 网关签发内部同源数字签名凭据时同时注入 `Same-Token`、`SAME_TOKEN` 与 `SA-SAME-TOKEN` 请求头，同时兼容旧版网关契约与 `ateng-boot-satoken` 原生 `@CheckSameToken` 校验规范的出站同源签发机制。
 _Avoid_: 单一Same-Token头, 遗漏SA-SAME-TOKEN, 局部头写死
+
+**Edge API Hybrid Encryption**:
+网关在边缘边界采用“非对称密钥信封（RSA-OAEP / SM2）+ 对称认证加密载荷（AES-256-GCM / SM4-128-GCM）”组合密码套件，对指定路由的 JSON 业务载荷实施入站解密与出站加密、并物理剥离请求加密信封标头（保留 `X-App-Id`）同时直通放行流式与二进制流量的防窃听防篡改机制。
+_Avoid_: 全文非对称加密, 仅对称密钥硬编码, 无认证CBC加密
+
+**Request Session Key Handshake**:
+面向无静态客户端私钥能力（如浏览器 SPA 单页应用）的无状态响应加密密钥协商模式：客户端通过请求或无体查询标头传入经网关公钥封装的一次性对称会话密钥，网关解封后复用同一对称会话密钥并生成全新随机初始化向量加密响应体，同时严格不在响应头回传会话密钥信封。
+_Avoid_: 服务端下发私钥, 固定响应IV复用, 浏览器本地持久化静态私钥
+
+**Encrypt-then-Sign Chain**:
+网关外层签名防重放防卫与内层混合加解密过滤器之间确立的固定执行秩序：入站请求先由外层对加密后的报文与标头校验签名并拦截篡改，再交付内层解密；出站响应先由内层完成载荷加密，再由外层对最终密文计算并回写数字签名，从而彻底杜绝未经认证的密文进入解密引擎。
+_Avoid_: Sign-then-Encrypt, 解密后验签, 共享CachedRequestBody缓存
+
+**Key Version Rotation**:
+网关通过密钥版本标识（`X-Key-Id`）维护多套并存的激活与过渡密钥对，支持在线平滑接入新版本密钥与快速禁用下线异常/受损旧版本密钥的平滑密钥生命周期演进机制。
+_Avoid_: 单一全局静态密钥, 无版本覆盖更新, 停机全网换钥
+
+**Crypto Additional Authenticated Data (AAD)**:
+将当次请求的不可篡改上下文元信息（`appId|keyId|algorithm`）绑定写入 AEAD 对称分组加密（GCM）附加认证数据段，防止攻击者跨应用或跨密钥版本截取并替换合法密文信封进行重放的上下文密码绑定防线。
+_Avoid_: 上下文脱离密文, 仅靠业务字段判重, 手工拼接明文校验码

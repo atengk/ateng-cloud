@@ -1,2 +1,3 @@
 io.github.atengk.cloud.gateway.autoconfigure.AtengGatewaySignRedisAutoConfiguration
 io.github.atengk.cloud.gateway.autoconfigure.AtengGatewayAutoConfiguration
+io.github.atengk.cloud.gateway.autoconfigure.AtengGatewayCryptoAutoConfiguration

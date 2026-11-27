@@ -62,7 +62,7 @@ public class GatewayPanoramaEndpointTest {
     }
 
     @Test
-    @DisplayName("测试四维聚合诊断报告全量输出与统计脱敏")
+    @DisplayName("测试五维聚合诊断报告全量输出与统计脱敏")
     void testReportWithAllComponentsAvailable() {
         AtengGatewayProperties props = new AtengGatewayProperties();
         props.getDynamicRoute().setEnabled(true);
@@ -81,6 +81,12 @@ public class GatewayPanoramaEndpointTest {
         props.getSign().setEnabled(true);
         props.getSign().setBodyEnabled(true);
         props.getSign().setIncludePaths(Collections.singletonList("/api/open/**"));
+        props.getCrypto().setEnabled(true);
+        props.getCrypto().setActiveKeyId("v2");
+        props.getCrypto().setBindAad(true);
+        props.getCrypto().getKeys().put("v1", new io.github.atengk.cloud.gateway.properties.AtengGatewayCryptoProperties.CryptoKeyVersionProperties());
+        props.getCrypto().getKeys().put("v2", new io.github.atengk.cloud.gateway.properties.AtengGatewayCryptoProperties.CryptoKeyVersionProperties());
+        props.getCrypto().setIncludePaths(Collections.singletonList("/api/crypto/**"));
 
         // Nacos 动态路由仓库 (包含 2 条路由)
         NacosRouteDefinitionRepository nacosRepo = new NacosRouteDefinitionRepository(
@@ -162,6 +168,19 @@ public class GatewayPanoramaEndpointTest {
         assertEquals("HMAC_SHA256", sign.algorithm());
         assertFalse(sign.signResponse());
         assertEquals("IN_MEMORY", sign.reactiveNonceMode());
+
+        // 5. 边缘混合加解密诊断检验（仅输出版本计数，零密钥泄密）
+        GatewayPanoramaReport.CryptoGuardReport crypto = report.cryptoGuard();
+        assertNotNull(crypto);
+        assertTrue(crypto.enabled());
+        assertEquals("RSA_AES_GCM", crypto.algorithm());
+        assertEquals("CLIENT_PUBLIC_KEY", crypto.responseKeyMode());
+        assertEquals("v2", crypto.activeKeyId());
+        assertEquals(2, crypto.keyVersionCount());
+        assertTrue(crypto.bindAad());
+        assertTrue(crypto.required());
+        assertEquals(1, crypto.includePathsCount());
+        assertEquals(0, crypto.excludePathsCount());
     }
 
     @Test
@@ -274,5 +293,24 @@ public class GatewayPanoramaEndpointTest {
         assertEquals(2, report.dynamicRoute().mainConfigRoute().routeCount());
         // 验证去重：route-common 发生碰撞，总有效路由数应为 3 而不是 4
         assertEquals(3, report.dynamicRoute().totalRouteCount(), "总路由数在同名冲突时应准确去重为 3");
+    }
+
+    @Test
+    @DisplayName("7参向后兼容构造器自动填充默认关闭态 CryptoGuardReport")
+    void testBackwardCompatibleSevenArgReportConstructor() {
+        GatewayPanoramaReport legacyReport = new GatewayPanoramaReport(
+                "UP",
+                "legacy-gw",
+                1700000000000L,
+                null,
+                null,
+                null,
+                new GatewayPanoramaReport.SignGuardReport(false, false, "5m", 0, 0)
+        );
+        assertNotNull(legacyReport.cryptoGuard());
+        assertFalse(legacyReport.cryptoGuard().enabled());
+        assertEquals("RSA_AES_GCM", legacyReport.cryptoGuard().algorithm());
+        assertEquals("CLIENT_PUBLIC_KEY", legacyReport.cryptoGuard().responseKeyMode());
+        assertEquals("v1", legacyReport.cryptoGuard().activeKeyId());
     }
 }

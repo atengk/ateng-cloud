@@ -1,7 +1,7 @@
 # ateng-cloud-gateway 响应式微服务 API 网关治理 Starter
 
 > 面向企业级高可用微服务架构的 Spring Cloud 纯响应式 API 网关基础设施 Starter，单向锁定消费 `ateng-boot-bom`，基于 Spring WebFlux 与 Netty 事件循环无锁驱动构建（100% 物理隔离 Servlet 阻塞栈）。
-> 开箱提供 13 层正交边缘安全与治理过滤器、Sa-Token 零信任集中鉴权与 `Same-Token` 内部同源凭证签发、Netty 2MB 载荷硬防爆与 429 `DataBuffer` 确定性释放、有界 Nonce `Fail-Closed` 防重放护栏、Nacos 双轨动态路由热更与快照兜底、写/5xx 禁重试防雪崩纪律、全链路灰度复合负载均衡链及 `/actuator/atengGateway` 无阻塞全景诊断能力。
+> 开箱提供 14 层正交边缘安全与治理过滤器、Sa-Token 零信任集中鉴权与 `Same-Token` 内部同源凭证签发、统一 `STANDARD` 6 行多算法（`HMAC_SHA256`/`RSA`/`SM2`）双向签验与 Redis 分布式响应式防重放、`RSA_AES_GCM`/`SM2_SM4_GCM` 边缘混合加解密与 `Encrypt-then-Sign` 协同、Netty 2MB 载荷硬防爆与 `DataBuffer` 确定性释放、Nacos 双轨动态路由热更与快照兜底、写/5xx 禁重试防雪崩纪律、全链路灰度复合负载均衡链及 `/actuator/atengGateway` 五维无阻塞全景诊断能力。
 
 ---
 
@@ -14,17 +14,20 @@
 | 类 / 接口 | 类型 | 执行优先级 (`Order`) | 核心职责与设计说明 | 默认装配条件 |
 | :--- | :--- | :--- | :--- | :--- |
 | `AtengGatewayAutoConfiguration` | 自动装配入口 | 根配置容器 | 网关基础设施总装配入口，串联安全、路由、限流、加签、可观测与诊断端点 | `@ConditionalOnWebApplication(REACTIVE)` & `enabled=true` |
+| `AtengGatewaySignRedisAutoConfiguration` | Redis 防重放装配 | `@AutoConfigureBefore(AtengGatewayAutoConfiguration)` | 当类路径存在 `ReactiveStringRedisTemplate` 时优先注册分布式 `RedisReactiveGatewayNonceValidator` | `sign.enabled=true` & 存在 `ReactiveStringRedisTemplate` |
+| `AtengGatewayCryptoAutoConfiguration` | 混合加解密装配 | `@AutoConfigureAfter(AtengGatewayAutoConfiguration)` | 注册 `RSA_AES_GCM`/`SM2_SM4_GCM` 引擎、多版本密钥提供者与 `GatewayCryptoFilter` | `crypto.enabled=true`（默认关闭） |
 | `AtengGatewayEnvironmentPostProcessor` | 环境后置处理器 | `LOWEST_PRECEDENCE` | 注入 `spring.cloud.loadbalancer.cache.ttl=3s`、`zone` 映射与 Nacos 负载解耦标记 | `EnvironmentPostProcessor.imports` 自动加载 |
 | `GatewayGlobalExceptionHandler` | 全局异常处理器 | `@Order(-2)` (`-2`) | 统一拦截网络、路由、Sentinel、Sa-Token 与 `BusinessException`，转译状态对齐的 `Result<Void>` JSON | `@ConditionalOnMissingBean` |
-| `GatewaySecurityHeadersFilter` | 响应式 `WebFilter` | `ORDER_SECURITY_HEADERS` (`HIGHEST_PRECEDENCE` = `-2147483648`) | 注册 `beforeCommit` 钩子注入 OWASP 等保三级安全响应头，并对重复 CORS 响应头去重保留首项 | `security-headers.enabled=true`（默认开启） |
+| `GatewaySecurityHeadersFilter` | 响应式 `WebFilter` | `ORDER_SECURITY_HEADERS` (`HIGHEST_PRECEDENCE` = `-2147483648`) | 注入 OWASP 等保三级安全响应头、去重重复 CORS 头，并在跨域生效时自动增量追加签名/加密头至 `Access-Control-Expose-Headers` | `security-headers.enabled=true`（默认开启） |
 | `GatewayPathValidationFilter` | `GlobalFilter` | `ORDER_PATH_VALIDATION` (`HIGHEST_PRECEDENCE + 1` = `-2147483647`) | 折叠多重斜杠并校验 URI，拦截 `..`、`%2e%2e` 与空字节目录穿越攻击直接 400 阻断 | `security.path-validation-enabled=true`（默认开启） |
 | `GatewayTraceFilter` | `GlobalFilter` | `ORDER_TRACE` (`HIGHEST_PRECEDENCE + 2` = `-2147483646`) | 提取/生成 32 位无横杠 `X-Trace-Id`（兼容 W3C `traceparent`），绑定 Reactor `ContextView` 与响应头回写 | `security.trace-enabled=true`（默认开启） |
 | `GatewayHeaderSanitizeFilter` | `GlobalFilter` | `ORDER_HEADER_SANITIZE` (`HIGHEST_PRECEDENCE + 3` = `-2147483645`) | 物理剥离公网伪造的 `X-User-Id`、`X-Tenant-Id`、`Same-Token`、`TX_XID`、`X-Traffic-*` 等内部受信标头 | `security.header-sanitize-enabled=true`（默认开启） |
 | `GatewayClientIpFilter` | `GlobalFilter` | `ORDER_CLIENT_IP` (`HIGHEST_PRECEDENCE + 4` = `-2147483644`) | 依据 `trusted-proxy-count` 从右向左安全倒推真实客户端 IP，写入 `ATTR_CLIENT_IP` 与 `X-Real-IP` | `security.client-ip-enabled=true`（默认开启） |
 | `GatewayIpFilter` | `GlobalFilter` | `ORDER_IP_FILTER` (`HIGHEST_PRECEDENCE + 5` = `-2147483643`) | 依托 `IpFilterProvider` 执行 IPv4/IPv6 与 CIDR 掩码黑白名单匹配，未授权直接 403 熔断 | `security.ip-filter-enabled=true`（默认开启） |
 | `OpenApiGuardFilter` | 响应式 `WebFilter` | `ORDER_OPENAPI_GUARD` (`HIGHEST_PRECEDENCE + 6` = `-2147483642`) | 守卫 `/docs`、`/v3/api-docs/**` 与 Swagger 资源，提供 `DISABLED`/`BASIC`/`SA_TOKEN`/`PUBLIC` 四模管控 | `openapi.enabled=true`（默认开启） |
-| `GatewaySignGuardFilter` | `GlobalFilter` | `ORDER_SIGN_GUARD` (`-101`) | 校验开放平台 `X-App-Id`/`X-Timestamp`/`X-Nonce`/`X-Signature`（含可选 SHA-256 Body 摘要）与有界防重放 | `sign.enabled=true`（默认关闭） |
+| `GatewaySignGuardFilter` | `GlobalFilter` | `ORDER_SIGN_GUARD` (`-101`) | 校验开放平台 `X-App-Id`/`X-Timestamp`/`X-Nonce`/`X-Signature`（支持 `LEGACY`/`STANDARD`、多算法 `HMAC_SHA256`/`RSA`/`SM2`、响应式 Nonce 防重放及可选出站响应回签） | `sign.enabled=true`（默认关闭） |
 | `SaTokenGatewayFilter` | `GlobalFilter` | `ORDER_SA_TOKEN` (`-100`) | 反应式集中登录校验（支持多账号 `login-type-mappings` 路由、`<tokenName>-<loginType>` 懒加载、`login_user` JSON 与 `{tenantId}_{userId}` 解包、超管身份解析）与白名单同步；按 `same-token-enabled` 动态签发 `Same-Token`/`SAME_TOKEN`/`SA-SAME-TOKEN` 与 `X-User-Id` | `security.sa-token-enabled=true`（默认开启） |
+| `GatewayCryptoFilter` | `GlobalFilter` | `ORDER_CRYPTO` (`-95`) | 边缘 `RSA_AES_GCM`/`SM2_SM4_GCM` 混合加解密、多版本密钥轮转、AAD 绑定、SPA `REQUEST_SESSION_KEY` 无体握手，与 `-101` 构成 `Encrypt-then-Sign` | `crypto.enabled=true`（默认关闭） |
 | `GatewayTenantFilter` | `GlobalFilter` | `ORDER_TENANT` (`-90`) | 鉴权优先锁定会话 `tenantId`；支持平台超管在 `allow-super-admin-switch=true` 下经格式与 `GatewayTenantSwitchValidator` 校验后受控切租户；匿名流量受 `tenant.allow-header` 控制 | `tenant.enabled=true`（默认开启） |
 | `GatewayTrafficTagFilter` | `GlobalFilter` | `ORDER_TRAFFIC_TAG` (`-80`) | 依托 `TrafficTagResolver` 决议全链路灰度标签 `X-Traffic-Tag`；未解析出标签时剥离外部伪造值 | `traffic.enabled=true`（默认开启） |
 | `GatewayRateLimitResponseFilter` | `GlobalFilter` | `ORDER_RATE_LIMIT_RESPONSE` (`-20`) | 拦截 HTTP 429，在 `writeWith`/`writeAndFlushWith` 中确定性释放原始 `DataBuffer` 后改写 `Result` JSON 与 `Retry-After` | `rate-limiter.enabled=true`（默认开启） |
@@ -35,9 +38,9 @@
 | `GatewayRouteValidator` | 静态校验工具 | 路由校验前哨 | 校验双轨动态路由 ID 唯一性、URI 合法性、谓词/过滤器非空，非法配置抛出 `IllegalArgumentException` | 工具类直接调用 |
 | `GrayLoadBalancerClientConfiguration` | 负载均衡配置 | Client 子上下文 | 装配复合责任链：`DiscoveryClient` → `Caching(3s)` → `Gray` → `ZonePreference` → `NacosWarmupLoadBalancer` | `@LoadBalancerClients(defaultConfiguration)` |
 | `GrayServiceInstanceListSupplier` | 灰度实例选择器 | 负载供应器 | 按 `X-Traffic-Tag` 精确匹配 Nacos `metadata.tag`；灰度全下线在 `fallback-to-default=true` 时平滑回退基线 | 默认嵌套于复合责任链 |
-| `GatewayPanoramaEndpoint` | Actuator 端点 | `@Endpoint(id = "atengGateway")` | 无锁内存快照聚合输出双轨路由、灰度负载、边缘安全、开放加签四维只读报告（双路由 `/actuator/atengGateway` & `/actuator/ateng-gateway`） | 存在 Actuator `@Endpoint` 类时激活 |
-| `GatewayPanoramaReport` | 强类型报告 Record | 诊断数据模型 | 封装 `dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard` 四维快照（敏感列表仅输出计数） | 强类型不可变 Record |
-| `GatewayConstants` | 常量基线类 | 全局常量 | 定义标头（`X-Trace-Id`、`Same-Token`、`X-Traffic-Tag` 等）、Exchange 属性键与全部过滤器 `ORDER_*` 基线 | 静态常量引用 |
+| `GatewayPanoramaEndpoint` | Actuator 端点 | `@Endpoint(id = "atengGateway")` | 无锁内存快照聚合输出双轨路由、灰度负载、边缘安全、开放加签、边缘加解密五维只读报告（双路由 `/actuator/atengGateway` & `/actuator/ateng-gateway`） | 存在 Actuator `@Endpoint` 类时激活 |
+| `GatewayPanoramaReport` | 强类型报告 Record | 诊断数据模型 | 封装 `dynamicRoute`、`grayLoadBalancer`、`edgeSecurity`、`signGuard`、`cryptoGuard` 五维快照（敏感列表仅输出计数） | 强类型不可变 Record |
+| `GatewayConstants` | 常量基线类 | 全局常量 | 定义安全/签名/加密标头（`X-Trace-Id`、`Same-Token`、`X-Signature`、`X-Encrypt-*` 等）、Exchange 属性键与全部过滤器 `ORDER_*` 基线 | 静态常量引用 |
 
 ---
 
@@ -48,8 +51,13 @@
 | `IpFilterProvider` | `getBlacklist()` | `List<String>` | 获取当前生效的 IP 黑名单规则列表（支持 CIDR） | `PropertiesIpFilterProvider`（读取配置列表） |
 | `IpFilterProvider` | `getWhitelist()` | `List<String>` | 获取当前生效的 IP 白名单规则列表（支持 CIDR） | `PropertiesIpFilterProvider`（非空时白名单模式） |
 | `IpFilterProvider` | `isAllowed(clientIp)` | `boolean` | 按“黑名单优先拒绝对放行 + 白名单收敛”判定 IP 权限 | 默认接口方法内置高效匹配逻辑 |
-| `SignSecretProvider` | `getSecret(appId)` | `String` | 根据开放应用 `appId` 获取签名私钥 | `InMemorySignSecretProvider`（支持运行时 `registerSecret`） |
-| `GatewayNonceValidator` | `validateAndStore(nonce, ttl)` | `boolean` | 校验并存入 Nonce 防重放（重放或超限返回 `false`） | `InMemoryGatewayNonceValidator(int maxCapacity)` |
+| `GatewayApiSigner` | `supports(algorithm)` / `sign(...)` / `verify(...)` | `boolean` / `String` | 多算法签名/验签策略 SPI，统一抽象 `HMAC_SHA256`、`RSA` 与国密 `SM2` | 内置 `HmacSha256GatewaySigner`、`RsaGatewaySigner`、`Sm2GatewaySigner` |
+| `GatewaySignKeyProvider` | `getVerifyKey(appId, algorithm)` / `getSignKey(...)` | `Mono<String>` | 非阻塞按应用与算法提取入站验签公钥/密钥及出站回签私钥 | `PropertiesGatewaySignKeyProvider`（支持 `apps.<appId>.*` 与旧版 SPI 适配） |
+| `ReactiveGatewayNonceValidator` | `validateAndStore(appId, nonce, ttl)` | `Mono<Boolean>` | 响应式防重放校验 SPI，按 `appId` 维度原子防重放 | Redis `SET NX EX` > 旧版适配 > 有界内存窗口 |
+| `SignSecretProvider` | `getSecret(appId)` | `String` | 旧版同步签名密钥提供者兼容扩展点（已自动卸载至弹性线程池桥接） | `InMemorySignSecretProvider`（支持运行时 `registerSecret`） |
+| `GatewayNonceValidator` | `validateAndStore(nonce, ttl)` | `boolean` | 旧版同步 Nonce 校验器兼容扩展点（已自动适配 `boundedElastic`） | `InMemoryGatewayNonceValidator(int maxCapacity)` |
+| `GatewayCryptoKeyProvider` | `getDecryptPrivateKey(appId, keyId, alg)` / `getEncryptPublicKey(...)` | `Mono<String>` | 非阻塞多版本加密/解密密钥提供者 SPI，支持密钥轮转与禁用版本 400 阻断 | `PropertiesGatewayCryptoKeyProvider`（读取 `keys.<keyId>.*` 与顶层兜底） |
+| `GatewayApiCipher` | `encrypt(...)` / `decrypt(...)` / `unwrapSessionKey(...)` / `decryptWithSessionKey(...)` / `encryptWithSessionKey(...)` | `GatewayCipherResult` / `byte[]` | 混合加解密算法执行引擎 SPI（支持 `CLIENT_PUBLIC_KEY` 与 `REQUEST_SESSION_KEY`） | 内置纯 JDK 17 `RsaAesGcmGatewayCipher` 与 `Sm2Sm4GcmGatewayCipher` |
 | `TrafficTagResolver` | `resolveTag(exchange)` | `String` | 从请求上下文动态决议全链路灰度染色标签 | `DefaultTrafficTagResolver`（Header `X-Traffic-Tag` 优先，Query 兜底） |
 | `GatewayTenantSwitchValidator` | `validate(exchange, targetTenantId, sessionTenantId, userId)` | `Mono<Boolean>` | 平台超级管理员通过 `X-Tenant-Id` 切换目标租户时的响应式扩展校验 SPI | 可选 Bean，未注册时仅执行非空与安全字符集格式防卫 |
 | `IpKeyResolver` | `resolve(exchange)` | `Mono<String>` | 按真实客户端 IP 解析分布式限流键（`@Primary`） | 兜底 `"127.0.0.1"` |
@@ -58,11 +66,11 @@
 | `ClientIpResolver` | `resolveClientIp(request, trustedProxyCount)` | `String` | 从右向左按可信代理跳数安全倒推客户端真实 IP | 兜底物理对端 IP 或 `"127.0.0.1"` |
 | `IpMatcher` | `match(pattern, ip)` / `matchesAny(ip, patterns)` | `boolean` | 高性能单 IP 与 IPv4/IPv6 CIDR 网段掩码匹配 | 非法 IP 格式静默返回 `false` |
 | `GatewayQuerySanitizer` | `sanitize(rawQuery, customMaskKeys)` | `String` | Query 参数敏感键掩码脱敏与 256 字符防撑爆截断 | 畸形编码降级输出 `"[malformed-query]"`，空值返回 `"-"` |
-| `GatewayResponseUtils` | `writeJsonError(exchange, objectMapper, status, code, msg)` | `Mono<Void>` | 输出 HTTP 状态码与 `Result` 码一致的标准 JSON 错误响应并回写 `X-Trace-Id` | 序列化异常自动兜底精简 JSON |
+| `GatewayResponseUtils` | `writeJsonError(exchange, objectMapper, status, code, msg)` | `Mono<Void>` | 输出 HTTP 状态码与 `Result` 码一致的标准 JSON 错误响应并剥离失效分块/压缩头 | 序列化异常自动兜底精简 JSON |
 | `GatewayRouteValidator` | `validateRouteDefinitions(routes)` | `void` | 对路由集合执行 ID 唯一、URI 合法与谓词/过滤器非空防卫校验 | 校验失败抛出 `IllegalArgumentException` |
 | `GatewayRouteRefreshListener` | `refreshRoutesFromEnvironment(changedKeys)` | `boolean` | 增量热绑 `spring.cloud.gateway.routes` 并广播 `RefreshRoutesEvent` | 无需刷新返回 `true`，非法配置回退旧快照返回 `false` |
 | `NacosRouteDefinitionRepository` | `getRouteDefinitions()` / `save(route)` / `delete(routeId)` | `Flux<RouteDefinition>` / `Mono<Void>` | 流式读取当前生效路由定义，支持内存原子覆盖与异常回退快照 | 离线 Nacos 未启用时安全返回空 `Flux` |
-| `GatewayPanoramaEndpoint` | `report()` | `GatewayPanoramaReport` | 读取微秒级内存无锁快照，输出网关四维全景健康与安全脱敏诊断 | 全无网络阻塞，规则列表仅返回计数 |
+| `GatewayPanoramaEndpoint` | `report()` | `GatewayPanoramaReport` | 读取微秒级内存无锁快照，输出网关五维全景健康与安全脱敏诊断 | 全无网络阻塞，规则列表与密钥版本仅返回计数 |
 | `SaTokenGatewayFilter` | `getOrCreateStpLogic(loginType)` | `StpLogic` | 获取或 `ReentrantLock` 无 Pinning 懒加载注册多账号 `StpLogic` | 默认返回 `StpUtil.stpLogic`，非默认使用 `<tokenName>-<loginType>` |
 
 ---
@@ -93,7 +101,7 @@
 | `ateng.cloud.gateway.security.default-login-type` | `String` | `login` | 未命中多账号路由映射时回退使用的默认 Sa-Token 账号体系标识 |
 | `ateng.cloud.gateway.security.login-type-mappings` | `Map<String, List<String>>` | `{}` | 多账号体系路由映射（Key 为 `loginType`，Value 为 AntPath 模式列表，最具体模式优先仲裁） |
 | `ateng.cloud.gateway.security.composite-login-id-enabled` | `boolean` | `true` | 缺少 `login_user` 会话载荷时是否受控按首个 `_` 解包 `{tenantId}_{userId}` 复合主键 |
-| `ateng.cloud.gateway.security-headers.enabled` | `boolean` | `true` | 是否启用 OWASP 等保三级合规安全响应头注入与 CORS 标头去重 |
+| `ateng.cloud.gateway.security-headers.enabled` | `boolean` | `true` | 是否启用 OWASP 等保三级安全响应头注入、CORS 去重与 `Access-Control-Expose-Headers` 合并 |
 | `ateng.cloud.gateway.security-headers.content-type-options` | `String` | `nosniff` | 防 MIME 类型嗅探 `X-Content-Type-Options` 标头值 |
 | `ateng.cloud.gateway.security-headers.frame-options` | `String` | `SAMEORIGIN` | 防点击劫持 `X-Frame-Options` 标头值 |
 | `ateng.cloud.gateway.security-headers.xss-protection` | `String` | `1; mode=block` | 浏览器 XSS 过滤阻断 `X-XSS-Protection` 标头值 |
@@ -114,13 +122,40 @@
 | `ateng.cloud.gateway.tenant.platform-tenant-ids` | `List<String>` | `[]` | 允许执行跨租户切换的平台租户白名单（默认空集合不额外限制；非空时须同时命中平台租户与超管身份） |
 | `ateng.cloud.gateway.tenant.super-admin-roles` | `List<String>` | `["admin", "super_admin"]` | 判定为超级管理员的通用角色编码列表（建议生产按需收紧覆盖） |
 | `ateng.cloud.gateway.tenant.super-admin-permissions` | `List<String>` | `["*", "*:*:*"]` | 判定为超级管理员的通配权限编码列表 |
-| `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否启用开放接口 HMAC-SHA256 数字签名与防重放守卫 |
-| `ateng.cloud.gateway.sign.body-enabled` | `boolean` | `false` | 是否对 POST/PUT/PATCH 请求体计算 SHA-256 摘要（`&bodyHash=`）参与加签验证 |
-| `ateng.cloud.gateway.sign.max-body-size` | `DataSize` | `2MB` | 允许缓存并计算 SHA-256 摘要加签的最大请求体容量 |
+| `ateng.cloud.gateway.sign.enabled` | `boolean` | `false` | 是否启用开放接口数字签名与防重放守卫 |
+| `ateng.cloud.gateway.sign.canonical-mode` | `GatewaySignCanonicalMode` | `LEGACY` | 待签串规范协议模式：`LEGACY`（兼容串）或 `STANDARD`（对齐 `ateng-boot-web` 的 6 行请求 + 3 行响应规范串） |
+| `ateng.cloud.gateway.sign.algorithm` | `GatewaySignAlgorithm` | `HMAC_SHA256` | 数字签名与验签算法套件：`HMAC_SHA256`、`RSA` 或国密 `SM2` |
+| `ateng.cloud.gateway.sign.sign-response` | `boolean` | `false` | 是否对出站正常响应计算 SHA-256 摘要并回写 `X-Signature`/`X-Timestamp`/`X-Nonce` |
+| `ateng.cloud.gateway.sign.sign-error-response` | `boolean` | `false` | 开启出站加签时，是否同时对 HTTP 状态码 `>= 400` 的错误响应执行加签 |
+| `ateng.cloud.gateway.sign.app-id` | `String` | `null` | 缺省应用标识（默认 `null`，未传 `X-App-Id` 直接返回 401；配置后缺头回退该值） |
+| `ateng.cloud.gateway.sign.body-enabled` | `boolean` | `false` | `LEGACY` 模式下是否对 POST/PUT/PATCH 请求体计算 SHA-256 摘要（`STANDARD` 模式默认自动计算写请求体摘要） |
+| `ateng.cloud.gateway.sign.max-body-size` | `DataSize` | `2MB` | 允许缓存并计算 SHA-256 摘要加签的最大请求/响应体容量 |
 | `ateng.cloud.gateway.sign.timestamp-threshold` | `Duration` | `5m` | 请求 `X-Timestamp` 允许的最大前后时钟偏差窗口 |
-| `ateng.cloud.gateway.sign.nonce-max-capacity` | `int` | `100000` | 内存滑动窗口 Nonce 防重放校验器最大容量上限（满载执行 Fail-Closed 拒绝新 Nonce，防 OOM） |
+| `ateng.cloud.gateway.sign.nonce-max-capacity` | `int` | `100000` | 内存滑动窗口 Nonce 防重放校验器最大容量上限（满载执行 `Fail-Closed` 拒绝新 Nonce，防 OOM） |
+| `ateng.cloud.gateway.sign.nonce-prefix` | `String` | `ateng:gateway:sign:nonce:` | 分布式 Redis Nonce 防重放缓存键前缀（按 `<prefix><appId>:<nonce>` 隔离存储） |
+| `ateng.cloud.gateway.sign.nonce-fail-open` | `boolean` | `false` | Redis 存储异常时是否降级放行至有界内存防重放；默认 `false` 严格 `Fail-Closed` 阻断返回 HTTP 503 |
+| `ateng.cloud.gateway.sign.secret-key` / `public-key` / `private-key` | `String` | `null` | 通用签名对称密钥 / 验签公钥 / 出站加签私钥（兼容算法专属键缺失兜底） |
+| `ateng.cloud.gateway.sign.rsa-public-key` / `rsa-private-key` / `sm2-public-key` / `sm2-private-key` | `String` | `null` | RSA 与国密 SM2 算法专属入站验签公钥与出站加签私钥 |
+| `ateng.cloud.gateway.sign.apps.<appId>.*` | `Map<String, SignAppProperties>` | `{}` | 多应用独立密钥映射（每项可配 `secret-key`、`public-key`、`private-key`、`rsa-*`、`sm2-*`） |
+| `ateng.cloud.gateway.sign.header-app-id` / `header-timestamp` / `header-nonce` / `header-signature` | `String` | `X-App-Id` / `X-Timestamp` / `X-Nonce` / `X-Signature` | 签名协议四个 HTTP 标头自定义名称 |
 | `ateng.cloud.gateway.sign.include-paths` | `List<String>` | `[]` | 需强制执行签名校验的路径匹配规则（支持 AntPath；为空则匹配除排除项外的全部请求） |
 | `ateng.cloud.gateway.sign.exclude-paths` | `List<String>` | `[]` | 签名校验排除放行路径列表（支持 AntPath） |
+| `ateng.cloud.gateway.crypto.enabled` | `boolean` | `false` | 是否启用边缘 API 混合加解密全局过滤器（`ORDER_CRYPTO = -95`，默认关闭零侵入） |
+| `ateng.cloud.gateway.crypto.algorithm` | `GatewayCryptoAlgorithm` | `RSA_AES_GCM` | 默认混合加解密算法套件：`RSA_AES_GCM` 或国密 `SM2_SM4_GCM`（可被请求头 `X-Encrypt-Alg` 覆盖） |
+| `ateng.cloud.gateway.crypto.response-key-mode` | `GatewayCryptoResponseKeyMode` | `CLIENT_PUBLIC_KEY` | 出站响应加密密钥模式：`CLIENT_PUBLIC_KEY`（静态客户端公钥）或 `REQUEST_SESSION_KEY`（SPA 复用请求会话密钥且不回传 `X-Encrypt-Key`） |
+| `ateng.cloud.gateway.crypto.app-id` | `String` | `default` | 缺失 `X-App-Id` 时用于构造 AAD 与密钥查询的缺省应用标识 |
+| `ateng.cloud.gateway.crypto.active-key-id` | `String` | `v1` | 当前默认激活密钥版本号（响应头与未指定 `X-Key-Id` 时回退使用） |
+| `ateng.cloud.gateway.crypto.max-body-size` | `DataSize` | `2MB` | 单次加解密请求体与响应体最大允许内存容量阈值（超限返回 HTTP 413） |
+| `ateng.cloud.gateway.crypto.bind-aad` | `boolean` | `false` | 是否将 `appId\|keyId\|algorithm` 绑定写入 AEAD 关联认证数据（AAD）防跨应用/版本重放 |
+| `ateng.cloud.gateway.crypto.decrypt-enabled` / `encrypt-enabled` | `boolean` | `true` / `true` | 入站解密与出站加密独立方向开关 |
+| `ateng.cloud.gateway.crypto.required` | `boolean` | `true` | 是否强制要求入站报文携带有效加密载荷与信封标头（`false` 支持兼容双模灰度） |
+| `ateng.cloud.gateway.crypto.encrypt-error` | `boolean` | `false` | 是否对 HTTP 状态码 `>= 400` 的异常响应执行加密（默认明文返回便于诊断） |
+| `ateng.cloud.gateway.crypto.strip-crypto-headers` | `boolean` | `true` | 入站处理完成后是否剥离 `X-Encrypt-Key`/`X-Encrypt-Iv`/`X-Key-Id`/`X-Encrypt-Alg` 再透传下游（严格保留 `X-App-Id`） |
+| `ateng.cloud.gateway.crypto.include-paths` / `exclude-paths` | `List<String>` | `[]` / `[]` | 加解密生效路径与排除路径列表（支持 AntPath） |
+| `ateng.cloud.gateway.crypto.decrypt-include-paths` / `encrypt-include-paths` | `List<String>` | `[]` / `[]` | 细粒度拆分仅需入站解密或仅需出站加密的路径匹配列表 |
+| `ateng.cloud.gateway.crypto.server-private-key` / `client-public-key` / `rsa-*` / `sm2-*` | `String` | `null` | 顶层默认服务端解密私钥与客户端加密公钥（未配置 `keys` 时生效） |
+| `ateng.cloud.gateway.crypto.keys.<keyId>.*` | `Map<String, CryptoKeyVersionProperties>` | `{}` | 多版本密钥轮转字典（单版本内 `enabled` 默认 `true`，支持按版本覆盖 `server-private-key`/`client-public-key`/`rsa-*`/`sm2-*`） |
+| `ateng.cloud.gateway.crypto.header-app-id` / `header-encrypt-key` / `header-encrypt-iv` / `header-key-id` / `header-encrypt-alg` | `String` | `X-App-Id` / `X-Encrypt-Key` / `X-Encrypt-Iv` / `X-Key-Id` / `X-Encrypt-Alg` | 边缘加解密五个 HTTP 信封标头自定义名称 |
 | `ateng.cloud.gateway.rate-limiter.enabled` | `boolean` | `true` | 是否启用分布式多维限流 `KeyResolver` 与 429 响应统一转译过滤器 |
 | `ateng.cloud.gateway.openapi.enabled` | `boolean` | `true` | 是否启用 OpenAPI / Swagger 文档入口重写与多模安全守卫 |
 | `ateng.cloud.gateway.openapi.path` | `String` | `/docs` | 聚合接口文档统一友好入口路径（访问时重定向至 `target-path`） |
@@ -175,19 +210,20 @@
 
 ## 2. 核心架构与设计不变量
 
-面对公网恶意伪造内部标头、高并发大报文击穿 Netty 堆外内存、写请求重试引发重复落库雪崩、滚动发布路由缓存滞后以及开放接口随机 Nonce 内存打爆等生产级痛点，`ateng-cloud-gateway` 在请求全生命周期中确立以下六项刚性不变量与七层全链路处理拓扑：
+面对公网恶意伪造内部标头、高并发大报文击穿 Netty 堆外内存、写请求重试引发重复落库雪崩、滚动发布路由缓存滞后、开放接口重放篡改以及传输报文防窃听等生产级痛点，`ateng-cloud-gateway` 在请求全生命周期中确立以下七项刚性不变量与全链路处理拓扑：
 
 1. **零信任入站清洗与 `Same-Token` 闭环**：入站最前端无条件剥离伪造内部标头，集中完成 Sa-Token 鉴权后由网关重注权威身份并签发 `Same-Token`；下游微服务默认强校验 `Same-Token`，彻底阻断绕过网关的内网直连流量。
-2. **2MB 内存护栏与 S3 预签名旁路**：全局锁定 `max-in-memory-size: 2MB`（同步约束加签 Body 缓存上限），超限直断 HTTP 413；大文件严禁流经网关中转，统一通过 `ateng-boot-storage` 签发 S3 预签名 URL 直传。
+2. **2MB 内存护栏与 S3 预签名旁路**：全局锁定 `max-in-memory-size: 2MB`（同步约束加签与加解密 Body 缓存上限），超限直断 HTTP 413；大文件严禁流经网关中转，统一通过 `ateng-boot-storage` 签发 S3 预签名 URL 直传。
 3. **写操作与 5xx 绝对禁重试防雪崩**：`AtengRetryGatewayFilterFactory` 强制清空 `statuses` 与 `series`（移除 Spring Cloud Gateway 默认的 `SERVER_ERROR` 重试），写入请求及已建立连接返回 5xx/读超时一律零重试，仅允许 `GET`/`HEAD` 在 `ConnectException`/`ConnectTimeoutException` 时弹性重试 1 次。
-4. **有界 Nonce `Fail-Closed` 防重放**：默认内存防重放校验器强制受限于 `nonce-max-capacity`（默认 `100,000`），清理过期后仍满载时拒绝接纳新 Nonce，严禁无界增长 OOM 或整表清空放水。
-5. **确定性堆外内存回收（Deterministic Buffer Release）**：无论是 Body 加签提前熔断，还是 `GatewayRateLimitResponseFilter` 拦截 429 改写响应，均显式消费并释放底层 Netty `DataBuffer`，防止池化直接内存泄漏。
-6. **双轨路由防 Pinning 并发模型**：`GatewayRouteRefreshListener` 与 `NacosRouteDefinitionRepository` 使用 `ReentrantLock` 守护快照原子替换，并将持久化 IO 卸载至 `Schedulers.boundedElastic()`，兼容 JDK 21+ 虚拟线程运行时。
+4. **响应式分布式与有界内存 `Fail-Closed` 防重放**：支持 Redis 分布式原子 `SET NX EX` 与有界内存窗口（`nonce-max-capacity=100000`）双模式；Redis 异常（默认 `nonce-fail-open=false`）或内存满载均严格 `Fail-Closed` 阻断，严禁无界增长 OOM 或静默放水。
+5. **物理 Encrypt-then-Sign 与混合加解密密钥安全闭环**：`GatewaySignGuardFilter (-101)` 与 `GatewayCryptoFilter (-95)` 严格串联为“入站先验密文签名后解密、出站先加密后回签”秩序；支持 `RSA_AES_GCM`、`SM2_SM4_GCM`、AAD 防替换、多版本密钥轮转及 SPA `REQUEST_SESSION_KEY` 会话密钥握手，并在请求终结 `doFinally` 中强制清零临时会话密钥。
+6. **确定性堆外内存回收（Deterministic Buffer Release）**：无论是 Body 验签/解密提前熔断，还是 `GatewayRateLimitResponseFilter` 拦截 429 改写响应，均显式消费并释放底层 Netty `DataBuffer`，防止池化直接内存泄漏。
+7. **双轨路由防 Pinning 并发模型**：`GatewayRouteRefreshListener` 与 `NacosRouteDefinitionRepository` 使用 `ReentrantLock` 守护快照原子替换，并将持久化 IO 卸载至 `Schedulers.boundedElastic()`，兼容 JDK 21+ 虚拟线程运行时。
 
 ```mermaid
 flowchart TD
-    Client["公网客户端 / OpenAPI 调用方"] --> NettyCodec["Netty WebFlux 接收层 (2MB 硬限制 / 超限 413)"]
-    NettyCodec --> SecHeaders["GatewaySecurityHeadersFilter (-2147483648): 等保安全头与 CORS 去重"]
+    Client["公网客户端 / OpenAPI / SPA 调用方"] --> NettyCodec["Netty WebFlux 接收层 (2MB 硬限制 / 超限 413)"]
+    NettyCodec --> SecHeaders["GatewaySecurityHeadersFilter (-2147483648): 等保安全头、CORS 去重与 Expose 合并"]
     SecHeaders --> PathGuard["GatewayPathValidationFilter (-2147483647): 目录穿越与空字节阻断 (400)"]
     PathGuard --> TraceFilter["GatewayTraceFilter (-2147483646): W3C / X-Trace-Id 生成与响应回写"]
     TraceFilter --> Sanitize["GatewayHeaderSanitizeFilter (-2147483645): 剥离伪造内部受信标头"]
@@ -195,22 +231,25 @@ flowchart TD
     ClientIp --> IpGuard["GatewayIpFilter (-2147483643): IP / CIDR 黑白名单 (403)"]
     IpGuard --> OpenApi["OpenApiGuardFilter (-2147483642): /docs 四模接口文档守卫"]
 
-    OpenApi --> SignGuard{"GatewaySignGuardFilter (-101)<br/>sign.enabled=true ?"}
-    SignGuard -- "验签失败或 Nonce 重放/满载" --> Fail401A["Fail-Closed 返回 HTTP 401 Result"]
-    SignGuard -- "通过或跳过" --> SaToken["SaTokenGatewayFilter (-100): 集中鉴权并签发 Same-Token"]
+    OpenApi --> SignGuard{"GatewaySignGuardFilter (-101): sign.enabled=true?"}
+    SignGuard -- "验签失败 / Nonce 重放 -> 401; Redis 异常 -> 503" --> Fail401A["Fail-Closed 返回 HTTP 401/503 Result"]
+    SignGuard -- "密文验签通过或跳过" --> SaToken["SaTokenGatewayFilter (-100): 集中鉴权并签发 Same-Token"]
 
-    SaToken --> Tenant["GatewayTenantFilter (-90): 鉴权优先绑定多租户 X-Tenant-Id"]
+    SaToken --> CryptoGuard{"GatewayCryptoFilter (-95): crypto.enabled=true?"}
+    CryptoGuard -- "密钥版本禁用/Tag或AAD异常/缺握手头 -> 400; 超限 -> 413" --> Fail400C["Fail-Closed 返回 HTTP 400/413 Result"]
+    CryptoGuard -- "明文解密及会签上下文就绪或跳过" --> Tenant["GatewayTenantFilter (-90): 鉴权优先绑定多租户 X-Tenant-Id"]
+
     Tenant --> TrafficTag["GatewayTrafficTagFilter (-80): TrafficTagResolver 决议 X-Traffic-Tag"]
     TrafficTag --> RateLimit["GatewayRateLimitResponseFilter (-20): 429 释放原 Buffer 并转译 Result"]
 
     RateLimit --> LBChain["复合负载均衡责任链 (Discovery -> Caching 3s -> Gray -> Zone -> NacosWarmup)"]
-    LBChain --> RetryGuard{"AtengRetryGatewayFilterFactory<br/>GET/HEAD TCP 建连异常 ?"}
+    LBChain --> RetryGuard{"AtengRetryGatewayFilterFactory: GET/HEAD TCP 建连异常?"}
     RetryGuard -- "是" --> RetryOnce["受控重试 1 次"]
     RetryGuard -- "否 (写操作 / 5xx / 读超时)" --> ForwardDownstream["直接路由转发至下游微服务"]
     RetryOnce --> ForwardDownstream
 
     ForwardDownstream --> AccessLog["GatewayAccessLogFilter (LOWEST): 脱敏 Query 审计与慢请求 WARN"]
-    ForwardDownstream -. "异常信号 (401/403/502/503/Sentinel)" .-> GlobalEx["GatewayGlobalExceptionHandler (-2): 统一脱敏 Result JSON"]
+    ForwardDownstream -. "异常信号 (400/401/403/502/503/Sentinel)" .-> GlobalEx["GatewayGlobalExceptionHandler (-2): 统一脱敏 Result JSON"]
 ```
 
 ---
@@ -446,7 +485,7 @@ public class GatewaySecurityGuardController {
 
 ---
 
-### 3.3 载荷 2MB 硬防爆、OWASP 安全响应头强化与开放平台有界签名防重放
+### 3.3 载荷 2MB 硬防爆、OWASP 安全响应头强化与多算法统一规范签防重放
 
 **① 本节专属 YAML 配置 (`application.yml`)**：
 
@@ -457,10 +496,18 @@ ateng:
       max-in-memory-size: 2MB # 全局 WebFlux Codec 堆外直接内存请求体硬限制
       sign:
         enabled: true
-        body-enabled: true
+        canonical-mode: STANDARD # 可选 LEGACY（兼容）| STANDARD（6行请求+3行响应规范串）
+        algorithm: RSA # 可选 HMAC_SHA256 | RSA | SM2
+        sign-response: true # 出站响应自动计算摘要并回写 X-Signature/X-Timestamp/X-Nonce
+        sign-error-response: false # 默认不对 >=400 错误响应加签
         max-body-size: 2MB
         timestamp-threshold: 5m
-        nonce-max-capacity: 100000 # 内存 Nonce 防重放窗口上限，满载触发 Fail-Closed
+        nonce-prefix: "ateng:gateway:sign:nonce:"
+        nonce-fail-open: false # Redis 异常时严格 Fail-Closed 返回 503
+        rsa-private-key: ${GATEWAY_SIGN_RSA_PRIVATE_KEY:YOUR_RSA_SIGN_PRIVATE_KEY}
+        apps:
+          rsa-merchant:
+            rsa-public-key: ${PARTNER_RSA_PUBLIC_KEY:YOUR_PARTNER_RSA_PUBLIC_KEY}
         include-paths:
           - "/api/open/**"
       security-headers:
@@ -472,10 +519,10 @@ ateng:
         referrer-policy: strict-origin-when-cross-origin
 ```
 
-**② 真实 Sample 场景 Java 代码（摘自 `sample-cloud-gateway` `GatewaySecurityGuardController` 与 `SampleGatewayApplication`）**：
+**② 真实 Sample 场景 Java 代码（摘自 `sample-cloud-gateway` `GatewaySecurityGuardController` 与 `SampleGatewayStandardSignIntegrationTest`）**：
 
 ```java
-// 1. 开放平台防篡改加签与 2MB 载荷防爆控制器
+// 1. 开放平台统一规范签与 2MB 载荷防爆控制器
 @PostMapping("/open/merchant/sync-order")
 public Mono<Result<OpenApiOrderSyncVO>> syncMerchantOrder(
         @RequestBody(required = false) Mono<OpenApiOrderSyncDTO> bodyMono) {
@@ -497,45 +544,177 @@ public Mono<Result<OpenApiOrderSyncVO>> syncMerchantOrder(
             .defaultIfEmpty(Result.success(new OpenApiOrderSyncVO(
                     "SYNC-EMPTY", "EMPTY", "EMPTY_BODY", System.currentTimeMillis(), true)));
 }
-
-@GetMapping("/open/merchant/query-order")
-public Mono<Result<OpenApiOrderSyncVO>> queryMerchantOrder(
-        @RequestParam(value = "orderId", defaultValue = "ORD-SAMPLE-001") String orderId) {
-    return Mono.just(Result.success(new OpenApiOrderSyncVO(
-            "QUERY-" + orderId,
-            orderId,
-            "QUERY_OK",
-            System.currentTimeMillis(),
-            true
-    )));
-}
-
-@PostMapping("/payload-guard")
-public Mono<Result<PayloadResultVO>> payloadGuard(@RequestBody(required = false) Mono<byte[]> bodyMono) {
-    if (bodyMono == null) {
-        return Mono.just(Result.success(new PayloadResultVO(0, MAX_ALLOWED_BYTES, true)));
-    }
-    return bodyMono
-            .map(bytes -> Result.success(new PayloadResultVO(bytes.length, MAX_ALLOWED_BYTES, true)))
-            .defaultIfEmpty(Result.success(new PayloadResultVO(0, MAX_ALLOWED_BYTES, true)));
-}
 ```
 
 ```java
-// 2. 通过 SignSecretProvider SPI 托管开放平台密钥（生产环境对接 KMS/数据库/配置中心）
-@Bean
-public SignSecretProvider sampleSignSecretProvider() {
-    InMemorySignSecretProvider provider = new InMemorySignSecretProvider();
-    provider.registerSecret("sample-app", System.getenv().getOrDefault("SAMPLE_APP_SECRET", "YOUR_APP_SECRET"));
-    return provider;
-}
+// 2. STANDARD 模式客户端 6 行请求加签与 3 行出站响应验签实测片段
+String canonical = "POST\n/api/open/merchant/sync-order\n" + ts + "\n" + nonce + "\n\n" + DigestUtil.sha256Hex(body);
+String sig = RsaUtil.signSha256Base64(canonical, clientPrivateKey);
+
+EntityExchangeResult<byte[]> result = webTestClient.post()
+        .uri("/api/open/merchant/sync-order")
+        .header(GatewayConstants.X_APP_ID, "rsa-merchant")
+        .header(GatewayConstants.X_TIMESTAMP, ts)
+        .header(GatewayConstants.X_NONCE, nonce)
+        .header(GatewayConstants.X_SIGNATURE, sig)
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(body)
+        .exchange()
+        .expectStatus().isOk()
+        .expectHeader().exists(GatewayConstants.X_SIGNATURE)
+        .expectBody()
+        .returnResult();
+
+// 校验网关回写 3 行响应规范串签名 (respTs + "\n" + respNonce + "\n" + sha256(respBody))
+String respBody = new String(result.getResponseBody(), StandardCharsets.UTF_8);
+String respCanonical = respTs + "\n" + respNonce + "\n" + DigestUtil.sha256Hex(respBody);
+assertTrue(RsaUtil.verifySha256Base64(respCanonical, respSig, serverPublicKey));
 ```
 
 **③ 核心机制与微服务边界防御说明**：
 
-- **HMAC-SHA256 规范签名串与 Body 防篡改**：客户端需在请求头携带 `X-App-Id`、`X-Timestamp`、`X-Nonce`、`X-Signature`，网关按排序参数拼装 `appId=...&nonce=...&timestamp=...`（开启 `body-enabled=true` 且含请求体时自动追加 `&bodyHash={sha256Hex}`）；若在 Body 验签中断返回 401，立即清理已缓存请求体并释放 `DataBuffer` 引用计数。
-- **有界 Nonce `Fail-Closed` 防重放**：`InMemoryGatewayNonceValidator` 基于 `ReentrantLock` 同步维护有界防重放集合（默认容量 `100,000`，由 `ateng.cloud.gateway.sign.nonce-max-capacity` 控制），触发清理水位优先驱逐过期 Nonce；若清理后仍满载则执行 **Fail-Closed** 拒绝新 Nonce（401 阻断并记录 `WARN` 告警），彻底防止高频随机 Nonce 洪泛耗尽堆内存。生产大规模多实例网关推荐自定义注入基于 Redis `SET NX EX` 的 `GatewayNonceValidator` Bean。
-- **2MB 载荷防爆与大文件直传**：超过 `2MB` 的报文在解码层截断并由 `GatewayGlobalExceptionHandler` 转译为 HTTP 413；业务大文件、视频严禁经由网关上传，100% 走 `ateng-boot-storage` 预签名 URL 直传对象存储。
+- **双模规范待签串与多算法 SPI**：`LEGACY` 保持既往 `appId=...&nonce=...&timestamp=...` 查询参数拼接兼容；`STANDARD` 与 `ateng-boot-web` 对齐（HTTP Method + URI + Timestamp + Nonce + Sorted Query + Body SHA-256），且非二进制/流式写请求默认自动计算 Body 摘要；`GatewayApiSigner` 原生覆盖 `HMAC_SHA256`、`RSA`（`SHA256withRSA`）与国密 `SM2`，`GatewaySignKeyProvider` 支持多应用 `apps.<appId>.*` 独立配置与响应式扩展。
+- **四级响应式 Nonce 防重放链**：按“用户自定义 `ReactiveGatewayNonceValidator` > 用户自定义旧版同步 `GatewayNonceValidator`（经 `boundedElastic` 适配器） > `ReactiveStringRedisTemplate`（`SET <prefix><appId>:<nonce> EX 2*ttl NX`） > 有界内存窗口（默认 `100,000` 上限满载拒绝）”递降生效；Redis 异常在默认 `nonce-fail-open=false` 下直接 Fail-Closed 抛出 HTTP 503。
+- **2MB 载荷防爆与大文件直传**：入站或出站超出 `2MB` 限制均立即释放 `DataBuffer` 并返回 HTTP 413；大文件严禁流经网关中转，统一由前端申请 `ateng-boot-storage` 预签名 URL 直传对象存储。
+
+---
+
+### 3.4 边缘 API 混合加解密防窃听与物理 Encrypt-then-Sign 协同
+
+**① 本节专属 YAML 配置 (`application.yml`)**：
+
+```yaml
+ateng:
+  cloud:
+    gateway:
+      sign:
+        enabled: true
+        canonical-mode: STANDARD
+        algorithm: RSA
+        sign-response: true
+        rsa-private-key: ${GATEWAY_SIGN_RSA_PRIVATE_KEY:YOUR_RSA_SIGN_PRIVATE_KEY}
+        apps:
+          partner-crypto:
+            rsa-public-key: ${PARTNER_RSA_PUBLIC_KEY:YOUR_PARTNER_RSA_PUBLIC_KEY}
+        include-paths:
+          - "/api/crypto/**"
+      crypto:
+        enabled: true
+        algorithm: SM2_SM4_GCM # 支持 RSA_AES_GCM | SM2_SM4_GCM
+        response-key-mode: CLIENT_PUBLIC_KEY # 浏览器 SPA 无静态私钥场景可设为 REQUEST_SESSION_KEY
+        active-key-id: v1
+        bind-aad: true # 将 appId|keyId|algorithm 绑定进 AEAD 关联认证数据防替换
+        strip-crypto-headers: true # 入站解密后剥离加密信封标头，保留 X-App-Id
+        include-paths:
+          - "/api/crypto/**"
+        keys:
+          v1:
+            enabled: true
+            sm2-server-private-key: ${GATEWAY_CRYPTO_SM2_PRIV_V1:YOUR_SM2_SERVER_PRIVATE_KEY}
+            sm2-client-public-key: ${GATEWAY_CRYPTO_SM2_PUB_V1:YOUR_SM2_CLIENT_PUBLIC_KEY}
+          v2:
+            enabled: false # 受损或过期版本一键禁用，触发 HTTP 400 Fail-Closed
+```
+
+**② 真实 Sample 场景 Java 代码（摘自 `sample-cloud-gateway` `GatewayCryptoController` 与 `SampleGatewayCryptoIntegrationTest`）**：
+
+```java
+// 1. 下游响应式控制器无感知接收明文 DTO 并透传业务视图（验证加密头已剥离且 X-App-Id 保留）
+@RestController
+@RequestMapping("/sample/cloud/gateway/crypto")
+public class GatewayCryptoController {
+
+    @PostMapping("/checkout")
+    public Mono<Result<SecureCheckoutVO>> checkout(
+            @RequestBody Mono<SecureCheckoutDTO> bodyMono,
+            ServerHttpRequest request) {
+        String appId = request.getHeaders().getFirst(GatewayConstants.X_APP_ID);
+        boolean encryptHeaderVisible = request.getHeaders().containsKey(GatewayConstants.X_ENCRYPT_KEY)
+                || request.getHeaders().containsKey(GatewayConstants.X_ENCRYPT_IV);
+        return bodyMono.map(dto -> Result.success(new SecureCheckoutVO(
+                dto.getOrderNo(),
+                dto.getAmountCents(),
+                appId,
+                encryptHeaderVisible,
+                "CHECKOUT_ACCEPTED"
+        )));
+    }
+
+    @GetMapping("/spa/profile")
+    public Mono<Result<SpaProfileVO>> spaProfile() {
+        return Mono.just(Result.success(new SpaProfileVO(
+                "Ateng-Architect",
+                "138****8888",
+                "SPA_SESSION_CRYPTO"
+        )));
+    }
+
+    @GetMapping(value = "/stream/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> streamEvents() {
+        return Flux.just(
+                ServerSentEvent.<String>builder().id("1").data("crypto-sse-bypass-1").build(),
+                ServerSentEvent.<String>builder().id("2").data("crypto-sse-bypass-2").build()
+        );
+    }
+}
+```
+
+```java
+// 2. 国密 SM2_SM4_GCM + bind-aad=true + Encrypt-then-Sign 联调实测片段（对应上述 YAML 配置）
+byte[] aadV1 = "partner-crypto|v1|SM2_SM4_GCM".getBytes(StandardCharsets.UTF_8);
+GatewayCipherResult encV1 = sm2Cipher.encrypt(
+        plainReq.getBytes(StandardCharsets.UTF_8), serverCryptoV1PublicKey, aadV1);
+String cipherJsonBody = objectMapper.writeValueAsString(
+        new GatewayEncryptedPayload(Base64.getEncoder().encodeToString(encV1.cipherBytes())));
+
+String reqCanonical = "POST\n/api/crypto/checkout\n" + ts + "\n" + nonce + "\n\n" + DigestUtil.sha256Hex(cipherJsonBody);
+String reqSig = RsaUtil.signSha256Base64(reqCanonical, clientSignPrivateKey);
+
+EntityExchangeResult<byte[]> etsResult = webTestClient.post()
+        .uri("/api/crypto/checkout")
+        .header(GatewayConstants.X_APP_ID, "partner-crypto")
+        .header(GatewayConstants.X_TIMESTAMP, ts)
+        .header(GatewayConstants.X_NONCE, nonce)
+        .header(GatewayConstants.X_SIGNATURE, reqSig)
+        .header(GatewayConstants.X_ENCRYPT_KEY, encV1.encryptedKey())
+        .header(GatewayConstants.X_ENCRYPT_IV, encV1.iv())
+        .header(GatewayConstants.X_KEY_ID, "v1")
+        .header(GatewayConstants.X_ENCRYPT_ALG, "SM2_SM4_GCM")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(cipherJsonBody)
+        .exchange()
+        .expectStatus().isOk()
+        .expectHeader().exists(GatewayConstants.X_SIGNATURE)
+        .expectHeader().exists(GatewayConstants.X_ENCRYPT_KEY)
+        .expectBody()
+        .returnResult();
+```
+
+```java
+// 3. SPA 无静态私钥模式独立配置示例（algorithm=RSA_AES_GCM, response-key-mode=REQUEST_SESSION_KEY, bind-aad=false）
+byte[] sessionKey = CryptoUtil.generateKey(256);
+String wrappedKey = Base64.getEncoder().encodeToString(RsaUtil.encryptOaep(sessionKey, serverRsaPublicKey));
+
+EntityExchangeResult<byte[]> result = webTestClient.get()
+        .uri("/api/crypto/spa/profile")
+        .header(GatewayConstants.X_ENCRYPT_KEY, wrappedKey)
+        .exchange()
+        .expectStatus().isOk()
+        .expectHeader().doesNotExist(GatewayConstants.X_ENCRYPT_KEY) // 严禁回传请求会话密钥信封
+        .expectHeader().exists(GatewayConstants.X_ENCRYPT_IV)
+        .expectBody()
+        .returnResult();
+
+GatewayEncryptedPayload outPayload = objectMapper.readValue(result.getResponseBody(), GatewayEncryptedPayload.class);
+String iv = result.getResponseHeaders().getFirst(GatewayConstants.X_ENCRYPT_IV);
+byte[] plainBytes = CryptoUtil.decryptGcm(Base64.getDecoder().decode(outPayload.getCipherText()), sessionKey, Base64.getDecoder().decode(iv));
+```
+
+**③ 核心机制与微服务边界防御说明**：
+
+- **物理 Encrypt-then-Sign 不可变秩序**：`GatewaySignGuardFilter (-101)` 严格包裹内层 `GatewayCryptoFilter (-95)`，二者完全独立读取各自体流（`CryptoFilter` 不写入也不依赖 `CACHED_REQUEST_BODY_ATTR`）。入站请求若密文体或任意 `X-*` 标头被篡改，外层立即返回 HTTP 401 短路拦截，密文根本不会触达内层解密引擎；出站响应先由内层加密成 `{"cipherText":"..."}` 并写入 `X-Encrypt-*` 标头，再由外层对密文摘要回签 `X-Signature`。
+- **双套件混合密码与零静态私钥 SPA 握手**：默认依托 `ateng-boot-core` 纯 JDK 17 密码原语提供 `RSA_AES_GCM`（RSA-OAEP-SHA256 + AES-256-GCM）与国密 `SM2_SM4_GCM`（SM2 + SM4-128-GCM），无需引入 BouncyCastle。针对前端 SPA 无法托管长期静态私钥场景，`REQUEST_SESSION_KEY` 支持携带 `X-Encrypt-Key` 的 `GET`/空体握手请求（缺少即按 `required=true` Fail-Closed 400 拦截），服务端解封复用同一会话密钥配合全新随机 12B IV 加密响应，并在 `doFinally` 钩子中通过 `Arrays.fill` 物理擦除密钥明文。
+- **CORS 自动化暴露与流式旁路隔离**：`GatewaySecurityHeadersFilter` 在跨域生效时自动检测已写出的签名/加密响应头并大小写去重合并进 `Access-Control-Expose-Headers`，确保浏览器可直接读取 `X-Signature` 与 `X-Encrypt-*`；针对 `multipart/*`、`application/octet-stream` 与 `text/event-stream`（SSE）自动直通放行，严禁整包缓冲阻塞。
 
 ---
 
@@ -902,11 +1081,12 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri
             .jsonPath("$.edgeSecurity.ipBlacklistCount").isEqualTo(2)
             .jsonPath("$.edgeSecurity.ipBlacklist").doesNotExist()
             .jsonPath("$.signGuard.enabled").isEqualTo(true)
-            .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true);
+            .jsonPath("$.signGuard.bodyEnabled").isEqualTo(true)
+            .jsonPath("$.cryptoGuard.enabled").isEqualTo(false);
 }
 ```
 
-诊断端点实时输出 JSON 结构示例（节选）：
+诊断端点实时输出 JSON 结构示例（节选，对应上述默认 `sample-cloud-gateway` 运行态）：
 
 ```json
 {
@@ -915,19 +1095,20 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri
   "dynamicRoute": {
     "enabled": true,
     "dualTrackEnabled": true,
-    "totalRouteCount": 23,
+    "totalRouteCount": 31,
     "mainConfigRoute": { "snapshotHealthy": true, "lastRefreshSuccess": true }
   },
   "grayLoadBalancer": { "enabled": true, "fallbackToDefault": true, "cacheTtl": "3s" },
   "edgeSecurity": { "enabled": true, "ipBlacklistCount": 2, "ipWhitelistCount": 0, "defaultLoginType": "login", "loginTypeMappingCount": 2 },
-  "signGuard": { "enabled": true, "bodyEnabled": true, "timestampThreshold": "PT5M" }
+  "signGuard": { "enabled": true, "bodyEnabled": true, "timestampThreshold": "5m", "canonicalMode": "LEGACY", "algorithm": "HMAC_SHA256", "signResponse": false, "reactiveNonceMode": "IN_MEMORY" },
+  "cryptoGuard": { "enabled": false, "algorithm": "RSA_AES_GCM", "responseKeyMode": "CLIENT_PUBLIC_KEY", "activeKeyId": "v1", "keyVersionCount": 0, "bindAad": false, "required": true }
 }
 ```
 
 **③ 核心机制与微服务边界防御说明**：
 
 - **安全脱敏与旁路隔离**：`GatewayQuerySanitizer` 内置密码/令牌/密钥等 12 类敏感字段识别并结合 `mask-keys` 统一掩码为 `***`，超长 Query 在 `256` 字符截断并追加 `...(truncated)`，遇到畸形编码降级输出 `[malformed-query]` 绝不抛错影响主业务流。
-- **双命名路由与防泄密红线**：`GatewayPanoramaEndpoint` 同步注册 `/actuator/atengGateway` 与 `/actuator/ateng-gateway`，全链路读取内存无锁快照且绝对隐藏 CIDR 明文、内部路径清单与任何应用密钥。
+- **双命名路由与防泄密红线**：`GatewayPanoramaEndpoint` 同步注册 `/actuator/atengGateway` 与 `/actuator/ateng-gateway`，全链路读取内存无锁快照且绝对隐藏 CIDR 明文、内部路径清单与任何非对称/对称密钥内容（密钥版本字典仅返回 `keyVersionCount` 数量）。
 
 ---
 
@@ -938,10 +1119,13 @@ void testGatewayPanoramaEndpointReturns200AndStructuredReport(String endpointUri
 | 启动报错 `Spring MVC found on classpath` 或网关线程挂起 | 网关工程误引入 `ateng-boot-web` 或在 WebFilter/Controller 中执行阻塞 JDBC/HTTP 调用 | 立即移除一切 Servlet 阻塞依赖，保持网关工程仅依赖 `ateng-cloud-gateway` 与纯响应式驱动 |
 | 下游微服务拦截返回 401 `"Same-Token 无效"` | 公网流量绕过网关直连内网，或网关 `sa-token.same-token.project-key` 与下游不一致 | 统一经网关入口接入，确保集群与网关共用同一高强度 `project-key` 环境变量并核对 `sa-token-enabled=true` |
 | 配置 `AtengRetry=3` 后发现 `POST` 建连超时或下游返回 `503` 未触发重试 | `AtengRetryGatewayFilterFactory` 强制落实防雪崩铁律：写操作及已建连 HTTP 5xx/读超时均严格零重试 | 严禁尝试绕开写操作禁重试防线；如确需保障写幂等性，应通过前端幂等 Token + 业务唯一键兜底而非网关重试 |
-| 突发大流量下开放接口返回 401 提示重放且日志出现 `Fail-Closed 拒绝` | 单节点内尚未过期的唯一 Nonce 数量超出 `nonce-max-capacity`（默认 `100,000`） | 按 QPS × 2 倍 `timestamp-threshold` 评估扩容 `nonce-max-capacity`，或提供基于 Redis 的分布式 `GatewayNonceValidator` Bean |
+| 开放接口报 401 `"缺少签名 AppId 标头"` 或 Redis 抖动时返回 HTTP 503 | 默认 `sign.app-id=null` 强校验请求头；且分布式模式下 `nonce-fail-open=false` 执行 Redis 故障 `Fail-Closed` | 多租户接入强制传 `X-App-Id`（单应用可设 `sign.app-id`）；检查 Redis 连通性，仅非高敏场景可按需调整 `nonce-fail-open: true` |
+| 突发大流量下开放接口返回 401 提示重放且日志出现 `Fail-Closed 拒绝` | 未引入 Redis 时单节点内存 Nonce 超过 `nonce-max-capacity`（默认 `100,000`） | 生产多实例务必引入 `spring-boot-starter-data-redis-reactive` 自动激活 `RedisReactiveGatewayNonceValidator`，或按 QPS × 2 倍窗口评估内存容量 |
+| 加密接口返回 HTTP 400（提示密钥版本未知/禁用、GCM 校验失败或 SPA 缺握手头） | 请求 `X-Key-Id` 对应 `keys.<keyId>.enabled=false`、客户端 AAD 拼接与 `appId\|keyId\|algorithm` 不匹配，或 `REQUEST_SESSION_KEY` 模式无体 `GET` 遗漏 `X-Encrypt-Key` | 核对启用态 `keyId` 与双端 AAD 开关一致；SPA 端对所有受保护接口（含 `GET`）统一附带 `X-Encrypt-Key` 请求头 |
+| 浏览器跨域请求后前端 JS 读取不到 `X-Signature` 或 `X-Encrypt-*` 响应头 | 跨域响应未将自定义签名与加解密响应头加入 `Access-Control-Expose-Headers` | 保持 `ateng.cloud.gateway.security-headers.enabled=true` 并确保配置有效 CORS 来源，`GatewaySecurityHeadersFilter` 将在 `beforeCommit` 阶段自动合并暴露实际已写出的安全标头 |
 | 滚动发布下游微服务时网关仍持续数秒报错连接拒绝 | 原生 Spring Cloud LoadBalancer 默认实例缓存 TTL 长达 35 秒 | 保持默认注入的 `ateng.cloud.gateway.traffic.cache-ttl: 3s` 并协同下游 `ateng-cloud-nacos` 优雅摘流停机时序 |
 | 修改 `gateway-routes.json` 后路由未生效或依然走旧路由 | 新推送 JSON 存在语法错误、重复 `routeId` 或非法 URI，`GatewayRouteValidator` 触发快照兜底保护 | 查看网关 `ERROR` 日志定位校验失败项并修正 JSON，修正推送前内存将继续安全维持上一份 Last-Known Good Snapshot |
-| 大文件上传请求被直接熔断返回 HTTP 413 | 触发全局 `max-in-memory-size: 2MB` Netty 堆外内存硬护栏 | **严禁放宽网关内存限制做文件中转**，统一由前端申请 `ateng-boot-storage` S3 预签名 URL 直传云端对象存储 |
+| 大文件上传请求或大报文加解密被熔断返回 HTTP 413 | 触发全局 `max-in-memory-size: 2MB`（或 `sign`/`crypto.max-body-size`）Netty 堆外内存硬护栏 | **严禁放宽网关内存限制做文件中转**，文件上传与下载统一走 `ateng-boot-storage` S3 预签名 URL 直传，流式通知切换为 SSE/二进制以触发直通绕过 |
 | 生产环境公网可直接打开 `/docs` 或 `/swagger-ui.html` | 上线未切换 `ateng.cloud.gateway.openapi.guard-mode`，沿用了开发期 `PUBLIC` 模式 | 生产配置中心强制锁定 `guard-mode: DISABLED`（一键 404 关闭）或 `SA_TOKEN` 管理员鉴权 |
 
 ---
@@ -1043,13 +1227,67 @@ ateng:
         super-admin-permissions: ["*", "*:*:*"]
       sign:
         enabled: true
+        canonical-mode: STANDARD
+        algorithm: RSA
+        sign-response: true
+        sign-error-response: false
+        app-id:
         body-enabled: true
         max-body-size: 2MB
         timestamp-threshold: 5m
         nonce-max-capacity: 100000
+        nonce-prefix: "ateng:gateway:sign:nonce:"
+        nonce-fail-open: false
+        secret-key: ${GATEWAY_SIGN_SECRET:YOUR_HMAC_SIGN_SECRET}
+        rsa-public-key: ${GATEWAY_SIGN_RSA_PUBLIC_KEY:YOUR_RSA_VERIFY_PUBLIC_KEY}
+        rsa-private-key: ${GATEWAY_SIGN_RSA_PRIVATE_KEY:YOUR_RSA_SIGN_PRIVATE_KEY}
+        sm2-public-key: ${GATEWAY_SIGN_SM2_PUBLIC_KEY:YOUR_SM2_VERIFY_PUBLIC_KEY}
+        sm2-private-key: ${GATEWAY_SIGN_SM2_PRIVATE_KEY:YOUR_SM2_SIGN_PRIVATE_KEY}
+        apps:
+          partner-01:
+            rsa-public-key: ${PARTNER_01_RSA_PUBLIC_KEY:YOUR_PARTNER_RSA_PUBLIC_KEY}
+        header-app-id: X-App-Id
+        header-timestamp: X-Timestamp
+        header-nonce: X-Nonce
+        header-signature: X-Signature
         include-paths:
           - "/api/open/**"
+          - "/api/crypto/**"
         exclude-paths: []
+      crypto:
+        enabled: true
+        algorithm: SM2_SM4_GCM
+        response-key-mode: CLIENT_PUBLIC_KEY
+        app-id: default
+        active-key-id: v1
+        max-body-size: 2MB
+        bind-aad: true
+        decrypt-enabled: true
+        encrypt-enabled: true
+        required: true
+        encrypt-error: false
+        strip-crypto-headers: true
+        include-paths:
+          - "/api/crypto/**"
+        exclude-paths: []
+        decrypt-include-paths: []
+        encrypt-include-paths: []
+        rsa-server-private-key: ${GATEWAY_CRYPTO_RSA_PRIVATE_KEY:YOUR_RSA_SERVER_PRIVATE_KEY}
+        rsa-client-public-key: ${GATEWAY_CRYPTO_RSA_PUBLIC_KEY:YOUR_RSA_CLIENT_PUBLIC_KEY}
+        keys:
+          v1:
+            enabled: true
+            sm2-server-private-key: ${GATEWAY_CRYPTO_SM2_PRIV_V1:YOUR_SM2_SERVER_PRIVATE_KEY}
+            sm2-client-public-key: ${GATEWAY_CRYPTO_SM2_PUB_V1:YOUR_SM2_CLIENT_PUBLIC_KEY}
+          v2:
+            enabled: false
+            sm2-server-private-key: ${GATEWAY_CRYPTO_SM2_PRIV_V2:YOUR_SM2_SERVER_PRIVATE_KEY}
+            sm2-client-public-key: ${GATEWAY_CRYPTO_SM2_PUB_V2:YOUR_SM2_CLIENT_PUBLIC_KEY}
+        header-app-id: X-App-Id
+        header-encrypt-key: X-Encrypt-Key
+        header-encrypt-iv: X-Encrypt-Iv
+        header-key-id: X-Key-Id
+        header-encrypt-alg: X-Encrypt-Alg
       rate-limiter:
         enabled: true
       openapi:

@@ -177,7 +177,11 @@ public class AtengGatewayAutoConfiguration {
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.security-headers", name = "enabled", havingValue = "true", matchIfMissing = true)
     public GatewaySecurityHeadersFilter gatewaySecurityHeadersFilter(AtengGatewayProperties properties) {
-        return new GatewaySecurityHeadersFilter(properties.getSecurityHeaders());
+        return new GatewaySecurityHeadersFilter(
+                properties.getSecurityHeaders(),
+                properties.getSign(),
+                properties.getCrypto()
+        );
     }
 
     /**

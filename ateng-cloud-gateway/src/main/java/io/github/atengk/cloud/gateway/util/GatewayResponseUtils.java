@@ -47,6 +47,11 @@ public final class GatewayResponseUtils {
         headers.remove(HttpHeaders.TRANSFER_ENCODING);
         headers.remove(HttpHeaders.CONTENT_ENCODING);
         headers.remove(HttpHeaders.CONTENT_DISPOSITION);
+        // 清理内层过滤器可能已写入的混合加密信封响应头，防止外层写回明文错误 JSON 时误导客户端解密
+        headers.remove(GatewayConstants.X_ENCRYPT_KEY);
+        headers.remove(GatewayConstants.X_ENCRYPT_IV);
+        headers.remove(GatewayConstants.X_KEY_ID);
+        headers.remove(GatewayConstants.X_ENCRYPT_ALG);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         String traceId = (String) exchange.getAttributes().get(GatewayConstants.ATTR_TRACE_ID);

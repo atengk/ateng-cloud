@@ -84,6 +84,12 @@ public class AtengGatewayProperties {
     private AtengGatewaySignProperties sign = new AtengGatewaySignProperties();
 
     /**
+     * 边缘 API 报文混合加解密防窃听配置
+     */
+    @NestedConfigurationProperty
+    private AtengGatewayCryptoProperties crypto = new AtengGatewayCryptoProperties();
+
+    /**
      * 多租户入站解析配置
      */
     @NestedConfigurationProperty
@@ -183,6 +189,14 @@ public class AtengGatewayProperties {
 
     public void setSign(AtengGatewaySignProperties sign) {
         this.sign = sign;
+    }
+
+    public AtengGatewayCryptoProperties getCrypto() {
+        return crypto;
+    }
+
+    public void setCrypto(AtengGatewayCryptoProperties crypto) {
+        this.crypto = crypto;
     }
 
     public AtengGatewayTenantProperties getTenant() {

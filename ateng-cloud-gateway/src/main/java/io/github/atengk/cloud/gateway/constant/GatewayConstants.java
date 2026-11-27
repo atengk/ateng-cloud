@@ -109,6 +109,26 @@ public final class GatewayConstants {
      */
     public static final String X_APP_ID = "X-App-Id";
 
+    /**
+     * API 混合加密对称会话密钥信封标头（Base64 密文）
+     */
+    public static final String X_ENCRYPT_KEY = "X-Encrypt-Key";
+
+    /**
+     * API 混合加密 GCM 初始化向量标头（12 字节 Base64）
+     */
+    public static final String X_ENCRYPT_IV = "X-Encrypt-Iv";
+
+    /**
+     * API 混合加密非对称密钥版本号标头
+     */
+    public static final String X_KEY_ID = "X-Key-Id";
+
+    /**
+     * API 混合加密算法套件标识标头（RSA_AES_GCM / SM2_SM4_GCM）
+     */
+    public static final String X_ENCRYPT_ALG = "X-Encrypt-Alg";
+
     // --- Exchange Attributes 键名 ---
 
     /**
@@ -224,6 +244,11 @@ public final class GatewayConstants {
      * Sa-Token 反应式集中鉴权过滤器执行顺序
      */
     public static final int ORDER_SA_TOKEN = -100;
+
+    /**
+     * 边缘 API 报文混合加解密防窃听过滤器执行顺序 (位于 Sa-Token 鉴权之后、多租户之前)
+     */
+    public static final int ORDER_CRYPTO = -95;
 
     /**
      * 多租户入站解析与防跨越过滤器执行顺序 (紧随鉴权之后)
