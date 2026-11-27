@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.cloud.gateway.constant.GatewayConstants;
 import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpResponse;
@@ -42,11 +43,15 @@ public final class GatewayResponseUtils {
                                             String msg) {
         ServerHttpResponse response = exchange.getResponse();
         response.setStatusCode(httpStatus);
-        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        HttpHeaders headers = response.getHeaders();
+        headers.remove(HttpHeaders.TRANSFER_ENCODING);
+        headers.remove(HttpHeaders.CONTENT_ENCODING);
+        headers.remove(HttpHeaders.CONTENT_DISPOSITION);
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
         String traceId = (String) exchange.getAttributes().get(GatewayConstants.ATTR_TRACE_ID);
         if (StringUtils.hasText(traceId)) {
-            response.getHeaders().set(GatewayConstants.X_TRACE_ID, traceId);
+            headers.set(GatewayConstants.X_TRACE_ID, traceId);
         }
 
         Result<Void> result = Result.fail(code, msg);
@@ -59,6 +64,7 @@ public final class GatewayResponseUtils {
             bytes = ("{\"code\":" + code + ",\"msg\":\"" + msg + "\"}").getBytes(StandardCharsets.UTF_8);
         }
 
+        headers.setContentLength(bytes.length);
         DataBuffer buffer = response.bufferFactory().wrap(bytes);
         return response.writeWith(Mono.just(buffer));
     }

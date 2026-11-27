@@ -21,7 +21,10 @@ import io.github.atengk.cloud.gateway.handler.GatewayGlobalExceptionHandler;
 import io.github.atengk.cloud.gateway.loadbalancer.GrayLoadBalancerClientConfiguration;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
 import io.github.atengk.cloud.gateway.provider.InMemoryGatewayNonceValidator;
+import io.github.atengk.cloud.gateway.provider.InMemoryReactiveGatewayNonceValidator;
 import io.github.atengk.cloud.gateway.provider.InMemorySignSecretProvider;
+import io.github.atengk.cloud.gateway.provider.LegacyGatewayNonceValidatorAdapter;
+import io.github.atengk.cloud.gateway.provider.PropertiesGatewaySignKeyProvider;
 import io.github.atengk.cloud.gateway.provider.PropertiesIpFilterProvider;
 import io.github.atengk.cloud.gateway.ratelimit.ApiKeyResolver;
 import io.github.atengk.cloud.gateway.ratelimit.IpKeyResolver;
@@ -29,13 +32,20 @@ import io.github.atengk.cloud.gateway.ratelimit.UserKeyResolver;
 import io.github.atengk.cloud.gateway.resolver.DefaultTrafficTagResolver;
 import io.github.atengk.cloud.gateway.route.GatewayRouteRefreshListener;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
+import io.github.atengk.cloud.gateway.sign.signer.HmacSha256GatewaySigner;
+import io.github.atengk.cloud.gateway.sign.signer.RsaGatewaySigner;
+import io.github.atengk.cloud.gateway.sign.signer.Sm2GatewaySigner;
+import io.github.atengk.cloud.gateway.spi.GatewayApiSigner;
 import io.github.atengk.cloud.gateway.spi.GatewayNonceValidator;
+import io.github.atengk.cloud.gateway.spi.GatewaySignKeyProvider;
 import io.github.atengk.cloud.gateway.spi.GatewayTenantSwitchValidator;
 import io.github.atengk.cloud.gateway.spi.IpFilterProvider;
+import io.github.atengk.cloud.gateway.spi.ReactiveGatewayNonceValidator;
 import io.github.atengk.cloud.gateway.spi.SignSecretProvider;
 import io.github.atengk.cloud.gateway.spi.TrafficTagResolver;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -62,6 +72,7 @@ import org.springframework.core.env.Environment;
  * @since 2026-10-28
  */
 @AutoConfiguration
+@AutoConfigureAfter(AtengGatewaySignRedisAutoConfiguration.class)
 @AutoConfigureBefore(value = GatewayAutoConfiguration.class, name = "io.github.atengk.cloud.nacos.loadbalancer.AtengNacosLoadBalancerAutoConfiguration")
 @ConditionalOnClass(GlobalFilter.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
@@ -197,7 +208,7 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
-     * 注册开放接口数字签名密钥提供者默认实现 (基于内存字典)
+     * 注册开放接口数字签名密钥提供者旧版兼容默认实现 (基于内存字典)
      *
      * @return InMemorySignSecretProvider
      */
@@ -209,38 +220,108 @@ public class AtengGatewayAutoConfiguration {
     }
 
     /**
-     * 注册开放接口 Nonce 防重放校验器默认实现 (基于有界内存滑动窗口)
+     * 注册 HMAC-SHA256 网关签名器实现
      *
-     * @param properties 网关配置属性
-     * @return GatewayNonceValidator
+     * @return HmacSha256GatewaySigner
      */
     @Bean
-    @ConditionalOnMissingBean(GatewayNonceValidator.class)
+    @ConditionalOnMissingBean(HmacSha256GatewaySigner.class)
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
-    public GatewayNonceValidator defaultGatewayNonceValidator(AtengGatewayProperties properties) {
+    public HmacSha256GatewaySigner hmacSha256GatewaySigner() {
+        return new HmacSha256GatewaySigner();
+    }
+
+    /**
+     * 注册 RSA (SHA256withRSA) 网关签名器实现
+     *
+     * @return RsaGatewaySigner
+     */
+    @Bean
+    @ConditionalOnMissingBean(RsaGatewaySigner.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public RsaGatewaySigner rsaGatewaySigner() {
+        return new RsaGatewaySigner();
+    }
+
+    /**
+     * 注册国密 SM2/SM3 网关签名器实现
+     *
+     * @return Sm2GatewaySigner
+     */
+    @Bean
+    @ConditionalOnMissingBean(Sm2GatewaySigner.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public Sm2GatewaySigner sm2GatewaySigner() {
+        return new Sm2GatewaySigner();
+    }
+
+    /**
+     * 注册响应式多算法签名密钥提供者默认实现 (兼容配置字典与旧版 SignSecretProvider)
+     *
+     * @param properties            网关配置属性
+     * @param secretProviderProvider 旧版同步密钥提供者可选注入
+     * @return GatewaySignKeyProvider
+     */
+    @Bean
+    @ConditionalOnMissingBean(GatewaySignKeyProvider.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public GatewaySignKeyProvider gatewaySignKeyProvider(
+            AtengGatewayProperties properties,
+            ObjectProvider<SignSecretProvider> secretProviderProvider) {
+        return new PropertiesGatewaySignKeyProvider(properties.getSign(), secretProviderProvider);
+    }
+
+    /**
+     * 注册非阻塞响应式 Nonce 防重放校验器兜底装配
+     * <p>优先级：用户自定义 ReactiveGatewayNonceValidator > 用户自定义旧版 GatewayNonceValidator 适配
+     * > ReactiveStringRedisTemplate (见 AtengGatewaySignRedisAutoConfiguration) > 有界内存滑动窗口实现。</p>
+     *
+     * @param properties                 网关配置属性
+     * @param legacyNonceValidatorProvider 用户自定义旧版同步校验器可选注入
+     * @return ReactiveGatewayNonceValidator
+     */
+    @Bean
+    @ConditionalOnMissingBean(ReactiveGatewayNonceValidator.class)
+    @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
+    public ReactiveGatewayNonceValidator reactiveGatewayNonceValidator(
+            AtengGatewayProperties properties,
+            ObjectProvider<GatewayNonceValidator> legacyNonceValidatorProvider) {
+        GatewayNonceValidator legacyValidator = legacyNonceValidatorProvider.getIfAvailable();
+        if (legacyValidator != null) {
+            return new LegacyGatewayNonceValidatorAdapter(legacyValidator);
+        }
         int maxCapacity = properties != null && properties.getSign() != null
                 ? properties.getSign().getNonceMaxCapacity()
                 : InMemoryGatewayNonceValidator.DEFAULT_MAX_CAPACITY;
-        return new InMemoryGatewayNonceValidator(maxCapacity);
+        return new InMemoryReactiveGatewayNonceValidator(maxCapacity);
     }
 
     /**
      * 注册开放接口 API 签名防篡改与 Nonce 防重放全局过滤器
      *
-     * @param properties 网关配置属性
-     * @param secretProvider 签名密钥提供者
-     * @param nonceValidator Nonce 校验器
-     * @param objectMapper Jackson 对象映射器
+     * @param properties              网关配置属性
+     * @param signKeyProvider         响应式多算法签名密钥提供者
+     * @param reactiveNonceValidator  响应式 Nonce 防重放校验器
+     * @param signersProvider         多算法签名器列表提供者
+     * @param objectMapper            Jackson 对象映射器
      * @return GatewaySignGuardFilter
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "ateng.cloud.gateway.sign", name = "enabled", havingValue = "true", matchIfMissing = false)
-    public GatewaySignGuardFilter gatewaySignGuardFilter(AtengGatewayProperties properties,
-                                                        SignSecretProvider secretProvider,
-                                                        GatewayNonceValidator nonceValidator,
-                                                        ObjectMapper objectMapper) {
-        return new GatewaySignGuardFilter(properties.getSign(), secretProvider, nonceValidator, objectMapper);
+    public GatewaySignGuardFilter gatewaySignGuardFilter(
+            AtengGatewayProperties properties,
+            GatewaySignKeyProvider signKeyProvider,
+            ReactiveGatewayNonceValidator reactiveNonceValidator,
+            ObjectProvider<GatewayApiSigner> signersProvider,
+            ObjectMapper objectMapper) {
+        return new GatewaySignGuardFilter(
+                properties.getSign(),
+                signKeyProvider,
+                reactiveNonceValidator,
+                signersProvider.orderedStream().toList(),
+                objectMapper
+        );
     }
 
     /**
@@ -448,9 +529,11 @@ public class AtengGatewayAutoConfiguration {
                 ObjectProvider<AtengGatewayProperties> propertiesProvider,
                 ObjectProvider<NacosRouteDefinitionRepository> nacosRepoProvider,
                 ObjectProvider<GatewayRouteRefreshListener> routeRefreshListenerProvider,
-                Environment environment) {
+                Environment environment,
+                ObjectProvider<ReactiveGatewayNonceValidator> nonceValidatorProvider) {
             return new GatewayPanoramaEndpoint(
-                    propertiesProvider, nacosRepoProvider, routeRefreshListenerProvider, environment);
+                    propertiesProvider, nacosRepoProvider, routeRefreshListenerProvider,
+                    environment, nonceValidatorProvider);
         }
 
         /**

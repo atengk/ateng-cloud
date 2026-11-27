@@ -5,8 +5,11 @@ import io.github.atengk.cloud.gateway.properties.AtengGatewayProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySecurityProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewaySignProperties;
 import io.github.atengk.cloud.gateway.properties.AtengGatewayTrafficProperties;
+import io.github.atengk.cloud.gateway.provider.InMemoryReactiveGatewayNonceValidator;
+import io.github.atengk.cloud.gateway.provider.LegacyGatewayNonceValidatorAdapter;
 import io.github.atengk.cloud.gateway.route.GatewayRouteRefreshListener;
 import io.github.atengk.cloud.gateway.route.NacosRouteDefinitionRepository;
+import io.github.atengk.cloud.gateway.spi.ReactiveGatewayNonceValidator;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
@@ -34,16 +37,27 @@ public class GatewayPanoramaEndpoint {
     private final ObjectProvider<NacosRouteDefinitionRepository> nacosRepoProvider;
     private final ObjectProvider<GatewayRouteRefreshListener> routeRefreshListenerProvider;
     private final Environment environment;
+    private final ObjectProvider<ReactiveGatewayNonceValidator> nonceValidatorProvider;
 
     public GatewayPanoramaEndpoint(
             ObjectProvider<AtengGatewayProperties> propertiesProvider,
             ObjectProvider<NacosRouteDefinitionRepository> nacosRepoProvider,
             ObjectProvider<GatewayRouteRefreshListener> routeRefreshListenerProvider,
             Environment environment) {
+        this(propertiesProvider, nacosRepoProvider, routeRefreshListenerProvider, environment, null);
+    }
+
+    public GatewayPanoramaEndpoint(
+            ObjectProvider<AtengGatewayProperties> propertiesProvider,
+            ObjectProvider<NacosRouteDefinitionRepository> nacosRepoProvider,
+            ObjectProvider<GatewayRouteRefreshListener> routeRefreshListenerProvider,
+            Environment environment,
+            ObjectProvider<ReactiveGatewayNonceValidator> nonceValidatorProvider) {
         this.propertiesProvider = propertiesProvider;
         this.nacosRepoProvider = nacosRepoProvider;
         this.routeRefreshListenerProvider = routeRefreshListenerProvider;
         this.environment = environment;
+        this.nonceValidatorProvider = nonceValidatorProvider;
     }
 
     @ReadOperation
@@ -162,12 +176,21 @@ public class GatewayPanoramaEndpoint {
         AtengGatewaySignProperties signProps = props.getSign() != null
                 ? props.getSign() : new AtengGatewaySignProperties();
         String timestampThresholdStr = formatDuration(signProps.getTimestampThreshold(), "5m");
+        String canonicalModeStr = signProps.getCanonicalMode() != null
+                ? signProps.getCanonicalMode().name() : "LEGACY";
+        String signAlgStr = signProps.getAlgorithm() != null
+                ? signProps.getAlgorithm().name() : "HMAC_SHA256";
+        String reactiveNonceMode = resolveReactiveNonceMode(signProps);
         GatewayPanoramaReport.SignGuardReport signReport = new GatewayPanoramaReport.SignGuardReport(
                 signProps.isEnabled(),
                 signProps.isBodyEnabled(),
                 timestampThresholdStr,
                 signProps.getIncludePaths() != null ? signProps.getIncludePaths().size() : 0,
-                signProps.getExcludePaths() != null ? signProps.getExcludePaths().size() : 0
+                signProps.getExcludePaths() != null ? signProps.getExcludePaths().size() : 0,
+                canonicalModeStr,
+                signAlgStr,
+                signProps.isSignResponse(),
+                reactiveNonceMode
         );
 
         boolean overallHealthy = nacosHealthy && mainHealthy;
@@ -182,6 +205,26 @@ public class GatewayPanoramaEndpoint {
                 secReport,
                 signReport
         );
+    }
+
+    private String resolveReactiveNonceMode(AtengGatewaySignProperties signProps) {
+        ReactiveGatewayNonceValidator validator = nonceValidatorProvider != null
+                ? nonceValidatorProvider.getIfAvailable()
+                : null;
+        if (validator == null) {
+            return signProps.isEnabled() ? "IN_MEMORY" : "DISABLED";
+        }
+        if ("io.github.atengk.cloud.gateway.provider.RedisReactiveGatewayNonceValidator"
+                .equals(validator.getClass().getName())) {
+            return "REDIS";
+        }
+        if (validator instanceof LegacyGatewayNonceValidatorAdapter) {
+            return "LEGACY_ADAPTER";
+        }
+        if (validator instanceof InMemoryReactiveGatewayNonceValidator) {
+            return "IN_MEMORY";
+        }
+        return "CUSTOM";
     }
 
     private String formatDuration(Duration duration, String defaultVal) {

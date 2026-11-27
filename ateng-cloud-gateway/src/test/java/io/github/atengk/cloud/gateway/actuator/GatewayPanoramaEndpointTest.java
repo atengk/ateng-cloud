@@ -158,6 +158,10 @@ public class GatewayPanoramaEndpointTest {
         assertTrue(sign.bodyEnabled());
         assertEquals("5m", sign.timestampThreshold());
         assertEquals(1, sign.includePathsCount());
+        assertEquals("LEGACY", sign.canonicalMode());
+        assertEquals("HMAC_SHA256", sign.algorithm());
+        assertFalse(sign.signResponse());
+        assertEquals("IN_MEMORY", sign.reactiveNonceMode());
     }
 
     @Test

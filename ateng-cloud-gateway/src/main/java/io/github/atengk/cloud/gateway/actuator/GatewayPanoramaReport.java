@@ -115,6 +115,22 @@ public record GatewayPanoramaReport(
             boolean bodyEnabled,
             String timestampThreshold,
             int includePathsCount,
-            int excludePathsCount
-    ) implements Serializable {}
+            int excludePathsCount,
+            String canonicalMode,
+            String algorithm,
+            boolean signResponse,
+            String reactiveNonceMode
+    ) implements Serializable {
+
+        public SignGuardReport(
+                boolean enabled,
+                boolean bodyEnabled,
+                String timestampThreshold,
+                int includePathsCount,
+                int excludePathsCount
+        ) {
+            this(enabled, bodyEnabled, timestampThreshold, includePathsCount, excludePathsCount,
+                    "LEGACY", "HMAC_SHA256", false, "IN_MEMORY");
+        }
+    }
 }
